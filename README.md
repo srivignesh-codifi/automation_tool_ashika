@@ -1,6 +1,6 @@
 # Mobile Automation Tool
 
-On-device UAT test automation for an Android Flutter application. Phase 1
+On-device test automation for an Android Flutter application. Phase 1
 automates exactly one scenario — a **successful login**:
 
 ```
@@ -28,9 +28,18 @@ taps **Start Login Automation**. The tool launches the target app, drives the
 login through Android's accessibility APIs, verifies that Home or the Watchlist
 is reached, and produces a pass/fail checklist as JSON, HTML and plain text.
 
-Phase 1 is the happy path only. There is deliberately no invalid Client ID,
-invalid OTP, invalid MPIN, logout, watchlist, portfolio, order or funds coverage,
-and no second test suite.
+Phase 1 is the happy path only: login, then a watchlist and search pass, then a
+visit to every bottom tab (Home, Research, Portfolio, Orders) checking that each
+of their tabs finishes loading within 8 seconds (5 for the Orders tabs and
+Positions), then logout from Profile. There is deliberately no invalid Client
+ID, invalid OTP or invalid MPIN coverage, nothing that places or changes an
+order or moves funds, and no second test suite.
+
+Load checks read markers the target app puts on its shared loading, empty and
+retry widgets (`ui_loading`, `ui_empty`, `ui_error`). A tab passes when no
+`ui_loading` remains on any screenful of it within its budget. A tab that is
+still loading, or shows the Reload screen, fails its own step and the run moves
+on, so the report shows every tab and the run still logs out.
 
 ---
 
@@ -57,7 +66,7 @@ and no second test suite.
 │         ├── TargetAppLauncher        (PackageManager)                 │
 │         ▼                                                            │
 │  AutomationAccessibilityService                                       │
-│    scoped to ONE package via android:packageNames                     │
+│    scoped via android:packageNames to the target + Settings/perms     │
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ reads nodes, dispatches taps
                                ▼
@@ -599,12 +608,23 @@ This is an internal UAT tool for a financial trading application.
 
 * **Allowlist.** `AutomationConfig.ALLOWED_PACKAGES` contains exactly one
   package. Any other value is refused before the app is inspected or launched.
-  The accessibility service is *additionally* scoped to that same package via
-  `android:packageNames`, so it is technically incapable of reading any other
-  application on the device.
-* **No order, trade or funds capability.** The tool can find and act on login
-  identifiers only. There is no code path that places an order, buys, sells, or
-  moves funds.
+  The accessibility service is *additionally* scoped via `android:packageNames`
+  to that package plus the system screens used to reset it before each run:
+  Settings (`com.android.settings`, and `com.miui.securitycenter` on Xiaomi) to
+  clear the app's data, and the permission controller to answer the
+  notification prompt that clearing brings back. It cannot read any other
+  application, and every login/watchlist lookup is confined to the target
+  package in code (`AutomationEngine.targetRoot`).
+* **Pre-run reset.** Each run first opens the target's App info and taps
+  Storage > Clear storage > Delete, so every run starts from a fresh install
+  state. Settings labels are matched by text (`AutomationConfig.SettingsTexts`);
+  add a device's wording there if its Settings phrases them differently. After
+  launch, the "Allow … to send you notifications?" prompt is answered with
+  Allow; other permission prompts are left alone.
+* **No order, trade or funds capability.** On Portfolio and Orders the tool
+  only selects tabs and scrolls; it never taps a row or an action button. There
+  is no code path that places an order, buys, sells, or moves funds. Logout
+  is the run's last step.
 * **No SMS, no notifications.** `READ_SMS` is not requested and notification
   events are not observed. The OTP must be typed in by hand. That is why the
   service config declares no notification event types.
@@ -625,9 +645,9 @@ This is an internal UAT tool for a financial trading application.
   `<queries><package>` entry for the one allowlisted package, so the tool cannot
   enumerate what else is installed.
 * **Verified service scope.** In the shipped APK the compiled service config
-  reads `packageNames="com.codifi.dhanush"`, `accessibilityEventTypes=0x820`
-  (window state changed | window content changed) and `accessibilityFlags=0x13`
-  (default | includeNotImportantViews | reportViewIds) — no key-event filtering,
+  reads `packageNames="com.codifi.dhanush,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller"`, `accessibilityEventTypes=0x820`
+  (window state changed | window content changed) and `accessibilityFlags=0x53`
+  (default | includeNotImportantViews | reportViewIds | retrieveInteractiveWindows, the last so the notification permission prompt can be found over the target app) — no key-event filtering,
   no touch exploration, no notification events.
 * **No security bypasses.** Android 13+ restricted settings are explained to the
   operator, never worked around.

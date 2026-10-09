@@ -280,7 +280,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
             const SizedBox(height: 20),
 
-            Text('UAT credentials', style: theme.textTheme.titleMedium),
+            Text('Credentials', style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
               'Use dedicated test credentials on the UAT build only.',
@@ -331,9 +331,8 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               maxLength: 6,
               enabled: !_running,
               textInputAction: TextInputAction.done,
-              validator: (value) => (value == null || value.isEmpty)
-                  ? 'Enter the MPIN'
-                  : null,
+              validator: (value) =>
+                  (value == null || value.isEmpty) ? 'Enter the MPIN' : null,
             ),
             const SizedBox(height: 6),
             SwitchListTile(

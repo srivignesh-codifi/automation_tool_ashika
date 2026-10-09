@@ -52,18 +52,71 @@ class AutomationIds {
   static const String watchlistAddSaveButton = 'watchlist_add_save_button';
   static const String watchlistEditButton = 'watchlist_edit_button';
 
+  /// "N/50 Scrips" label on a user watchlist tab.
+  static const String watchlistScripCount = 'watchlist_scrip_count';
+  static const String watchlistViewToggleButton = 'watchlist_view_toggle_button';
+  static const String watchlistListView = 'watchlist_list_view';
+  static const String watchlistGridView = 'watchlist_grid_view';
+  static const String watchlistEmptyState = 'watchlist_empty_state';
+  static const String watchlistScripRow = 'watchlist_scrip_row';
+  static const String watchlistFilterButton = 'watchlist_filter_button';
+  static const String watchlistFilterSheet = 'watchlist_filter_sheet';
+
+  /// Screen markers published from the target app's router.
+  static const String editWatchlistScreen = 'edit_watchlist_screen';
+  static const String searchScreen = 'search_screen';
+  static const String scripDetailsScreen = 'scrip_details_screen';
+  static const String indexDetailsScreen = 'index_details_screen';
+
   /// Edit Watchlist per-row delete icon. Same identifier every row.
   static const String editWatchlistDeleteButton = 'edit_watchlist_delete_button';
   static const String editWatchlistSaveButton = 'edit_watchlist_save_button';
 
   static const String watchlistSearchButton = 'watchlist_search_button';
   static const String searchScripInput = 'search_scrip_input';
+  static const String searchBackButton = 'search_back_button';
   static const String searchFilterChipAll = 'search_filter_chip_all';
+  static const String searchFilterChipStock = 'search_filter_chip_stock';
   static const String searchFilterChipFutures = 'search_filter_chip_futures';
   static const String searchFilterChipOptions = 'search_filter_chip_options';
+  static const String searchFilterChipCommodity = 'search_filter_chip_commodity';
+  static const String searchFilterChipMutualFunds = 'search_filter_chip_mutual_funds';
+  static const String searchLoading = 'search_loading';
+  static const String searchResultsList = 'search_results_list';
 
   /// Search result row's "+" icon. Tagged only while not yet added.
   static const String searchScripAddButton = 'search_scrip_add_button';
+
+  /// The tick that replaces "+" once a result is in the watchlist.
+  static const String searchScripAddedIcon = 'search_scrip_added_icon';
+  static const String mfSearchResults = 'mf_search_results';
+
+  /// Bottom tabs: `bottomnav_<label>_tab` (sip replaces research in MF mode).
+  static const String bottomnavHomeTab = 'bottomnav_home_tab';
+  static const String bottomnavResearchTab = 'bottomnav_research_tab';
+  static const String bottomnavPortfolioTab = 'bottomnav_portfolio_tab';
+  static const String bottomnavOrderTab = 'bottomnav_order_tab';
+  static const String dashboardScreen = 'dashboard_screen';
+  static const String researchScreen = 'research_screen';
+  static const String portfolioScreen = 'portfolio_screen';
+  static const String orderbookScreen = 'orderbook_screen';
+
+  /// Inner tab prefixes; suffix is the label in lower case, `_` for the rest.
+  static const String homeTabPrefix = 'home_tab_';
+  static const String portfolioTabPrefix = 'portfolio_tab_';
+  static const String holdingsTabPrefix = 'holdings_tab_';
+  static const String orderbookTabPrefix = 'orderbook_tab_';
+  static const String ordersTabPrefix = 'orders_tab_';
+
+  /// Load-state markers on the shared shimmer / spinner, empty and retry widgets.
+  static const String uiLoading = 'ui_loading';
+  static const String uiEmpty = 'ui_empty';
+  static const String uiError = 'ui_error';
+
+  static const String profileButton = 'profile_button';
+  static const String profileScreen = 'profile_screen';
+  static const String profileLogoutButton = 'profile_logout_button';
+  static const String logoutConfirmButton = 'logout_confirm_button';
 
   static const List<String> all = <String>[
     introLoginButton,
@@ -87,14 +140,49 @@ class AutomationIds {
     discoverScripAddButton,
     watchlistAddSaveButton,
     watchlistEditButton,
+    watchlistScripCount,
+    watchlistViewToggleButton,
+    watchlistListView,
+    watchlistGridView,
+    watchlistEmptyState,
+    watchlistScripRow,
+    watchlistFilterButton,
+    watchlistFilterSheet,
+    editWatchlistScreen,
+    searchScreen,
+    scripDetailsScreen,
+    indexDetailsScreen,
     editWatchlistDeleteButton,
     editWatchlistSaveButton,
     watchlistSearchButton,
     searchScripInput,
+    searchBackButton,
     searchFilterChipAll,
+    searchFilterChipStock,
     searchFilterChipFutures,
     searchFilterChipOptions,
+    searchFilterChipCommodity,
+    searchFilterChipMutualFunds,
+    searchLoading,
+    searchResultsList,
     searchScripAddButton,
+    searchScripAddedIcon,
+    mfSearchResults,
+    bottomnavHomeTab,
+    bottomnavResearchTab,
+    bottomnavPortfolioTab,
+    bottomnavOrderTab,
+    dashboardScreen,
+    researchScreen,
+    portfolioScreen,
+    orderbookScreen,
+    uiLoading,
+    uiEmpty,
+    uiError,
+    profileButton,
+    profileScreen,
+    profileLogoutButton,
+    logoutConfirmButton,
   ];
 }
 
@@ -105,6 +193,7 @@ class AutomationChecklist {
   static const List<({String id, String name})> steps = [
     (id: 'target_app_installed', name: 'Target application installed'),
     (id: 'accessibility_enabled', name: 'Accessibility permission enabled'),
+    (id: 'target_app_data_cleared', name: 'Target application data cleared'),
     (id: 'target_app_launched', name: 'Target application launched'),
     (id: 'intro_login_tapped', name: 'Intro screen Login tapped'),
     (id: 'client_id_screen_displayed', name: 'Client ID screen displayed'),
@@ -130,11 +219,38 @@ class AutomationChecklist {
     (id: 'watchlist_edit_opened', name: 'Watchlist edit screen opened'),
     (id: 'watchlist_scrips_trimmed', name: 'Watchlist scrips trimmed'),
     (id: 'search_opened', name: 'Search screen opened'),
-    (id: 'search_tcs_added', name: 'TCS added from search'),
-    (id: 'search_nifty_futures_added', name: 'NIFTY futures added from search'),
-    (id: 'search_nifty_options_added', name: 'NIFTY options added from search'),
-    (id: 'search_crudeoil_added', name: 'Crude oil added from search'),
+    (id: 'search_filter_chips_listed', name: 'Search filter chips listed'),
+    (id: 'search_tcs_added', name: 'TCS added (Stock filter)'),
+    (id: 'search_nifty_futures_added', name: 'NIFTY futures added (Futures filter)'),
+    (id: 'search_nifty_options_added', name: 'NIFTY options added (Options filter)'),
+    (id: 'search_crudeoil_added', name: 'Crude oil added (Commodity filter)'),
+    (id: 'search_all_filter_results', name: 'All filter lists results'),
+    (id: 'search_mutual_fund_results', name: 'Mutual fund results listed'),
     (id: 'search_closed', name: 'Search screen closed'),
+    (id: 'watchlist_count_updated', name: 'Watchlist count reflects the adds'),
+    (id: 'watchlist_view_toggled', name: 'Heat map view toggled and restored'),
+    (id: 'watchlist_filter_sheet_opened', name: 'Filter & Sorting sheet opened and closed'),
+    (id: 'scrip_details_opened', name: 'Scrip details opened and closed'),
+    (id: 'home_overview_loaded', name: 'Home › Overview loaded'),
+    (id: 'home_stocks_loaded', name: 'Home › Stocks loaded'),
+    (id: 'home_fno_loaded', name: 'Home › F&O loaded'),
+    (id: 'home_mutual_funds_loaded', name: 'Home › Mutual Funds loaded'),
+    (id: 'home_commodity_loaded', name: 'Home › Commodity loaded'),
+    (id: 'research_loaded', name: 'Research loaded'),
+    (id: 'holdings_overview_loaded', name: 'Portfolio › Holdings › Overview loaded'),
+    (id: 'holdings_equity_loaded', name: 'Portfolio › Holdings › Equity loaded'),
+    (id: 'holdings_thematic_loaded', name: 'Portfolio › Holdings › Thematic Basket loaded'),
+    (id: 'holdings_mutual_funds_loaded', name: 'Portfolio › Holdings › Mutual Funds loaded'),
+    (id: 'portfolio_my_wealth_loaded', name: 'Portfolio › My Wealth loaded'),
+    (id: 'orders_open_loaded', name: 'Orders › Open loaded'),
+    (id: 'orders_executed_loaded', name: 'Orders › Executed loaded'),
+    (id: 'orders_gtt_loaded', name: 'Orders › GTT loaded'),
+    (id: 'orders_sip_loaded', name: 'Orders › SIP loaded'),
+    (id: 'orders_basket_loaded', name: 'Orders › Basket loaded'),
+    (id: 'orders_alerts_loaded', name: 'Orders › Alerts loaded'),
+    (id: 'positions_loaded', name: 'Orders › Positions loaded'),
+    (id: 'profile_opened', name: 'Profile opened'),
+    (id: 'logged_out', name: 'Logged out'),
   ];
 
   static const String testName = 'Phase 1 - Login Automation';

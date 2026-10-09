@@ -11,10 +11,15 @@ import com.mobileautomation.tool.AutomationEngine.WaitOutcome
  *   Disclosure accepted -> Watchlist -> Discover add-scrip -> Edit watchlist
  *   trim -> Search (TCS, NIFTY futures/options, crude oil)
  *
- * Deliberately absent: invalid credential cases, logout, and anything that
- * touches portfolios, orders or funds. This class can only read login and
- * watchlist/search screens and type the three credential values plus the
- * fixed set of search terms baked into this flow.
+ * Then every bottom tab is visited — Home, Research, Portfolio, Orders — and
+ * each of their tabs is checked for sections that never finish loading, and
+ * the run ends by logging out from Profile.
+ *
+ * Deliberately absent: invalid credential cases, and anything that places,
+ * modifies or cancels an order or moves funds. On Portfolio and Orders the
+ * tool only selects tabs and scrolls; it never taps a row or an action button.
+ * It types only the three credential values plus the fixed set of search
+ * terms baked into this flow.
  *
  * Both pin screens in the target app submit automatically when their last digit
  * lands, so every submit step probes for the next screen *before* falling back
@@ -26,6 +31,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
     private val steps = listOf(
         AutomationStepResult("target_app_installed", "Target application installed"),
         AutomationStepResult("accessibility_enabled", "Accessibility permission enabled"),
+        AutomationStepResult("target_app_data_cleared", "Target application data cleared"),
         AutomationStepResult("target_app_launched", "Target application launched"),
         AutomationStepResult("intro_login_tapped", "Intro screen Login tapped"),
         AutomationStepResult("client_id_screen_displayed", "Client ID screen displayed"),
@@ -51,11 +57,38 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         AutomationStepResult("watchlist_edit_opened", "Watchlist edit screen opened"),
         AutomationStepResult("watchlist_scrips_trimmed", "Watchlist scrips trimmed"),
         AutomationStepResult("search_opened", "Search screen opened"),
-        AutomationStepResult("search_tcs_added", "TCS added from search"),
-        AutomationStepResult("search_nifty_futures_added", "NIFTY futures added from search"),
-        AutomationStepResult("search_nifty_options_added", "NIFTY options added from search"),
-        AutomationStepResult("search_crudeoil_added", "Crude oil added from search"),
+        AutomationStepResult("search_filter_chips_listed", "Search filter chips listed"),
+        AutomationStepResult("search_tcs_added", "TCS added (Stock filter)"),
+        AutomationStepResult("search_nifty_futures_added", "NIFTY futures added (Futures filter)"),
+        AutomationStepResult("search_nifty_options_added", "NIFTY options added (Options filter)"),
+        AutomationStepResult("search_crudeoil_added", "Crude oil added (Commodity filter)"),
+        AutomationStepResult("search_all_filter_results", "All filter lists results"),
+        AutomationStepResult("search_mutual_fund_results", "Mutual fund results listed"),
         AutomationStepResult("search_closed", "Search screen closed"),
+        AutomationStepResult("watchlist_count_updated", "Watchlist count reflects the adds"),
+        AutomationStepResult("watchlist_view_toggled", "Heat map view toggled and restored"),
+        AutomationStepResult("watchlist_filter_sheet_opened", "Filter & Sorting sheet opened and closed"),
+        AutomationStepResult("scrip_details_opened", "Scrip details opened and closed"),
+        AutomationStepResult("home_overview_loaded", "Home › Overview loaded"),
+        AutomationStepResult("home_stocks_loaded", "Home › Stocks loaded"),
+        AutomationStepResult("home_fno_loaded", "Home › F&O loaded"),
+        AutomationStepResult("home_mutual_funds_loaded", "Home › Mutual Funds loaded"),
+        AutomationStepResult("home_commodity_loaded", "Home › Commodity loaded"),
+        AutomationStepResult("research_loaded", "Research loaded"),
+        AutomationStepResult("holdings_overview_loaded", "Portfolio › Holdings › Overview loaded"),
+        AutomationStepResult("holdings_equity_loaded", "Portfolio › Holdings › Equity loaded"),
+        AutomationStepResult("holdings_thematic_loaded", "Portfolio › Holdings › Thematic Basket loaded"),
+        AutomationStepResult("holdings_mutual_funds_loaded", "Portfolio › Holdings › Mutual Funds loaded"),
+        AutomationStepResult("portfolio_my_wealth_loaded", "Portfolio › My Wealth loaded"),
+        AutomationStepResult("orders_open_loaded", "Orders › Open loaded"),
+        AutomationStepResult("orders_executed_loaded", "Orders › Executed loaded"),
+        AutomationStepResult("orders_gtt_loaded", "Orders › GTT loaded"),
+        AutomationStepResult("orders_sip_loaded", "Orders › SIP loaded"),
+        AutomationStepResult("orders_basket_loaded", "Orders › Basket loaded"),
+        AutomationStepResult("orders_alerts_loaded", "Orders › Alerts loaded"),
+        AutomationStepResult("positions_loaded", "Orders › Positions loaded"),
+        AutomationStepResult("profile_opened", "Profile opened"),
+        AutomationStepResult("logged_out", "Logged out"),
     )
 
     private fun step(id: String): AutomationStepResult = steps.first { it.id == id }
@@ -138,7 +171,20 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(a11y, "service connected, scoped to ${engine.targetPackage}")
 
-        // 3 — Target application launched -------------------------------------
+        // 3 — Target application data cleared ---------------------------------
+        // Every run starts from a fresh install state. This also resets the
+        // notification permission, so the app asks again after launch; the
+        // engine answers that prompt with "Allow" wherever it appears.
+        val dataCleared = step("target_app_data_cleared")
+        begin(dataCleared)
+        val clearOutcome = engine.clearTargetAppData()
+        if (!clearOutcome.ok) {
+            if (engine.cancelled) return stopped(dataCleared)
+            return abort(dataCleared, "Could not clear the target app's data: ${clearOutcome.detail}")
+        }
+        pass(dataCleared, clearOutcome.detail)
+
+        // 4 — Target application launched -------------------------------------
         val launched = step("target_app_launched")
         begin(launched)
         engine.launcher.launch(engine.targetPackage)?.let { return abort(launched, it) }
@@ -152,7 +198,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(launched, "launcher activity started and its window became readable")
 
-        // 4 — Intro screen Login tapped -----------------------------------------
+        // 5 — Intro screen Login tapped -----------------------------------------
         // The pre-login carousel ("Invest rightly, Switch timely" / Login
         // button) publishes no screen marker, so this step is optional by
         // design rather than by identifier: if the app is ever seen opening
@@ -183,10 +229,17 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
                     "Could not find or tap the intro screen's Login button: ${introOutcome.detail}",
                 )
             }
-            pass(introLogin, introOutcome.detail)
+            pass(
+                introLogin,
+                introOutcome.detail + if (engine.notificationPromptsAllowed > 0) {
+                    "; the notification permission prompt was answered with Allow first"
+                } else {
+                    ""
+                },
+            )
         }
 
-        // 5 — Client ID screen displayed --------------------------------------
+        // 6 — Client ID screen displayed --------------------------------------
         val clientIdScreen = step("client_id_screen_displayed")
         begin(clientIdScreen)
         val entry = engine.waitForAny(
@@ -213,7 +266,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             else -> return abort(clientIdScreen, reasonFor(entry, "The Client ID screen", AutomationConfig.Timeouts.CLIENT_ID_SCREEN))
         }
 
-        // 6 — Client ID input found -------------------------------------------
+        // 7 — Client ID input found -------------------------------------------
         val clientIdInput = step("client_id_input_found")
         begin(clientIdInput)
         if (!engine.isPresent(Ids.CLIENT_ID_INPUT)) {
@@ -225,7 +278,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(clientIdInput, "'${Ids.CLIENT_ID_INPUT}' located")
 
-        // 7 — Client ID entered ------------------------------------------------
+        // 8 — Client ID entered ------------------------------------------------
         val clientIdEntered = step("client_id_entered")
         begin(clientIdEntered)
         val clientIdOutcome = engine.enterText(Ids.CLIENT_ID_INPUT, clientId)
@@ -246,7 +299,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             clientIdOutcome.detail + if (clientIdLengthOk == true) ", length verified" else "",
         )
 
-        // 8 — Continue button tapped ------------------------------------------
+        // 9 — Continue button tapped ------------------------------------------
         val continueTapped = step("continue_tapped")
         begin(continueTapped)
         val continueOutcome = engine.tap(Ids.CLIENT_ID_CONTINUE_BUTTON, AutomationConfig.Texts.CONTINUE)
@@ -255,7 +308,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(continueTapped, continueOutcome.detail)
 
-        // 9 — OTP screen displayed --------------------------------------------
+        // 10 — OTP screen displayed --------------------------------------------
         val otpScreen = step("otp_screen_displayed")
         begin(otpScreen)
         when (val outcome = engine.waitForAny(otpScreenIds, AutomationConfig.Timeouts.OTP_SCREEN)) {
@@ -268,7 +321,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             )
         }
 
-        // 10 — OTP input found --------------------------------------------------
+        // 11 — OTP input found --------------------------------------------------
         val otpInput = step("otp_input_found")
         begin(otpInput)
         if (!engine.isPresent(Ids.OTP_INPUT)) {
@@ -279,7 +332,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(otpInput, "'${Ids.OTP_INPUT}' located")
 
-        // 11 — OTP entered -----------------------------------------------------
+        // 12 — OTP entered -----------------------------------------------------
         val otpEntered = step("otp_entered")
         begin(otpEntered)
         val otpOutcome = engine.enterText(Ids.OTP_INPUT, otp)
@@ -288,7 +341,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(otpEntered, otpOutcome.detail)
 
-        // 12 — OTP submitted ---------------------------------------------------
+        // 13 — OTP submitted ---------------------------------------------------
         // The pin field submits itself on the last digit. Probe for the MPIN
         // screen first so a manual tap can never double submit the OTP.
         val otpSubmitted = step("otp_submitted")
@@ -321,7 +374,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             }
         }
 
-        // 13 — MPIN screen displayed -------------------------------------------
+        // 14 — MPIN screen displayed -------------------------------------------
         val mpinScreen = step("mpin_screen_displayed")
         begin(mpinScreen)
         if (sawMpinScreen) {
@@ -342,7 +395,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             }
         }
 
-        // 14 — MPIN entered ----------------------------------------------------
+        // 15 — MPIN entered ----------------------------------------------------
         // The tool supports both MPIN implementations and picks by inspection.
         val mpinEntered = step("mpin_entered")
         begin(mpinEntered)
@@ -373,7 +426,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(mpinEntered, mpinOutcome.detail)
 
-        // 15 — MPIN submitted --------------------------------------------------
+        // 16 — MPIN submitted --------------------------------------------------
         val mpinSubmitted = step("mpin_submitted")
         begin(mpinSubmitted)
         var submitNote = "submitted automatically when the final digit was entered"
@@ -401,7 +454,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             )
         }
 
-        // 16 — Biometric screen checked ----------------------------------------
+        // 17 — Biometric screen checked ----------------------------------------
         val biometricChecked = step("biometric_screen_checked")
         val biometricSkipped = step("biometric_skipped")
         begin(biometricChecked)
@@ -417,7 +470,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             )
         }
 
-        // 17 — Biometric skipped -----------------------------------------------
+        // 18 — Biometric skipped -----------------------------------------------
         if (!biometricShown) {
             biometricSkipped.skip("no biometric screen appeared, so there was nothing to skip")
             emitStep(biometricSkipped)
@@ -435,7 +488,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             pass(biometricSkipped, skipOutcome.detail)
         }
 
-        // 18 — Home or Watchlist displayed -------------------------------------
+        // 19 — Home or Watchlist displayed -------------------------------------
         val home = step("home_displayed")
         begin(home)
         val finalOutcome = engine.waitForAny(postLoginIds, AutomationConfig.Timeouts.HOME_SCREEN)
@@ -459,7 +512,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             )
         }
 
-        // 19 — Disclosure dialog accepted --------------------------------------
+        // 20 — Disclosure dialog accepted --------------------------------------
         val disclosureAccepted = step("disclosure_accepted")
         if (!engine.isPresent(Ids.RISK_DISCLOSURE_DIALOG)) {
             disclosureAccepted.skip(
@@ -485,7 +538,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             pass(disclosureAccepted, "confirmed across $disclosureTaps page(s)")
         }
 
-        // 20 — Watchlist tab opened ---------------------------------------------
+        // 21 — Watchlist tab opened ---------------------------------------------
         val watchlistTabOpened = step("watchlist_tab_opened")
         begin(watchlistTabOpened)
         val watchlistTabOutcome = engine.waitAndTap(
@@ -499,7 +552,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(watchlistTabOpened, watchlistTabOutcome.detail)
 
-        // 21 — Discover scrip add dialog opened ---------------------------------
+        // 22 — Discover scrip add dialog opened ---------------------------------
         val discoverScripAdded = step("discover_scrip_added")
         begin(discoverScripAdded)
         val discoverAddOutcome = engine.waitAndTap(
@@ -516,7 +569,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(discoverScripAdded, discoverAddOutcome.detail)
 
-        // 22 — Watchlist checkboxes toggled --------------------------------------
+        // 23 — Watchlist checkboxes toggled --------------------------------------
         val checkboxesToggled = step("watchlist_checkboxes_toggled")
         begin(checkboxesToggled)
         val checkboxIds = (1..4).map { "${Ids.WATCHLIST_CHECKBOX_PREFIX}$it" }
@@ -530,7 +583,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(checkboxesToggled, "toggled $checkboxTaps of ${checkboxIds.size} rows")
 
-        // 23 — Add-to-watchlist saved --------------------------------------------
+        // 24 — Add-to-watchlist saved --------------------------------------------
         val addSaved = step("watchlist_add_saved")
         begin(addSaved)
         val addSaveOutcome = engine.waitAndTap(
@@ -544,42 +597,60 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(addSaved, addSaveOutcome.detail)
 
-        // 24 — First watchlist tab opened -----------------------------------------
+        // 25 — First watchlist tab opened -----------------------------------------
+        // Confirmed by the "N/50 Scrips" label: only a user watchlist tab shows
+        // it, Discover does not.
         val firstTabOpened = step("first_watchlist_tab_opened")
         begin(firstTabOpened)
-        val firstTabOutcome = engine.waitAndTap(
+        val firstTabOutcome = engine.tapAndConfirm(
             Ids.WATCHLIST_FIRST_TAB,
-            emptyList(),
+            listOf(Ids.WATCHLIST_SCRIP_COUNT),
             AutomationConfig.Timeouts.WATCHLIST_FIRST_TAB,
+            tapAtLeastOnce = true,
         )
         if (!firstTabOutcome.ok) {
             if (engine.cancelled) return stopped(firstTabOpened)
-            return abort(firstTabOpened, "Could not tap the first watchlist tab: ${firstTabOutcome.detail}")
+            return abort(firstTabOpened, "Could not open the first watchlist tab: ${firstTabOutcome.detail}")
         }
         pass(firstTabOpened, firstTabOutcome.detail)
 
-        // 25 — Watchlist edit screen opened ---------------------------------------
+        // 26 — Watchlist edit screen opened ---------------------------------------
         val editOpened = step("watchlist_edit_opened")
         begin(editOpened)
-        val editOpenOutcome = engine.waitAndTap(
+        // Let the tab's rows land before taking the baseline the trim is checked against.
+        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(editOpened)
+        val countBeforeEdit = readScripCount()
+        val editOpenOutcome = engine.tapAndConfirm(
             Ids.WATCHLIST_EDIT_BUTTON,
-            emptyList(),
+            listOf(Ids.EDIT_WATCHLIST_SCREEN),
             AutomationConfig.Timeouts.WATCHLIST_EDIT,
         )
         if (!editOpenOutcome.ok) {
             if (engine.cancelled) return stopped(editOpened)
-            return abort(editOpened, "Could not tap the watchlist settings/edit icon: ${editOpenOutcome.detail}")
+            return abort(editOpened, "Could not open Edit Watchlist: ${editOpenOutcome.detail}")
         }
-        pass(editOpened, editOpenOutcome.detail)
+        pass(editOpened, editOpenOutcome.detail + countNote(countBeforeEdit))
 
-        // 26 — Watchlist scrips trimmed --------------------------------------------
+        // 27 — Watchlist scrips trimmed --------------------------------------------
+        // Row deletes are staged and only sent on Save. With nothing to delete,
+        // Back closes the screen (it pops itself when nothing changed).
         val scripsTrimmed = step("watchlist_scrips_trimmed")
-        if (!engine.isPresent(Ids.EDIT_WATCHLIST_DELETE_BUTTON)) {
-            engine.pressBack()
-            scripsTrimmed.skip("the watchlist is already empty, so there was nothing to delete")
+        begin(scripsTrimmed)
+        val hasRows = engine.waitForAny(
+            listOf(Ids.EDIT_WATCHLIST_DELETE_BUTTON),
+            AutomationConfig.Timeouts.EDIT_ROWS,
+        ) is WaitOutcome.Found
+        if (engine.cancelled) return stopped(scripsTrimmed)
+        val countAfterTrim: Int?
+        if (!hasRows) {
+            if (!closeWithBack(Ids.EDIT_WATCHLIST_SCREEN)) {
+                if (engine.cancelled) return stopped(scripsTrimmed)
+                return abort(scripsTrimmed, "The watchlist is empty, but Edit Watchlist did not close on Back.")
+            }
+            countAfterTrim = countBeforeEdit
+            scripsTrimmed.skip("the watchlist is empty, so there was nothing to delete; closed Edit Watchlist")
             emitStep(scripsTrimmed)
         } else {
-            begin(scripsTrimmed)
             val deletes = engine.tapUpTo(
                 Ids.EDIT_WATCHLIST_DELETE_BUTTON,
                 maxTimes = 6,
@@ -588,130 +659,578 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             if (engine.cancelled) return stopped(scripsTrimmed)
             val saveOutcome = engine.tap(Ids.EDIT_WATCHLIST_SAVE_BUTTON)
             if (!saveOutcome.ok) {
+                return abort(scripsTrimmed, "Deleted $deletes scrip(s) but could not tap Save: ${saveOutcome.detail}")
+            }
+            if (!engine.waitForGone(Ids.EDIT_WATCHLIST_SCREEN, AutomationConfig.Timeouts.SCREEN_CHANGE)) {
+                if (engine.cancelled) return stopped(scripsTrimmed)
+                return abort(scripsTrimmed, "Tapped Save after deleting $deletes scrip(s), but Edit Watchlist did not close.")
+            }
+            val expected = countBeforeEdit?.minus(deletes)
+            countAfterTrim = waitForScripCount(expected)
+            if (engine.cancelled) return stopped(scripsTrimmed)
+            if (expected != null && countAfterTrim != expected) {
                 return abort(
                     scripsTrimmed,
-                    "Deleted $deletes scrip(s) but could not tap Save: ${saveOutcome.detail}",
+                    "Deleted $deletes of $countBeforeEdit scrip(s) and saved, so the watchlist should hold " +
+                        "$expected, but its count label shows ${countAfterTrim ?: "nothing readable"}.",
                 )
             }
-            pass(scripsTrimmed, "deleted $deletes scrip(s) and saved")
+            pass(scripsTrimmed, "deleted $deletes scrip(s) and saved" + countNote(countAfterTrim))
         }
 
-        // 27 — Search screen opened -----------------------------------------------
+        // 28 — Search screen opened -----------------------------------------------
         val searchOpened = step("search_opened")
         begin(searchOpened)
-        val searchOpenOutcome = engine.waitAndTap(
+        val searchOpenOutcome = engine.tapAndConfirm(
             Ids.WATCHLIST_SEARCH_BUTTON,
-            emptyList(),
+            listOf(Ids.SEARCH_SCREEN),
             AutomationConfig.Timeouts.SEARCH_SCREEN,
         )
         if (!searchOpenOutcome.ok) {
             if (engine.cancelled) return stopped(searchOpened)
-            return abort(searchOpened, "Could not tap the Watchlist search icon: ${searchOpenOutcome.detail}")
+            return abort(searchOpened, "Could not open Search: ${searchOpenOutcome.detail}")
+        }
+        when (val input = engine.waitForAny(listOf(Ids.SEARCH_SCRIP_INPUT), AutomationConfig.Timeouts.SCREEN_CHANGE)) {
+            is WaitOutcome.Found -> Unit
+            is WaitOutcome.Cancelled -> return stopped(searchOpened)
+            else -> return abort(searchOpened, reasonFor(input, "The search field", AutomationConfig.Timeouts.SCREEN_CHANGE))
         }
         pass(searchOpened, searchOpenOutcome.detail)
 
-        // 28 — TCS added from search -------------------------------------------------
-        val tcsAdded = step("search_tcs_added")
-        begin(tcsAdded)
-        val tcsEntry = engine.enterText(Ids.SEARCH_SCRIP_INPUT, "tcs")
-        if (!tcsEntry.ok) {
-            return abort(tcsAdded, "Could not enter 'tcs' in the search field: ${tcsEntry.detail}")
-        }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(tcsAdded)
-        val tcsTaps = engine.tapUpTo(
-            Ids.SEARCH_SCRIP_ADD_BUTTON,
-            maxTimes = 2,
-            settleMs = AutomationConfig.Timeouts.SETTLE,
-        )
-        if (engine.cancelled) return stopped(tcsAdded)
-        if (tcsTaps == 0) {
-            return abort(tcsAdded, "No TCS search result's add button could be tapped.")
-        }
-        pass(tcsAdded, "added $tcsTaps result(s)")
-
-        // 29 — NIFTY futures added from search ----------------------------------------
-        val niftyFuturesAdded = step("search_nifty_futures_added")
-        begin(niftyFuturesAdded)
-        val niftyEntry = engine.enterText(Ids.SEARCH_SCRIP_INPUT, "nifty")
-        if (!niftyEntry.ok) {
-            return abort(niftyFuturesAdded, "Could not enter 'nifty' in the search field: ${niftyEntry.detail}")
-        }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(niftyFuturesAdded)
-        val futuresFilterOutcome = engine.tap(Ids.SEARCH_FILTER_CHIP_FUTURES)
-        if (!futuresFilterOutcome.ok) {
+        // 29 — Search filter chips listed --------------------------------------------
+        val chipsListed = step("search_filter_chips_listed")
+        begin(chipsListed)
+        val missingChips = Ids.SEARCH_FILTER_CHIPS.filterNot { revealChip(it) }
+        if (engine.cancelled) return stopped(chipsListed)
+        if (missingChips.isNotEmpty()) {
             return abort(
-                niftyFuturesAdded,
-                "Could not tap the Futures filter chip: ${futuresFilterOutcome.detail}",
+                chipsListed,
+                "These search filter chips are missing: ${missingChips.joinToString()}. Expected All, Stock, " +
+                    "Futures, Options, Commodity and Mutual Funds.",
             )
         }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(niftyFuturesAdded)
-        val futuresTaps = engine.tapUpTo(
-            Ids.SEARCH_SCRIP_ADD_BUTTON,
-            maxTimes = 1,
-            settleMs = AutomationConfig.Timeouts.SETTLE,
-        )
-        if (engine.cancelled) return stopped(niftyFuturesAdded)
-        if (futuresTaps == 0) {
-            return abort(niftyFuturesAdded, "No NIFTY futures search result's add button could be tapped.")
-        }
-        pass(niftyFuturesAdded, "added the first NIFTY futures result")
+        pass(chipsListed, "All, Stock, Futures, Options, Commodity and Mutual Funds are all offered")
 
-        // 30 — NIFTY options added from search ----------------------------------------
-        val niftyOptionsAdded = step("search_nifty_options_added")
-        begin(niftyOptionsAdded)
-        val optionsFilterOutcome = engine.tap(Ids.SEARCH_FILTER_CHIP_OPTIONS)
-        if (!optionsFilterOutcome.ok) {
-            return abort(
-                niftyOptionsAdded,
-                "Could not tap the Options filter chip: ${optionsFilterOutcome.detail}",
-            )
+        // 30–33 — One add per trading filter --------------------------------------------
+        // Each query is allowed to settle before the next one starts, so a slow
+        // earlier response can never overwrite the results being acted on.
+        var added = 0
+        for (search in listOf(
+            SearchAdd("search_tcs_added", Ids.SEARCH_FILTER_CHIP_STOCK, "Stock", "tcs", "TCS"),
+            SearchAdd("search_nifty_futures_added", Ids.SEARCH_FILTER_CHIP_FUTURES, "Futures", "nifty", "NIFTY futures"),
+            SearchAdd("search_nifty_options_added", Ids.SEARCH_FILTER_CHIP_OPTIONS, "Options", null, "NIFTY options"),
+            SearchAdd("search_crudeoil_added", Ids.SEARCH_FILTER_CHIP_COMMODITY, "Commodity", "crudeoil", "crude oil"),
+        )) {
+            val searchStep = step(search.stepId)
+            begin(searchStep)
+            searchAndAdd(search)?.let { failure ->
+                if (engine.cancelled) return stopped(searchStep)
+                return abort(searchStep, failure)
+            }
+            added++
+            pass(searchStep, "added the first ${search.what} result under the ${search.chipName} filter")
         }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(niftyOptionsAdded)
-        val optionsTaps = engine.tapUpTo(
-            Ids.SEARCH_SCRIP_ADD_BUTTON,
-            maxTimes = 1,
-            settleMs = AutomationConfig.Timeouts.SETTLE,
-        )
-        if (engine.cancelled) return stopped(niftyOptionsAdded)
-        if (optionsTaps == 0) {
-            return abort(niftyOptionsAdded, "No NIFTY options search result's add button could be tapped.")
-        }
-        pass(niftyOptionsAdded, "added the first NIFTY options result")
 
-        // 31 — Crude oil added from search -----------------------------------------------
-        val crudeoilAdded = step("search_crudeoil_added")
-        begin(crudeoilAdded)
-        val allFilterOutcome = engine.tap(Ids.SEARCH_FILTER_CHIP_ALL)
-        if (!allFilterOutcome.ok) {
-            return abort(crudeoilAdded, "Could not reset the filter to 'All': ${allFilterOutcome.detail}")
+        // 34 — All filter lists results -------------------------------------------------
+        val allResults = step("search_all_filter_results")
+        begin(allResults)
+        tapChip(Ids.SEARCH_FILTER_CHIP_ALL, "All")?.let { return abort(allResults, it) }
+        waitForResults(Ids.SEARCH_RESULTS_LIST, "'crudeoil' under All")?.let { failure ->
+            if (engine.cancelled) return stopped(allResults)
+            return abort(allResults, failure)
         }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(crudeoilAdded)
-        val crudeoilEntry = engine.enterText(Ids.SEARCH_SCRIP_INPUT, "crudeoil")
-        if (!crudeoilEntry.ok) {
-            return abort(crudeoilAdded, "Could not enter 'crudeoil' in the search field: ${crudeoilEntry.detail}")
-        }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(crudeoilAdded)
-        val crudeoilTaps = engine.tapUpTo(
-            Ids.SEARCH_SCRIP_ADD_BUTTON,
-            maxTimes = 1,
-            settleMs = AutomationConfig.Timeouts.SETTLE,
-        )
-        if (engine.cancelled) return stopped(crudeoilAdded)
-        if (crudeoilTaps == 0) {
-            return abort(crudeoilAdded, "No crude oil search result's add button could be tapped.")
-        }
-        pass(crudeoilAdded, "added the first crude oil result")
+        pass(allResults, "switching back to All re-ran the query and listed results")
 
-        // 32 — Search screen closed ---------------------------------------------------
+        // 35 — Mutual fund results listed --------------------------------------------------
+        // Typed first, while still on a scrip filter, so the switch to Mutual
+        // Funds sends exactly one fund query.
+        val mfResults = step("search_mutual_fund_results")
+        begin(mfResults)
+        val mfEntry = engine.enterText(Ids.SEARCH_SCRIP_INPUT, "axis")
+        if (!mfEntry.ok) return abort(mfResults, "Could not enter 'axis' in the search field: ${mfEntry.detail}")
+        if (!waitForSearchToSettle()) return stopped(mfResults)
+        tapChip(Ids.SEARCH_FILTER_CHIP_MUTUAL_FUNDS, "Mutual Funds")?.let { return abort(mfResults, it) }
+        waitForResults(Ids.MF_SEARCH_RESULTS, "'axis' under Mutual Funds")?.let { failure ->
+            if (engine.cancelled) return stopped(mfResults)
+            return abort(mfResults, failure)
+        }
+        pass(mfResults, "the Mutual Funds filter switched to fund search and listed funds for 'axis'")
+
+        // 36 — Search screen closed ---------------------------------------------------
         val searchClosed = step("search_closed")
         begin(searchClosed)
-        if (!engine.pressBack()) {
-            return abort(searchClosed, "The system back action could not be dispatched.")
+        val closeOutcome = engine.tapAndConfirm(
+            Ids.SEARCH_BACK_BUTTON,
+            listOf(Ids.WATCHLIST_SCRIP_COUNT),
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!closeOutcome.ok || !engine.waitForGone(Ids.SEARCH_SCREEN, AutomationConfig.Timeouts.SCREEN_CHANGE)) {
+            if (engine.cancelled) return stopped(searchClosed)
+            return abort(searchClosed, "Search did not close from its back arrow: ${closeOutcome.detail}")
         }
-        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(searchClosed)
-        pass(searchClosed, "dispatched the system back action")
+        pass(searchClosed, "closed from the search field's back arrow")
+
+        // 37 — Watchlist count reflects the adds ------------------------------------------
+        val countUpdated = step("watchlist_count_updated")
+        begin(countUpdated)
+        val expectedCount = countAfterTrim?.plus(added)
+        val countNow = waitForScripCount(expectedCount)
+        if (engine.cancelled) return stopped(countUpdated)
+        if (expectedCount == null || countNow != expectedCount) {
+            return abort(
+                countUpdated,
+                "After adding $added scrip(s) to a watchlist of ${countAfterTrim ?: "unknown size"}, its count " +
+                    "label should show ${expectedCount ?: "a larger number"}, but shows ${countNow ?: "nothing readable"}.",
+            )
+        }
+        pass(countUpdated, "the watchlist went from $countAfterTrim to $countNow scrips")
+
+        // 38 — Heat map view toggled and restored -------------------------------------------
+        val viewToggled = step("watchlist_view_toggled")
+        begin(viewToggled)
+        val startLayout = engine.firstPresent(listOf(Ids.WATCHLIST_LIST_VIEW, Ids.WATCHLIST_GRID_VIEW))
+        if (startLayout == null) {
+            return abort(
+                viewToggled,
+                "Neither the list nor the heat map layout is on screen. Identifiers on screen: " +
+                    engine.visibleIdentifiers().joinToString(", ") + ".",
+            )
+        }
+        val otherLayout = if (startLayout == Ids.WATCHLIST_LIST_VIEW) Ids.WATCHLIST_GRID_VIEW else Ids.WATCHLIST_LIST_VIEW
+        for (layout in listOf(otherLayout, startLayout)) {
+            val toggle = engine.tapAndConfirm(
+                Ids.WATCHLIST_VIEW_TOGGLE_BUTTON,
+                listOf(layout),
+                AutomationConfig.Timeouts.SCREEN_CHANGE,
+            )
+            if (!toggle.ok) {
+                if (engine.cancelled) return stopped(viewToggled)
+                return abort(viewToggled, "The layout toggle did not switch to '$layout': ${toggle.detail}")
+            }
+        }
+        pass(viewToggled, "switched to ${layoutName(otherLayout)} and back to ${layoutName(startLayout)}")
+
+        // 39 — Filter & Sorting sheet opened and closed ---------------------------------------
+        val filterSheet = step("watchlist_filter_sheet_opened")
+        begin(filterSheet)
+        val sheetOutcome = engine.tapAndConfirm(
+            Ids.WATCHLIST_FILTER_BUTTON,
+            listOf(Ids.WATCHLIST_FILTER_SHEET),
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!sheetOutcome.ok) {
+            if (engine.cancelled) return stopped(filterSheet)
+            return abort(filterSheet, "The Filter & Sorting sheet did not open: ${sheetOutcome.detail}")
+        }
+        if (!closeWithBack(Ids.WATCHLIST_FILTER_SHEET)) {
+            if (engine.cancelled) return stopped(filterSheet)
+            return abort(filterSheet, "The Filter & Sorting sheet opened but did not close on Back.")
+        }
+        pass(filterSheet, "opened from the filter icon and closed with Back, nothing applied")
+
+        // 40 — Scrip details opened and closed ------------------------------------------------
+        val detailsOpened = step("scrip_details_opened")
+        begin(detailsOpened)
+        val detailScreens = listOf(Ids.SCRIP_DETAILS_SCREEN, Ids.INDEX_DETAILS_SCREEN)
+        val detailsOutcome = engine.tapAndConfirm(
+            Ids.WATCHLIST_SCRIP_ROW,
+            detailScreens,
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!detailsOutcome.ok) {
+            if (engine.cancelled) return stopped(detailsOpened)
+            return abort(detailsOpened, "Tapping the first watchlist row did not open its details: ${detailsOutcome.detail}")
+        }
+        val openedScreen = engine.firstPresent(detailScreens) ?: Ids.SCRIP_DETAILS_SCREEN
+        if (!closeWithBack(openedScreen) ||
+            engine.waitForAny(listOf(Ids.WATCHLIST_SCRIP_COUNT), AutomationConfig.Timeouts.SCREEN_CHANGE) !is WaitOutcome.Found
+        ) {
+            if (engine.cancelled) return stopped(detailsOpened)
+            return abort(detailsOpened, "The details screen opened but Back did not return to the watchlist.")
+        }
+        pass(detailsOpened, "opened '$openedScreen' from the first row and returned to the watchlist")
+
+        // 41–58 — Every bottom tab and inner tab finishes loading ------------------------
+        // Read-only: only bottom tabs, inner tab headers and scrolling are
+        // touched — never a row, nor a buy, sell, exit or order button. A tab
+        // still loading at its deadline, or showing the Reload screen, fails
+        // its own step and the run moves on, so one slow tab cannot hide the
+        // state of the others and the run still ends logged out.
+        val tabLoad = AutomationConfig.Timeouts.TAB_LOAD
+        val ordersLoad = AutomationConfig.Timeouts.ORDERS_TAB_LOAD
+        val sections = listOf(
+            Section(
+                "Home", Ids.BOTTOMNAV_HOME_TAB, Ids.DASHBOARD_SCREEN,
+                listOf(
+                    TabCheck("home_overview_loaded", listOf("${Ids.HOME_TAB_PREFIX}overview"), tabLoad),
+                    TabCheck("home_stocks_loaded", listOf("${Ids.HOME_TAB_PREFIX}stocks"), tabLoad),
+                    TabCheck("home_fno_loaded", listOf("${Ids.HOME_TAB_PREFIX}f_o"), tabLoad),
+                    TabCheck("home_mutual_funds_loaded", listOf("${Ids.HOME_TAB_PREFIX}mutual_funds"), tabLoad),
+                    TabCheck("home_commodity_loaded", listOf("${Ids.HOME_TAB_PREFIX}commodity"), tabLoad),
+                ),
+            ),
+            Section(
+                "Research", Ids.BOTTOMNAV_RESEARCH_TAB, Ids.RESEARCH_SCREEN,
+                listOf(TabCheck("research_loaded", emptyList(), tabLoad)),
+            ),
+            Section(
+                "Portfolio", Ids.BOTTOMNAV_PORTFOLIO_TAB, Ids.PORTFOLIO_SCREEN,
+                listOf(
+                    holdingsTab("holdings_overview_loaded", "overview", tabLoad),
+                    holdingsTab("holdings_equity_loaded", "equity", tabLoad),
+                    holdingsTab("holdings_thematic_loaded", "thematic_basket", tabLoad),
+                    holdingsTab("holdings_mutual_funds_loaded", "mutual_funds", tabLoad),
+                    TabCheck("portfolio_my_wealth_loaded", listOf("${Ids.PORTFOLIO_TAB_PREFIX}my_wealth"), tabLoad),
+                ),
+            ),
+            Section(
+                "Orders", Ids.BOTTOMNAV_ORDER_TAB, Ids.ORDERBOOK_SCREEN,
+                listOf("open", "executed", "gtt", "sip", "basket", "alerts").map { tab ->
+                    TabCheck(
+                        "orders_${tab}_loaded",
+                        listOf("${Ids.ORDERBOOK_TAB_PREFIX}orders", "${Ids.ORDERS_TAB_PREFIX}$tab"),
+                        ordersLoad,
+                    )
+                } + TabCheck("positions_loaded", listOf("${Ids.ORDERBOOK_TAB_PREFIX}positions"), ordersLoad),
+            ),
+        )
+        for (section in sections) {
+            checkSection(section)?.let { return it }
+        }
+
+        // 59 — Profile opened ---------------------------------------------------------------
+        // Orders is on screen now, and its header carries the profile icon.
+        val profileOpened = step("profile_opened")
+        begin(profileOpened)
+        val profileOutcome = engine.tapAndConfirm(
+            Ids.PROFILE_BUTTON,
+            listOf(Ids.PROFILE_SCREEN),
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!profileOutcome.ok) {
+            if (engine.cancelled) return stopped(profileOpened)
+            return abort(profileOpened, "Could not open Profile from the header icon: ${profileOutcome.detail}")
+        }
+        pass(profileOpened, profileOutcome.detail)
+
+        // 60 — Logged out ---------------------------------------------------------------------
+        // Logout sits at the bottom of Profile, below the fold.
+        val loggedOut = step("logged_out")
+        begin(loggedOut)
+        var scrolls = 0
+        while (!engine.isPresent(Ids.PROFILE_LOGOUT_BUTTON) && scrolls < 8 && engine.scrollPage(forward = true)) {
+            scrolls++
+            if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return stopped(loggedOut)
+        }
+        val logoutOutcome = engine.tapAndConfirm(
+            Ids.PROFILE_LOGOUT_BUTTON,
+            listOf(Ids.LOGOUT_CONFIRM_BUTTON),
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!logoutOutcome.ok) {
+            if (engine.cancelled) return stopped(loggedOut)
+            return abort(loggedOut, "Could not open the logout confirmation: ${logoutOutcome.detail}")
+        }
+        // No retry: the dialog stays up for the whole logout request, and a
+        // second OK would send a second logout.
+        val confirmOutcome = engine.tapAndConfirm(
+            Ids.LOGOUT_CONFIRM_BUTTON,
+            listOf(Ids.CLIENT_ID_SCREEN),
+            AutomationConfig.Timeouts.LOGOUT,
+            retryAfterMs = AutomationConfig.Timeouts.LOGOUT,
+        )
+        if (!confirmOutcome.ok) {
+            if (engine.cancelled) return stopped(loggedOut)
+            return abort(loggedOut, "Confirmed logout, but the Client ID screen never appeared: ${confirmOutcome.detail}")
+        }
+        pass(loggedOut, "confirmed with OK and landed on the Client ID screen")
 
         return finish()
+    }
+
+    // ── Watchlist and search helpers ────────────────────────────────────────
+
+    /** One search-and-add step. [query] null keeps the text already typed. */
+    private data class SearchAdd(
+        val stepId: String,
+        val chipId: String,
+        val chipName: String,
+        val query: String?,
+        val what: String,
+    )
+
+    /** The "N/50 Scrips" label's N, or null when it is absent or unreadable. */
+    private fun readScripCount(): Int? =
+        engine.labelOf(Ids.WATCHLIST_SCRIP_COUNT)
+            ?.let { Regex("""(\d+)\s*/\s*\d+""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+
+    /** Waits for the count label to read [expected]; returns the last value read. */
+    private fun waitForScripCount(expected: Int?): Int? {
+        if (expected == null) {
+            engine.sleep(AutomationConfig.Timeouts.SETTLE)
+            return readScripCount()
+        }
+        var last: Int? = null
+        engine.waitUntil(AutomationConfig.Timeouts.COUNT_UPDATE) {
+            last = readScripCount()
+            last == expected
+        }
+        return last
+    }
+
+    private fun countNote(count: Int?): String =
+        if (count == null) "; scrip count label not readable" else "; watchlist holds $count scrip(s)"
+
+    private fun layoutName(identifier: String): String =
+        if (identifier == Ids.WATCHLIST_GRID_VIEW) "the heat map" else "the list"
+
+    /** Presses Back until [identifier] leaves the screen, at most twice. */
+    private fun closeWithBack(identifier: String): Boolean {
+        repeat(2) {
+            if (!engine.pressBack()) return false
+            if (engine.waitForGone(identifier, AutomationConfig.Timeouts.CONFIRM_RETRY)) return true
+            if (engine.cancelled) return false
+        }
+        return false
+    }
+
+    /** Scrolls the chip row until [chipId] is built. */
+    private fun revealChip(chipId: String): Boolean =
+        engine.revealInList(chipId, Ids.SEARCH_FILTER_CHIPS)
+
+    /** Taps a filter chip. Returns a failure reason, or null on success. */
+    private fun tapChip(chipId: String, name: String): String? {
+        if (!revealChip(chipId)) {
+            return "The '$name' filter chip ('$chipId') is not on the search screen."
+        }
+        val outcome = engine.tap(chipId)
+        return if (outcome.ok) null else "Could not tap the '$name' filter chip: ${outcome.detail}"
+    }
+
+    /**
+     * Lets an in-flight scrip query finish. The chip or text change that
+     * starts it is applied on Flutter's next frame, hence the settle first.
+     */
+    private fun waitForSearchToSettle(): Boolean {
+        if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) return false
+        engine.waitForGone(Ids.SEARCH_LOADING, AutomationConfig.Timeouts.SEARCH_RESULTS)
+        return !engine.cancelled
+    }
+
+    /** Waits for [resultsId] to list results. Returns a failure reason, or null. */
+    private fun waitForResults(resultsId: String, what: String): String? {
+        if (!waitForSearchToSettle()) return "cancelled"
+        return when (val outcome = engine.waitForAny(listOf(resultsId), AutomationConfig.Timeouts.SEARCH_RESULTS)) {
+            is WaitOutcome.Found -> null
+            else -> reasonFor(outcome, "Search results for $what", AutomationConfig.Timeouts.SEARCH_RESULTS)
+        }
+    }
+
+    /**
+     * Selects [search]'s chip, types its query, and adds the first result not
+     * yet in the watchlist. The add counts only once its "+" has turned into a
+     * tick. Returns a failure reason, or null on success.
+     */
+    private fun searchAndAdd(search: SearchAdd): String? {
+        tapChip(search.chipId, search.chipName)?.let { return it }
+        if (search.query != null) {
+            if (!waitForSearchToSettle()) return "cancelled"
+            val entry = engine.enterText(Ids.SEARCH_SCRIP_INPUT, search.query)
+            if (!entry.ok) return "Could not enter '${search.query}' in the search field: ${entry.detail}"
+        }
+        waitForResults(Ids.SEARCH_RESULTS_LIST, "${search.what} under ${search.chipName}")?.let { return it }
+
+        val ticksBefore = engine.countOf(Ids.SEARCH_SCRIP_ADDED_ICON)
+        val tap = engine.tap(Ids.SEARCH_SCRIP_ADD_BUTTON)
+        if (!tap.ok) {
+            return "No ${search.what} result offered '+' under ${search.chipName}; every listed result may " +
+                "already be in the watchlist (${tap.detail})."
+        }
+        val landed = engine.waitUntil(AutomationConfig.Timeouts.ADD_CONFIRM) {
+            engine.countOf(Ids.SEARCH_SCRIP_ADDED_ICON) > ticksBefore
+        }
+        if (landed) return null
+        if (engine.cancelled) return "cancelled"
+        if (engine.isPresent(Ids.WATCHLIST_ADD_SAVE_BUTTON)) {
+            return "Tapping '+' opened the 'Add scrip to' sheet instead of adding straight to the open " +
+                "watchlist, which means Search was not opened from a user watchlist tab."
+        }
+        return "Tapped '+' on the first ${search.what} result but it never turned into a tick within " +
+            "${AutomationConfig.Timeouts.ADD_CONFIRM / 1000} seconds. The watchlist may be full (50 scrips) " +
+            "or the add request failed."
+    }
+
+    // ── Bottom tab load checks ──────────────────────────────────────────────
+
+    /** One tab to check: [taps] are tapped in order (parent tabs first), the last one is the tab itself. */
+    private data class TabCheck(val stepId: String, val taps: List<String>, val budgetMs: Long)
+
+    private data class Section(val name: String, val bottomTab: String, val screen: String, val tabs: List<TabCheck>)
+
+    private fun holdingsTab(stepId: String, tab: String, budgetMs: Long) = TabCheck(
+        stepId,
+        listOf("${Ids.PORTFOLIO_TAB_PREFIX}holdings", "${Ids.HOLDINGS_TAB_PREFIX}$tab"),
+        budgetMs,
+    )
+
+    /**
+     * Opens [section]'s bottom tab and checks each of its tabs. Returns a
+     * result only when the run has to end (cancelled).
+     */
+    private fun checkSection(section: Section): AutomationRunResult? {
+        // In MF mode the third bottom tab is SIP, which has no Research screen.
+        if (section.bottomTab == Ids.BOTTOMNAV_RESEARCH_TAB &&
+            !engine.isPresent(Ids.BOTTOMNAV_RESEARCH_TAB) && engine.isPresent(Ids.BOTTOMNAV_SIP_TAB)
+        ) {
+            section.tabs.forEach { skipTab(it, "the app is in Mutual Fund mode, which shows SIP instead of Research") }
+            return null
+        }
+        val open = engine.tapAndConfirm(
+            section.bottomTab,
+            listOf(section.screen),
+            AutomationConfig.Timeouts.SCREEN_CHANGE,
+        )
+        if (!open.ok) {
+            if (engine.cancelled) return stopped(step(section.tabs.first().stepId))
+            section.tabs.forEach { tab ->
+                begin(step(tab.stepId))
+                failAndContinue(step(tab.stepId), "Could not open the ${section.name} tab: ${open.detail}")
+            }
+            return null
+        }
+        for (tab in section.tabs) {
+            checkTab(tab)?.let { return it }
+        }
+        return null
+    }
+
+    private fun skipTab(tab: TabCheck, reason: String) {
+        val step = step(tab.stepId)
+        step.skip(reason)
+        emitStep(step)
+    }
+
+    /** Selects [tab] and waits for every section on it to finish loading. */
+    private fun checkTab(tab: TabCheck): AutomationRunResult? {
+        val step = step(tab.stepId)
+        begin(step)
+        val target = tab.taps.lastOrNull()
+        if (target != null) {
+            // Parent tabs (Orders, Holdings) are tapped only when the inner tab
+            // strip is not already showing — re-selecting them on every inner
+            // tab is needless churn. An inner tab is judged missing only once
+            // its own strip is on screen.
+            if (!engine.isPresent(target)) {
+                for (parent in tab.taps.dropLast(1)) {
+                    when (selectTab(step, parent)) {
+                        TabSelect.CANCELLED -> return stopped(step)
+                        TabSelect.FAILED -> return null
+                        TabSelect.OK -> Unit
+                    }
+                }
+            }
+            if (!engine.isPresent(target)) {
+                // Thematic Basket and My Wealth are switched on per account.
+                step.skip("this account is not offered the '${target.substringAfterLast("_tab_")}' tab")
+                emitStep(step)
+                return null
+            }
+            when (selectTab(step, target)) {
+                TabSelect.CANCELLED -> return stopped(step)
+                TabSelect.FAILED -> return null
+                TabSelect.OK -> Unit
+            }
+        }
+
+        val check = checkPageLoads(tab.budgetMs)
+        if (engine.cancelled) return stopped(step)
+        val seconds = "%.1f".format(check.elapsedMs / 1000.0)
+        val where = if (check.pages > 1) " across ${check.pages} screenfuls" else ""
+        val empties = if (check.empty > 0) "; ${check.empty} section(s) show no data" else ""
+        when {
+            check.errors > 0 -> failAndContinue(
+                step,
+                "Showed the 'Something went wrong / Reload' screen (${check.errors} on screen) instead of data.",
+            )
+            !check.settled -> failAndContinue(
+                step,
+                "${check.stillLoading} section(s) were still loading after ${tab.budgetMs / 1000} seconds$where$empties.",
+            )
+            else -> pass(step, "every section loaded in $seconds s$where$empties")
+        }
+        return null
+    }
+
+    private enum class TabSelect { OK, FAILED, CANCELLED }
+
+    /** Taps the tab [id] and lets it settle. On FAILED, [step] has already been failed. */
+    private fun selectTab(step: AutomationStepResult, id: String): TabSelect {
+        val outcome = engine.tap(id)
+        if (!outcome.ok) {
+            if (engine.cancelled) return TabSelect.CANCELLED
+            failAndContinue(step, "Could not select '$id': ${outcome.detail}")
+            return TabSelect.FAILED
+        }
+        return if (engine.sleep(AutomationConfig.Timeouts.SETTLE)) TabSelect.OK else TabSelect.CANCELLED
+    }
+
+    private data class LoadCheck(
+        val settled: Boolean,
+        val elapsedMs: Long,
+        val pages: Int,
+        val empty: Int,
+        val errors: Int,
+        val stillLoading: Int,
+    )
+
+    /**
+     * Waits, within [budgetMs] in total, until no `ui_loading` marker is on
+     * screen, then scrolls a screenful and repeats, so sections below the fold
+     * — which Flutter only builds once they are near the viewport — are
+     * checked too. Scrolls back to the top afterwards so the tab strip is
+     * reachable again.
+     */
+    private fun checkPageLoads(budgetMs: Long): LoadCheck {
+        val start = android.os.SystemClock.elapsedRealtime()
+        val deadline = start + budgetMs
+        var pages = 1
+        var empty = 0
+        var errors = 0
+        var settled = true
+        var stillLoading = 0
+        while (true) {
+            val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            val clear = engine.waitUntil(remaining) { engine.countOf(Ids.UI_LOADING) == 0 }
+            empty = maxOf(empty, engine.countOf(Ids.UI_EMPTY))
+            errors = maxOf(errors, engine.countOf(Ids.UI_ERROR))
+            if (!clear) {
+                settled = false
+                stillLoading = engine.countOf(Ids.UI_LOADING)
+                break
+            }
+            if (engine.cancelled || pages >= AutomationConfig.Timeouts.TAB_MAX_PAGES) break
+            if (!engine.scrollPage(forward = true)) break
+            pages++
+            // Sections scrolled into view start their own fetch on the next frame.
+            if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) break
+        }
+        val elapsed = android.os.SystemClock.elapsedRealtime() - start
+        var back = 0
+        while (back < AutomationConfig.Timeouts.TAB_MAX_PAGES + 2 && engine.scrollPage(forward = false)) back++
+        engine.sleep(AutomationConfig.Timeouts.SETTLE)
+        return LoadCheck(settled, elapsed, pages, empty, errors, stillLoading)
+    }
+
+    /**
+     * Marks [step] failed but lets the run continue: used where one broken
+     * tab should not stop the remaining tabs from being checked. The run's
+     * verdict still ends FAILED.
+     */
+    private fun failAndContinue(step: AutomationStepResult, reason: String) {
+        step.fail(reason)
+        emitStep(step)
+        if (result.failureMessage == null) result.failureMessage = reason
+        captureScreenshot("failed_${step.id}")
     }
 
     // ── Step bookkeeping ────────────────────────────────────────────────────

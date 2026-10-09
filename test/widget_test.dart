@@ -52,10 +52,10 @@ AutomationResult _result({
 void main() {
   final reports = ReportService();
 
-  test('checklist mirrors the 18 native steps in order', () {
-    expect(AutomationChecklist.steps.length, 18);
+  test('checklist mirrors the 60 native steps in order', () {
+    expect(AutomationChecklist.steps.length, 60);
     expect(AutomationChecklist.steps.first.id, 'target_app_installed');
-    expect(AutomationChecklist.steps.last.id, 'home_displayed');
+    expect(AutomationChecklist.steps.last.id, 'logged_out');
   });
 
   test('a fully passing run renders PASSED with a full count', () {
@@ -65,11 +65,11 @@ void main() {
     final result = _result(steps: steps, passed: true);
 
     expect(result.verdict, 'PASSED');
-    expect(result.completedSteps, 18);
+    expect(result.completedSteps, 60);
 
     final text = reports.buildChecklistText(result);
     expect(text, contains('Result: PASSED'));
-    expect(text, contains('Completed: 18/18'));
+    expect(text, contains('Completed: 60/60'));
     expect(text, contains('✓ Target application launched'));
     expect(text, isNot(contains('Failure:')));
   });

@@ -3,10 +3,14 @@ package com.mobileautomation.tool
 import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
+import com.mobileautomation.tool.AutomationConfig.SettingsTexts
+import com.mobileautomation.tool.AutomationConfig.SystemIds
 import java.io.File
 import java.util.UUID
 
@@ -197,6 +201,155 @@ class AutomationEngine private constructor(
         sink(payload)
     }
 
+    // ── Target window ───────────────────────────────────────────────────────
+
+    /** Notification permission prompts answered with "Allow" during this run. */
+    @Volatile
+    var notificationPromptsAllowed: Int = 0
+        private set
+
+    /**
+     * Root of the target app's window, or null when anything else is in front.
+     *
+     * The service can also read Settings and the permission prompt (for the
+     * pre-run reset), so the package is checked here to keep every flow lookup
+     * confined to the target app. A notification permission prompt is answered
+     * on the way: clearing app data resets that permission, so the target app
+     * asks again on every run and the prompt would otherwise cover it.
+     */
+    private fun targetRoot(): AccessibilityNodeInfo? {
+        // Checked across all windows: the prompt is drawn over the target app
+        // while the system still reports the app as the active window, and
+        // while it is up, coordinate taps land on the prompt instead.
+        service.windowRootOf(AutomationConfig.PERMISSION_CONTROLLER_PACKAGES)?.let { prompt ->
+            allowNotificationPrompt(prompt)
+            return null
+        }
+        val root = service.rootNode() ?: return null
+        return root.takeIf { it.packageName?.toString() == targetPackage }
+    }
+
+    /** Taps "Allow" on the prompt only if it is asking about notifications. */
+    private fun allowNotificationPrompt(root: AccessibilityNodeInfo) {
+        val message = AccessibilityNodeFinder.byIdentifier(root, SystemIds.PERMISSION_MESSAGE)
+            ?.text?.toString() ?: return
+        if (!message.contains("notification", ignoreCase = true)) return
+        val allow = AccessibilityNodeFinder.byIdentifier(root, SystemIds.PERMISSION_ALLOW_BUTTON) ?: return
+        if (clickResolved(allow)) notificationPromptsAllowed++
+    }
+
+    // ── App data reset ──────────────────────────────────────────────────────
+
+    /**
+     * Clears all of the target app's data the way an operator would: App info
+     * > Storage > Clear storage > confirm. No API lets one app clear another's
+     * data without shell or system privileges, so the Settings UI is driven
+     * instead. Settings is left on screen; the caller launches the target next.
+     */
+    fun clearTargetAppData(): ActionOutcome {
+        val appInfo = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", targetPackage, null),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        try {
+            appContext.startActivity(appInfo)
+        } catch (t: Throwable) {
+            return ActionOutcome(false, "could not open the target app's App info: ${t.javaClass.simpleName}")
+        }
+
+        // MIUI shows the clear button on App info itself; everyone else nests it
+        // one level down under a Storage entry.
+        var clear = waitForSettingsText(SettingsTexts.STORAGE_ENTRY + SettingsTexts.CLEAR_STORAGE, scroll = true)
+            ?: return ActionOutcome(false, settingsMiss("the Storage entry on App info"))
+        if (clear.text?.toString() !in SettingsTexts.CLEAR_STORAGE) {
+            if (!clickResolved(clear)) return ActionOutcome(false, "could not tap the Storage entry on App info")
+            if (!sleep(AutomationConfig.Timeouts.SETTLE)) return ActionOutcome(false, "cancelled")
+            clear = waitForSettingsText(SettingsTexts.CLEAR_STORAGE, scroll = true)
+                ?: return ActionOutcome(false, settingsMiss("the Clear storage button"))
+        }
+        if (isDisabled(clear)) {
+            return ActionOutcome(true, "Clear storage is disabled in Settings: the app already holds no data")
+        }
+        if (!clickResolved(clear)) return ActionOutcome(false, "could not tap Clear storage")
+
+        // Usually one confirmation dialog; MIUI asks which data first, then OK.
+        var confirmations = 0
+        while (confirmations < 2) {
+            val budget = if (confirmations == 0) AutomationConfig.Timeouts.SETTINGS_SCREEN else 1_500L
+            val confirm = waitForSettingsText(SettingsTexts.CONFIRM_CLEAR, scroll = false, timeoutMs = budget) ?: break
+            if (!clickResolved(confirm)) break
+            confirmations++
+            if (!sleep(AutomationConfig.Timeouts.SETTLE)) return ActionOutcome(false, "cancelled")
+        }
+        if (cancelled) return ActionOutcome(false, "cancelled")
+        if (confirmations == 0) return ActionOutcome(false, settingsMiss("the clear-data confirmation button"))
+        return ActionOutcome(true, "cleared via App info > Storage > Clear storage and confirmed")
+    }
+
+    /**
+     * Polls the Settings window for the first of [candidates]. With [scroll],
+     * scrolls the page forward after a few misses in case the entry sits below
+     * the fold — not straight away, so a page still loading is not scrolled
+     * past its top.
+     */
+    private fun waitForSettingsText(
+        candidates: List<String>,
+        scroll: Boolean,
+        timeoutMs: Long = AutomationConfig.Timeouts.SETTINGS_SCREEN,
+    ): AccessibilityNodeInfo? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var misses = 0
+        var scrolls = 0
+        while (true) {
+            if (cancelled) return null
+            val root = service.rootNode()
+            if (root != null && root.packageName?.toString() in AutomationConfig.SETTINGS_PACKAGES) {
+                AccessibilityNodeFinder.byText(root, candidates)?.let { return it }
+                if (scroll && ++misses % 4 == 0 && scrolls < 3) {
+                    val scrolled = try {
+                        AccessibilityNodeFinder.firstScrollable(root)
+                            ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) == true
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    if (scrolled) scrolls++
+                }
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) return null
+            if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return null
+        }
+    }
+
+    private fun settingsMiss(what: String): String {
+        val front = service.rootNode()?.packageName?.toString()
+        return if (front !in AutomationConfig.SETTINGS_PACKAGES) {
+            "Settings did not come to the front (the foreground window belongs to ${front ?: "nothing readable"}). " +
+                "If Settings opened, reinstall the tool or toggle its accessibility service off and on so " +
+                "it picks up access to Settings."
+        } else {
+            "$what was not found in Settings within ${AutomationConfig.Timeouts.SETTINGS_SCREEN / 1000} " +
+                "seconds. Settings labels differ by phone make; add this device's wording to " +
+                "AutomationConfig.SettingsTexts."
+        }
+    }
+
+    /** A Settings button greys out its label and its container; check both. */
+    private fun isDisabled(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops < 4) {
+            if (!current.isEnabled) return true
+            if (current.isClickable) return false
+            current = try {
+                current.parent
+            } catch (_: Throwable) {
+                null
+            }
+            hops++
+        }
+        return false
+    }
+
     // ── Waiting ─────────────────────────────────────────────────────────────
 
     sealed class WaitOutcome {
@@ -220,7 +373,7 @@ class AutomationEngine private constructor(
         while (true) {
             if (cancelled) return WaitOutcome.Cancelled
 
-            val root = service.rootNode()
+            val root = targetRoot()
             if (root != null) {
                 everSawTarget = true
                 nullRootSinceMs = 0L
@@ -260,7 +413,7 @@ class AutomationEngine private constructor(
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (true) {
             if (cancelled) return false
-            if (service.rootNode() != null) {
+            if (targetRoot() != null) {
                 everSawTarget = true
                 return true
             }
@@ -271,12 +424,158 @@ class AutomationEngine private constructor(
 
     /** Single, immediate lookup. Null when absent or the window is unreadable. */
     fun findNow(identifier: String): AccessibilityNodeInfo? {
-        val root = service.rootNode() ?: return null
+        val root = targetRoot() ?: return null
         everSawTarget = true
         return AccessibilityNodeFinder.byIdentifier(root, identifier)
     }
 
     fun isPresent(identifier: String): Boolean = findNow(identifier) != null
+
+    /** The first of [identifiers] currently present, if any. */
+    fun firstPresent(identifiers: List<String>): String? {
+        val root = targetRoot() ?: return null
+        return identifiers.firstOrNull { AccessibilityNodeFinder.byIdentifier(root, it) != null }
+    }
+
+    /** How many nodes currently carry [identifier] (only rows Flutter has built count). */
+    fun countOf(identifier: String): Int =
+        AccessibilityNodeFinder.countByIdentifier(targetRoot(), identifier)
+
+    /**
+     * The visible label of the node carrying [identifier]. Only for static
+     * display text such as a scrip count — never call this on an input, whose
+     * text could be a credential.
+     */
+    fun labelOf(identifier: String): String? {
+        val node = findNow(identifier) ?: return null
+        return (node.text ?: node.contentDescription)?.toString()
+    }
+
+    /** Identifiers on screen right now, for failure messages. */
+    fun visibleIdentifiers(): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot())
+
+    /** Polls until [identifier] has left the screen. False on timeout or cancel. */
+    fun waitForGone(identifier: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            if (cancelled) return false
+            if (targetRoot() != null && !isPresent(identifier)) return true
+            if (SystemClock.elapsedRealtime() >= deadline) return false
+            if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return false
+        }
+    }
+
+    /**
+     * Taps [identifier] and waits for one of [expect] to appear.
+     *
+     * Flutter drops input for about a frame around every route push or pop:
+     * the Navigator absorbs pointers, which also strips the semantic actions
+     * from every node. A tap that lands in that window is lost without any
+     * error, so a single tap-and-hope cannot tell "opened" from "ignored". If
+     * nothing from [expect] appears within [retryAfterMs] while [identifier] is
+     * still on screen — a page that really opened would have covered it — the
+     * tap is repeated, until [timeoutMs]. With [tapAtLeastOnce], [expect]
+     * already being on screen does not excuse the tap (e.g. another watchlist
+     * tab already shows the same controls).
+     */
+    fun tapAndConfirm(
+        identifier: String,
+        expect: List<String>,
+        timeoutMs: Long,
+        retryAfterMs: Long = AutomationConfig.Timeouts.CONFIRM_RETRY,
+        tapAtLeastOnce: Boolean = false,
+    ): ActionOutcome {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var taps = 0
+        var lastTap: ActionOutcome? = null
+        var nextTapAt = 0L
+        while (true) {
+            if (cancelled) return ActionOutcome(false, "cancelled")
+            if (!tapAtLeastOnce || taps > 0) firstPresent(expect)?.let { found ->
+                val how = lastTap?.detail ?: "no tap was needed"
+                val retries = if (taps > 1) " after $taps taps (earlier ones were dropped)" else ""
+                return ActionOutcome(true, "$how; '$found' appeared$retries")
+            }
+            val now = SystemClock.elapsedRealtime()
+            if (now >= nextTapAt && isPresent(identifier)) {
+                val outcome = tap(identifier)
+                if (outcome.ok) {
+                    taps++
+                    lastTap = outcome
+                    nextTapAt = now + retryAfterMs
+                }
+            }
+            if (now >= deadline) {
+                val what = expect.joinToString(" or ") { "'$it'" }
+                val tapped = if (taps == 0) {
+                    "'$identifier' could never be tapped (${lastTap?.detail ?: "not on screen"})"
+                } else {
+                    "tapped '$identifier' $taps time(s)"
+                }
+                return ActionOutcome(
+                    false,
+                    "$tapped but $what did not appear within ${timeoutMs / 1000} seconds. " +
+                        "Identifiers on screen: ${visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.",
+                )
+            }
+            if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return ActionOutcome(false, "cancelled")
+        }
+    }
+
+    /**
+     * Scrolls the page's main vertical list one screenful. Flutter reports a
+     * horizontal scrollable as HorizontalScrollView and a vertical one as
+     * ScrollView, so chip strips and carousels are never picked; of the
+     * vertical ones the largest on screen is the page itself.
+     */
+    fun scrollPage(forward: Boolean): Boolean {
+        val list = AccessibilityNodeFinder.largestVerticalScrollable(targetRoot()) ?: return false
+        return try {
+            list.performAction(
+                if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+            )
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** Polls [condition] until it holds. False on timeout or cancel. */
+    fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            if (cancelled) return false
+            if (condition()) return true
+            if (SystemClock.elapsedRealtime() >= deadline) return false
+            if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return false
+        }
+    }
+
+    /**
+     * Brings [identifier] into the built range of the scrollable list holding
+     * one of [siblings], scrolling forward and then back. Flutter only builds
+     * list items near the viewport, so a chip far to one side has no node at
+     * all until the list is scrolled towards it.
+     */
+    fun revealInList(identifier: String, siblings: List<String>, maxScrolls: Int = 4): Boolean {
+        for (action in listOf(
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+        )) {
+            repeat(maxScrolls) {
+                if (isPresent(identifier)) return true
+                val anchor = siblings.firstNotNullOfOrNull { findNow(it) } ?: return false
+                val list = AccessibilityNodeFinder.scrollableAncestor(anchor) ?: return false
+                val scrolled = try {
+                    list.performAction(action)
+                } catch (_: Throwable) {
+                    false
+                }
+                if (!scrolled) return@repeat
+                if (!sleep(AutomationConfig.Timeouts.SETTLE)) return false
+            }
+        }
+        return isPresent(identifier)
+    }
 
     /** Interruptible sleep. Returns false when the run was cancelled. */
     fun sleep(millis: Long): Boolean {
@@ -305,20 +604,41 @@ class AutomationEngine private constructor(
      * never logged, echoed into [ActionOutcome.detail], or read back.
      */
     fun enterText(identifier: String, value: String): ActionOutcome {
-        val root = service.rootNode()
+        val root = targetRoot()
             ?: return ActionOutcome(false, "the target application window is not readable")
         val anchor = AccessibilityNodeFinder.byIdentifier(root, identifier)
             ?: return ActionOutcome(false, "no node with the identifier '$identifier' is present")
-        val editable = AccessibilityNodeFinder.resolveEditable(anchor)
+        var editable = AccessibilityNodeFinder.resolveEditable(anchor)
             ?: return ActionOutcome(
                 false,
                 "'$identifier' exposes no editable node (no ACTION_SET_TEXT in its subtree)",
             )
 
-        try {
-            editable.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        } catch (_: Throwable) {
-            // Focus is a convenience; setText does not depend on it.
+        // A Flutter text field only takes ACTION_SET_TEXT while it has input
+        // focus (RenderEditable registers the handler only when focused). An
+        // unfocused field still reports the action as accepted and silently
+        // drops the text, so focus it with a tap first — ACTION_FOCUS is not
+        // enough on Flutter — and wait until it advertises SET_TEXT.
+        var focusedByTap = false
+        if (!AccessibilityNodeFinder.supportsAction(editable, AccessibilityNodeInfo.ACTION_SET_TEXT)) {
+            val clickable = AccessibilityNodeFinder.resolveClickable(editable) ?: editable
+            val tapped = try {
+                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            } catch (_: Throwable) {
+                false
+            } || tapNode(clickable)
+            if (!tapped) return ActionOutcome(false, "could not tap '$identifier' to focus it")
+            focusedByTap = true
+            var ready: AccessibilityNodeInfo? = null
+            waitUntil(AutomationConfig.Timeouts.FIELD_FOCUS) {
+                ready = findNow(identifier)?.let { AccessibilityNodeFinder.resolveEditable(it) }
+                    ?.takeIf { AccessibilityNodeFinder.supportsAction(it, AccessibilityNodeInfo.ACTION_SET_TEXT) }
+                ready != null
+            }
+            editable = ready ?: return ActionOutcome(
+                false,
+                "tapped '$identifier' but it never took focus (it still offers no ACTION_SET_TEXT)",
+            )
         }
 
         val args = Bundle().apply {
@@ -335,7 +655,19 @@ class AutomationEngine private constructor(
         if (!accepted) {
             return ActionOutcome(false, "ACTION_SET_TEXT was rejected by '$identifier'")
         }
-        return ActionOutcome(true, "entered via ACTION_SET_TEXT on '$identifier'")
+
+        // "Accepted" is not proof the text landed. Where the field exposes its
+        // text, check the length (never the value) caught up.
+        var landed: Boolean? = null
+        waitUntil(AutomationConfig.Timeouts.FIELD_FOCUS) {
+            landed = verifyLength(identifier, value.length)
+            landed != false
+        }
+        if (landed == false) {
+            return ActionOutcome(false, "'$identifier' accepted ACTION_SET_TEXT but does not hold the entered text")
+        }
+        val how = if (focusedByTap) "tapped to focus, then " else ""
+        return ActionOutcome(true, "${how}entered via ACTION_SET_TEXT on '$identifier'")
     }
 
     /**
@@ -356,7 +688,7 @@ class AutomationEngine private constructor(
      * node's own bounds if it advertises no ACTION_CLICK.
      */
     fun tap(identifier: String, fallbackTexts: List<String> = emptyList()): ActionOutcome {
-        val root = service.rootNode()
+        val root = targetRoot()
             ?: return ActionOutcome(false, "the target application window is not readable")
 
         var anchor = AccessibilityNodeFinder.byIdentifier(root, identifier)
@@ -374,13 +706,8 @@ class AutomationEngine private constructor(
         }
 
         val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
-        if (clickable != null) {
-            val ok = try {
-                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            } catch (_: Throwable) {
-                false
-            }
-            if (ok) return ActionOutcome(true, "tapped via ACTION_CLICK, located by $how")
+        if (clickable != null && performClick(clickable)) {
+            return ActionOutcome(true, "tapped via ACTION_CLICK, located by $how")
         }
 
         return if (tapNode(clickable ?: anchor)) {
@@ -461,6 +788,19 @@ class AutomationEngine private constructor(
             if (!sleep(settleMs)) return successes
         }
         return successes
+    }
+
+    private fun performClick(node: AccessibilityNodeInfo): Boolean = try {
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    } catch (_: Throwable) {
+        false
+    }
+
+    /** [tap]'s resolution for a node already in hand: ACTION_CLICK, else a bounds tap. */
+    private fun clickResolved(anchor: AccessibilityNodeInfo): Boolean {
+        val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
+        if (clickable != null && performClick(clickable)) return true
+        return tapNode(clickable ?: anchor)
     }
 
     /** Dispatches the system "back" action. See [AutomationAccessibilityService.pressBack]. */

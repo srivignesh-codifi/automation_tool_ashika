@@ -110,6 +110,82 @@ object AccessibilityNodeFinder {
     fun byClassName(root: AccessibilityNodeInfo?, className: String): AccessibilityNodeInfo? =
         search(root) { it.className?.toString() == className }
 
+    /** Number of nodes carrying [identifier]. */
+    fun countByIdentifier(root: AccessibilityNodeInfo?, identifier: String): Int {
+        if (root == null) return 0
+        var count = 0
+        search(root) { node ->
+            if (matchesIdentifier(node, identifier)) count++
+            false
+        }
+        return count
+    }
+
+    /**
+     * True only for a node that positively reports vertical scrolling.
+     *
+     * Flutter does not mark every horizontal scroller as such: a swipeable
+     * tab pager (TabBarView's PageView) has implicit scrolling switched off,
+     * so it is published as a plain View, and a horizontal list with known
+     * children carries only column CollectionInfo. Treating "not labelled
+     * horizontal" as vertical made a page scroll swipe to the next tab. So
+     * a node counts only if it is a ScrollView, or a list whose CollectionInfo
+     * has rows and no columns.
+     */
+    private fun isVerticalScroller(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isScrollable) return false
+        if (node.className?.toString() == "android.widget.ScrollView") return true
+        val info = try {
+            node.collectionInfo
+        } catch (_: Throwable) {
+            null
+        } ?: return false
+        return info.rowCount > 0 && info.columnCount <= 1
+    }
+
+    /** The vertically scrolling node with the largest on-screen area, if any. */
+    fun largestVerticalScrollable(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = 0L
+        val bounds = android.graphics.Rect()
+        search(root) { node ->
+            if (isVerticalScroller(node)) {
+                node.getBoundsInScreen(bounds)
+                val area = bounds.width().toLong() * bounds.height().toLong()
+                if (area > bestArea) {
+                    bestArea = area
+                    best = node
+                }
+            }
+            false
+        }
+        return best
+    }
+
+    /** The nearest ancestor of [node] that can scroll, e.g. a horizontal chip list. */
+    fun scrollableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var current: AccessibilityNodeInfo? = try {
+            node.parent
+        } catch (_: Throwable) {
+            null
+        }
+        var hops = 0
+        while (current != null && hops < 8) {
+            if (current.isScrollable) return current
+            current = try {
+                current.parent
+            } catch (_: Throwable) {
+                null
+            }
+            hops++
+        }
+        return null
+    }
+
+    /** The first node that can scroll, e.g. a Settings page's list. */
+    fun firstScrollable(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
+        search(root) { it.isScrollable }
+
     // ── Action resolution ────────────────────────────────────────────────────
     //
     // A `Semantics(identifier: ...)` wrapper is its own node in the Flutter
@@ -119,7 +195,7 @@ object AccessibilityNodeFinder {
     // an identifier hit is treated as an anchor, and the actionable node is
     // resolved from it: self, then descendants, then a few ancestors.
 
-    private fun supportsAction(node: AccessibilityNodeInfo, action: Int): Boolean =
+    fun supportsAction(node: AccessibilityNodeInfo, action: Int): Boolean =
         node.actionList.any { it.id == action }
 
     private fun isEditableLike(node: AccessibilityNodeInfo): Boolean =

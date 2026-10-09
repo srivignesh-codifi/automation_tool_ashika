@@ -20,9 +20,10 @@ import java.util.concurrent.TimeUnit
 /**
  * The automation driver.
  *
- * Scoped by res/xml/accessibility_service_config.xml to the single allowlisted
- * UAT package: it receives no events from, and can read no window belonging to,
- * any other application on the device. It does not observe notifications, does
+ * Scoped by res/xml/accessibility_service_config.xml to the allowlisted UAT
+ * package plus Settings and the permission controller (used only to reset the
+ * target app before a run): it receives no events from, and can read no window
+ * belonging to, any other application on the device. It does not observe notifications, does
  * not filter key events and never touches SMS.
  *
  * The service holds no automation logic of its own. It exposes the four device
@@ -80,10 +81,11 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Events are already filtered to the allowlisted package by
-        // android:packageNames, so any event we see is from the target app. The
+        // android:packageNames also admits the Settings and permission screens
+        // used for the pre-run reset; only target app events count here. The
         // engine polls the tree; this only records liveness.
         if (event == null) return
+        if (event.packageName?.toString() !in AutomationConfig.ALLOWED_PACKAGES) return
         lastTargetEventAtMs = System.currentTimeMillis()
     }
 
@@ -102,9 +104,26 @@ class AutomationAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** Root of the target app's active window, or null when unreadable. */
+    /**
+     * Root of the active window, or null when unreadable. This can be Settings
+     * or the permission prompt as well as the target app; the engine checks
+     * the package before using it.
+     */
     fun rootNode(): AccessibilityNodeInfo? = try {
         rootInActiveWindow
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * Root of the first on-screen window owned by one of [packages], whether or
+     * not it is the active window. Needed for the permission prompt: it sits on
+     * top of the target app while [rootNode] still returns the app.
+     */
+    fun windowRootOf(packages: Set<String>): AccessibilityNodeInfo? = try {
+        windows.firstNotNullOfOrNull { window ->
+            window.root?.takeIf { it.packageName?.toString() in packages }
+        }
     } catch (_: Throwable) {
         null
     }

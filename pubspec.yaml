@@ -1,6 +1,6 @@
 name: mobile_automation_tool
 description: >
-  On-device Android UAT automation tool. Drives the login flow of an allowlisted
+  On-device Android automation tool. Drives the login flow of an allowlisted
   Flutter application through an AccessibilityService and produces a pass/fail
   checklist report. Runs entirely on the device: no Appium, no ADB, no host
   machine, no automation server.

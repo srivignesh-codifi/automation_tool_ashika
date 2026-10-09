@@ -3,9 +3,15 @@
   Capabilities are deliberately limited to what the UAT login flow needs.
 
   android:packageNames  - the service only receives events from, and can only
-                          inspect, the single allowlisted UAT package. It is
-                          blind to every other app on the device, including the
-                          keyboard and the launcher.
+                          inspect, the allowlisted UAT package plus the system
+                          screens needed to reset it before a run: Settings
+                          (App info > Storage > Clear storage; MIUI puts App
+                          info in com.miui.securitycenter) and the permission
+                          controller (the notification prompt that returns
+                          after every reset). It is blind to every other app,
+                          including the keyboard and the launcher. Keep in step
+                          with SETTINGS_PACKAGES / PERMISSION_CONTROLLER_PACKAGES
+                          in AutomationConfig.kt.
   flagReportViewIds     - required to read `viewIdResourceName`, which is where
                           Flutter publishes `Semantics(identifier:)`. Without
                           this flag every identifier lookup returns null.
@@ -15,6 +21,12 @@
                           as not-important-for-accessibility. Without this flag
                           the platform filters them out of the tree handed to
                           the service and screen detection fails.
+  flagRetrieveInteractiveWindows
+                        - lets the service list every window on screen. The
+                          notification permission prompt is its own window on
+                          top of the target app, but the system keeps reporting
+                          the app as the *active* window, so without this the
+                          prompt is never seen and cannot be answered.
   canPerformGestures    - only used as a fallback tap at the resolved node's own
                           bounds when a node advertises no ACTION_CLICK.
   canTakeScreenshot     - best-effort evidence capture (API 30+); failures never
@@ -27,11 +39,11 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
-    android:packageNames="com.codifi.dhanush"
+    android:packageNames="com.codifi.dhanush,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller"
     android:summary="@string/accessibility_service_summary" />
