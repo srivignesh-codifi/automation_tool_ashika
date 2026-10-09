@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Automation Tool</string>
+    <string name="accessibility_service_summary">Drives the UAT login flow of the allowlisted test application</string>
+    <string name="accessibility_service_description">Internal UAT test driver. While a test run is active this service reads the accessibility tree of the single allowlisted UAT application in order to find login fields and buttons, type the credentials you entered in the tool, and tap the login actions. It is scoped to that one package and cannot see any other app on this device. It does not read notifications, SMS or the keyboard, and it never records the credential values.</string>
+</resources>

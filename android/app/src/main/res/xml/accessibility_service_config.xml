@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Capabilities are deliberately limited to what the UAT login flow needs.
+
+  android:packageNames  - the service only receives events from, and can only
+                          inspect, the single allowlisted UAT package. It is
+                          blind to every other app on the device, including the
+                          keyboard and the launcher.
+  flagReportViewIds     - required to read `viewIdResourceName`, which is where
+                          Flutter publishes `Semantics(identifier:)`. Without
+                          this flag every identifier lookup returns null.
+  flagIncludeNotImportantViews
+                        - Flutter marks container-only semantics nodes (the
+                          `*_screen` markers, which carry no label of their own)
+                          as not-important-for-accessibility. Without this flag
+                          the platform filters them out of the tree handed to
+                          the service and screen detection fails.
+  canPerformGestures    - only used as a fallback tap at the resolved node's own
+                          bounds when a node advertises no ACTION_CLICK.
+  canTakeScreenshot     - best-effort evidence capture (API 30+); failures never
+                          fail the run.
+
+  Deliberately NOT declared: flagRequestFilterKeyEvents,
+  flagRequestTouchExplorationMode, flagRequestEnhancedWebAccessibility,
+  canRequestFingerprintGestures, and any form of key-event filtering.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:packageNames="com.codifi.dhanush"
+    android:summary="@string/accessibility_service_summary" />
