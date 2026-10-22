@@ -11,7 +11,8 @@ import 'login_automation_screen.dart';
 import 'report_screen.dart';
 
 /// Landing screen: readiness of the two prerequisites, the entry point into the
-/// login automation, and the history of previous runs.
+/// automation (for whichever target app is picked there), and the history of
+/// previous runs.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
     required this.automation,
@@ -34,6 +35,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   AutomationConfigInfo _config = const AutomationConfigInfo.fallback();
   TargetAppStatus _target = const TargetAppStatus.unknown('com.codifi.dhanush');
   List<TestRun> _history = const <TestRun>[];
+  final Set<String> _downloadingRunIds = <String>{};
   bool _loading = true;
 
   @override
@@ -121,6 +123,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     await _refresh();
   }
 
+  Future<void> _downloadRun(TestRun run) async {
+    if (_downloadingRunIds.contains(run.runId)) return;
+    setState(() => _downloadingRunIds.add(run.runId));
+    try {
+      final downloaded = await widget.reports.download(run);
+      if (mounted) _snack(downloaded.message);
+    } catch (_) {
+      if (mounted) _snack('The report files could not be downloaded.');
+    } finally {
+      if (mounted) {
+        setState(() => _downloadingRunIds.remove(run.runId));
+      }
+    }
+  }
+
   void _snack(String message) {
     ScaffoldMessenger.of(
       context,
@@ -168,7 +185,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             FilledButton.icon(
               onPressed: _openLoginAutomation,
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Login Automation'),
+              label: const Text('Run Automation'),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -216,8 +233,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               )
             else
-              ..._history.map(
-                (run) => Card(
+              ..._history.map((run) {
+                final downloading = _downloadingRunIds.contains(run.runId);
+                return Card(
                   margin: const EdgeInsets.only(bottom: 8),
                   child: ListTile(
                     onTap: () => _openRun(run),
@@ -226,10 +244,29 @@ class _DashboardScreenState extends State<DashboardScreen>
                       '${_stamp(run.startedAt)} · '
                       '${run.completedSteps}/${run.totalSteps} steps',
                     ),
-                    trailing: VerdictBadge(verdict: run.verdict),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        VerdictBadge(verdict: run.verdict),
+                        IconButton(
+                          onPressed: downloading
+                              ? null
+                              : () => _downloadRun(run),
+                          icon: downloading
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.download_outlined),
+                          tooltip: 'Download Reports',
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              }),
 
             const SizedBox(height: 24),
             _SafetyCard(allowedPackages: _config.allowedPackages),
@@ -284,7 +321,11 @@ class _SetupCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.build_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.build_outlined,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 8),
                 Text('Setup required', style: theme.textTheme.titleSmall),
               ],

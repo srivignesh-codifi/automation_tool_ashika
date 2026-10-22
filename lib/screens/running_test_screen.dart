@@ -21,12 +21,22 @@ class RunningTestScreen extends StatefulWidget {
     required this.reports,
     required this.targetPackage,
     required this.starter,
+    this.testName = AutomationChecklist.testName,
+    this.initialSteps,
     super.key,
   });
 
   final AutomationService automation;
   final ReportService reports;
   final String targetPackage;
+
+  /// Shown in the header; the native driver names the run in its report.
+  final String testName;
+
+  /// The checklist to show before the driver announces its own. Null means
+  /// Ashika's; an empty list means "wait for the driver", which is what a
+  /// target without a Dart-side copy of its checklist uses.
+  final List<AutomationStep>? initialSteps;
 
   /// Kicks off the run. Resolves to null on success, or a reason on refusal.
   final Future<String?> Function() starter;
@@ -38,15 +48,18 @@ class RunningTestScreen extends StatefulWidget {
 class _RunningTestScreenState extends State<RunningTestScreen> {
   StreamSubscription<AutomationEvent>? _subscription;
 
-  late List<AutomationStep> _steps = AutomationChecklist.steps
-      .map((s) => AutomationStep(id: s.id, name: s.name))
-      .toList();
+  late List<AutomationStep> _steps =
+      widget.initialSteps ??
+      AutomationChecklist.steps
+          .map((s) => AutomationStep(id: s.id, name: s.name))
+          .toList();
 
   String? _startError;
   bool _finished = false;
   AutomationResult? _result;
   TestRun? _savedRun;
   bool _saving = false;
+  bool _downloading = false;
 
   @override
   void initState() {
@@ -157,6 +170,28 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
     await widget.automation.stopAutomation();
   }
 
+  Future<void> _downloadReport() async {
+    final run = _savedRun;
+    if (run == null || _downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final downloaded = await widget.reports.download(run);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(downloaded.message)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The report files could not be downloaded.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -189,7 +224,9 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
         body: Column(
           children: [
             LinearProgressIndicator(
-              value: _finished ? 1 : done / _steps.length,
+              value: _finished
+                  ? 1
+                  : (_steps.isEmpty ? null : done / _steps.length),
               minHeight: 4,
             ),
             Padding(
@@ -201,7 +238,7 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          AutomationChecklist.testName,
+                          widget.testName,
                           style: theme.textTheme.titleMedium,
                         ),
                         const SizedBox(height: 2),
@@ -268,24 +305,51 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: _finished
-                    ? Row(
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(context).pop<TestRun>(),
-                              child: const Text('Close'),
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop<TestRun>(),
+                                  child: const Text('Close'),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: FilledButton(
+                                  onPressed: _savedRun == null
+                                      ? null
+                                      : () => Navigator.of(
+                                          context,
+                                        ).pop<TestRun>(_savedRun),
+                                  child: const Text('View report'),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: FilledButton(
-                              onPressed: _savedRun == null
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: _savedRun == null || _downloading
                                   ? null
-                                  : () => Navigator.of(
-                                      context,
-                                    ).pop<TestRun>(_savedRun),
-                              child: const Text('View report'),
+                                  : _downloadReport,
+                              icon: _downloading
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.download_outlined),
+                              label: Text(
+                                _downloading
+                                    ? 'Downloading…'
+                                    : 'Download Reports',
+                              ),
                             ),
                           ),
                         ],

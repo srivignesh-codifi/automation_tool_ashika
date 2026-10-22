@@ -58,6 +58,54 @@ class TargetAppStatus {
   }
 }
 
+/// The credential a target app asks for after the one-time code.
+enum TargetSecret {
+  mpin('MPIN'),
+  password('Password');
+
+  const TargetSecret(this.label);
+
+  final String label;
+
+  static TargetSecret parse(Object? raw) =>
+      raw == 'password' ? TargetSecret.password : TargetSecret.mpin;
+}
+
+/// One application the native driver has a test flow for. The native
+/// `TargetApp` enum is authoritative; this mirrors what it reports.
+class TargetAppInfo {
+  const TargetAppInfo({
+    required this.id,
+    required this.displayName,
+    required this.packageName,
+    required this.testName,
+    required this.secret,
+  });
+
+  final String id;
+  final String displayName;
+  final String packageName;
+  final String testName;
+  final TargetSecret secret;
+
+  /// What the first credential is called in this app's own login.
+  String get userIdLabel => id == 'tradion' ? 'User ID' : 'Client ID';
+
+  /// The one-line summary of what a run does, shown under the Start button.
+  String get runSummary => id == 'tradion'
+      ? 'Logs in (User ID, Password, OTP), then exercises the watchlist: '
+            'scrip details, edit and delete, and Search in every segment '
+            '(add, then delete), and checks that a Predefined list takes no '
+            'scrips. It then checks the load state of every Orders, '
+            'Dashboard, Portfolio and Profile tab and logs out. A failed '
+            'step is recorded and the run moves on. It never places or '
+            'changes an order. The edit step deletes 1 scrip from the first '
+            'watchlist and the All-segment search adds 1 back.'
+      : 'Logs in (Client ID, OTP, MPIN), then checks the watchlist and '
+            'search, the load state of every tab, and logs out. It never '
+            'places or changes an order.';
+}
+
 /// Static configuration reported by the native driver.
 class AutomationConfigInfo {
   const AutomationConfigInfo({
@@ -65,17 +113,40 @@ class AutomationConfigInfo {
     required this.defaultTargetPackage,
     required this.testName,
     required this.requiresRestrictedSettingsGuidance,
+    required this.targets,
   });
 
   const AutomationConfigInfo.fallback()
-    : allowedPackages = const <String>['com.codifi.dhanush'],
+    : allowedPackages = const <String>[
+        'com.codifi.dhanush',
+        'com.codifi.rmoney',
+      ],
       defaultTargetPackage = 'com.codifi.dhanush',
       testName = 'Phase 1 - Login Automation',
-      requiresRestrictedSettingsGuidance = true;
+      requiresRestrictedSettingsGuidance = true,
+      targets = const <TargetAppInfo>[
+        TargetAppInfo(
+          id: 'ashika',
+          displayName: 'Ashika',
+          packageName: 'com.codifi.dhanush',
+          testName: 'Phase 1 - Login Automation',
+          secret: TargetSecret.mpin,
+        ),
+        TargetAppInfo(
+          id: 'tradion',
+          displayName: 'Tradion',
+          packageName: 'com.codifi.rmoney',
+          testName: 'Tradion - Regression Automation',
+          secret: TargetSecret.password,
+        ),
+      ];
 
   final List<String> allowedPackages;
   final String defaultTargetPackage;
   final String testName;
+
+  /// Every app the driver can test, in the order the picker shows them.
+  final List<TargetAppInfo> targets;
 
   /// True on Android 13+, where a sideloaded app's accessibility toggle is
   /// greyed out until "Allow restricted settings" is granted from App info.
@@ -161,14 +232,11 @@ class AutomationEvent {
 /// Credentials travel one way only — into [startLoginAutomation] — and are never
 /// read back, logged, or returned by any method here.
 class AutomationService {
-  AutomationService({
-    MethodChannel? commands,
-    EventChannel? events,
-  }) : _commands =
-           commands ??
-           const MethodChannel('com.mobileautomation.tool/commands'),
-       _events =
-           events ?? const EventChannel('com.mobileautomation.tool/events');
+  AutomationService({MethodChannel? commands, EventChannel? events})
+    : _commands =
+          commands ?? const MethodChannel('com.mobileautomation.tool/commands'),
+      _events =
+          events ?? const EventChannel('com.mobileautomation.tool/events');
 
   final MethodChannel _commands;
   final EventChannel _events;
@@ -225,7 +293,23 @@ class AutomationService {
     final packages = (raw['allowedPackages'] as List<Object?>? ?? const [])
         .whereType<String>()
         .toList(growable: false);
+    final targets = (raw['targets'] as List<Object?>? ?? const [])
+        .whereType<Map<Object?, Object?>>()
+        .map(
+          (t) => TargetAppInfo(
+            id: (t['id'] as String?) ?? '',
+            displayName: (t['displayName'] as String?) ?? '',
+            packageName: (t['packageName'] as String?) ?? '',
+            testName: (t['testName'] as String?) ?? 'Login Automation',
+            secret: TargetSecret.parse(t['secret']),
+          ),
+        )
+        .where((t) => t.id.isNotEmpty && t.packageName.isNotEmpty)
+        .toList(growable: false);
     return AutomationConfigInfo(
+      targets: targets.isEmpty
+          ? const AutomationConfigInfo.fallback().targets
+          : targets,
       allowedPackages: packages,
       defaultTargetPackage:
           (raw['defaultTargetPackage'] as String?) ?? 'com.codifi.dhanush',
@@ -236,17 +320,22 @@ class AutomationService {
   }
 
   /// Starts a run. Returns null on success, or the reason it could not start.
+  ///
+  /// [mpin] is what Ashika asks for after the OTP and [password] what Tradion
+  /// asks for before it; the driver reads whichever the target app needs.
   Future<String?> startLoginAutomation({
     required String targetPackage,
     required String clientId,
     required String otp,
-    required String mpin,
+    String mpin = '',
+    String password = '',
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
       'clientId': clientId,
       'otp': otp,
       'mpin': mpin,
+      'password': password,
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;

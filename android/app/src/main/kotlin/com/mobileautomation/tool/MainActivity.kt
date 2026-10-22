@@ -1,22 +1,28 @@
 package com.mobileautomation.tool
 
+import android.content.ContentValues
 import android.content.Intent
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileInputStream
 
 /**
  * Bridge between the Flutter UI and the native automation driver.
  *
- * Nothing here logs a credential. `startLoginAutomation` reads the three values
- * out of the method call, hands them to the engine, and keeps no reference of
- * its own.
+ * Nothing here logs a credential. `startLoginAutomation` reads the credential
+ * values (client / user id, OTP, and the MPIN or password the target app asks
+ * for) out of the method call, hands them to the engine, and keeps no
+ * reference of its own.
  */
 class MainActivity : FlutterActivity() {
 
@@ -80,6 +86,7 @@ class MainActivity : FlutterActivity() {
                     clientId = call.argument<String>("clientId").orEmpty(),
                     otp = call.argument<String>("otp").orEmpty(),
                     mpin = call.argument<String>("mpin").orEmpty(),
+                    password = call.argument<String>("password").orEmpty(),
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))
@@ -90,6 +97,8 @@ class MainActivity : FlutterActivity() {
             "isAutomationRunning" -> result.success(AutomationEngine.isRunning())
 
             "getLastReport" -> result.success(AutomationEngine.lastResult)
+
+            "downloadReportFiles" -> downloadReportFiles(call, result)
 
             "getDeviceInfo" -> result.success(
                 mapOf(
@@ -104,6 +113,15 @@ class MainActivity : FlutterActivity() {
                 mapOf(
                     "allowedPackages" to AutomationConfig.ALLOWED_PACKAGES.toList(),
                     "defaultTargetPackage" to AutomationConfig.DEFAULT_TARGET_PACKAGE,
+                    "targets" to TargetApp.values().map {
+                        mapOf(
+                            "id" to it.id,
+                            "displayName" to it.displayName,
+                            "packageName" to it.packageName,
+                            "testName" to it.testName,
+                            "secret" to it.secret.name.lowercase(),
+                        )
+                    },
                     "testName" to AutomationConfig.TEST_NAME,
                     "requiresRestrictedSettingsGuidance" to
                         (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU),
@@ -112,6 +130,85 @@ class MainActivity : FlutterActivity() {
 
             else -> result.notImplemented()
         }
+    }
+
+    /**
+     * Copies the already-generated report files into public Downloads through
+     * MediaStore. The app targets Android 10+, so this needs no broad storage
+     * permission and never exposes an arbitrary filesystem destination.
+     */
+    private fun downloadReportFiles(call: MethodCall, result: MethodChannel.Result) {
+        val requested = call.argument<List<*>>("files").orEmpty()
+        if (requested.isEmpty()) {
+            result.error("no_report_files", "No report files were supplied.", null)
+            return
+        }
+
+        Thread {
+            val resolver = contentResolver
+            val saved = mutableListOf<String>()
+            val failed = mutableListOf<String>()
+            val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/Automation Tool Reports"
+
+            for (entry in requested) {
+                val item = entry as? Map<*, *>
+                val sourcePath = item?.get("path") as? String
+                val requestedName = item?.get("name") as? String
+                val mimeType = (item?.get("mimeType") as? String).orEmpty()
+                    .ifEmpty { "application/octet-stream" }
+                val source = sourcePath?.let(::File)
+                val displayName = requestedName?.let(::File)?.name
+                    ?: source?.name
+                    ?: "report"
+
+                if (source == null || !source.isFile) {
+                    failed += displayName
+                    continue
+                }
+
+                var destination: android.net.Uri? = null
+                try {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    destination = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: throw IllegalStateException("MediaStore refused the destination")
+                    resolver.openOutputStream(destination, "w").use { output ->
+                        requireNotNull(output) { "The destination could not be opened" }
+                        FileInputStream(source).use { input -> input.copyTo(output) }
+                    }
+                    val published = ContentValues().apply {
+                        put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    }
+                    if (resolver.update(destination, published, null, null) <= 0) {
+                        throw IllegalStateException("The downloaded file could not be published")
+                    }
+                    saved += displayName
+                } catch (_: Throwable) {
+                    destination?.let { uri ->
+                        try {
+                            resolver.delete(uri, null, null)
+                        } catch (_: Throwable) {
+                            // Best effort cleanup of an incomplete MediaStore row.
+                        }
+                    }
+                    failed += displayName
+                }
+            }
+
+            mainHandler.post {
+                result.success(
+                    mapOf(
+                        "savedNames" to saved,
+                        "failedNames" to failed,
+                        "directory" to "Downloads/Automation Tool Reports",
+                    ),
+                )
+            }
+        }.start()
     }
 
     private fun openAccessibilitySettings(): Boolean = try {

@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 
 /// A text field for a UAT test credential.
 ///
-/// Secret values ([obscure] true, used for the MPIN) are masked at all times and
-/// have no reveal toggle: nothing in this tool ever renders an MPIN in clear
+/// Secret values ([obscure] true: the MPIN or the password) are masked at all times and
+/// have no reveal toggle: nothing in this tool ever renders a secret in clear
 /// text. Autofill, autocorrect and suggestions are switched off so the value is
 /// not offered to the platform's autofill or dictionary services.
 class CredentialField extends StatelessWidget {
@@ -44,7 +44,10 @@ class CredentialField extends StatelessWidget {
       obscuringCharacter: '●',
       autocorrect: false,
       enableSuggestions: false,
-      autofillHints: null,
+      // An empty list is Flutter's documented opt-out. `null` is not: it leaves
+      // the decision to the platform, and Android's autofill will then offer
+      // (and fill) a saved login into these fields.
+      autofillHints: const <String>[],
       keyboardType: digitsOnly ? TextInputType.number : TextInputType.text,
       textInputAction: textInputAction,
       maxLength: maxLength,

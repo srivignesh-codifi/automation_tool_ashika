@@ -1,0 +1,300 @@
+package com.mobileautomation.tool
+
+import com.mobileautomation.tool.AutomationEngine.WaitOutcome
+
+/**
+ * Bookkeeping shared by the test flows: the checklist, the step events, aborts,
+ * evidence capture, and the "does every section finish loading" check.
+ *
+ * [LoginAutomationFlow] (Ashika) predates this class and keeps its own private
+ * copies of the same helpers; [TradionAutomationFlow] is the first user.
+ */
+abstract class FlowBase(
+    protected val engine: AutomationEngine,
+    protected val steps: List<AutomationStepResult>,
+) {
+
+    protected lateinit var result: AutomationRunResult
+
+    protected fun step(id: String): AutomationStepResult = steps.first { it.id == id }
+
+    /**
+     * Creates the run result and announces the checklist to the UI. Returns
+     * what was found out about the target app so the caller can validate it.
+     */
+    protected fun startRun(testName: String): TargetAppLauncher.TargetInfo {
+        val info = engine.launcher.inspect(engine.targetPackage)
+        result = AutomationRunResult(
+            runId = engine.runId,
+            testName = testName,
+            targetPackage = engine.targetPackage,
+            targetMainActivity = info.mainActivity,
+            targetVersionName = info.versionName,
+            deviceModel = engine.deviceModel(),
+            deviceManufacturer = engine.deviceManufacturer(),
+            androidVersion = engine.androidVersion(),
+            sdkInt = engine.sdkInt(),
+            startedAtMs = System.currentTimeMillis(),
+            steps = steps,
+        )
+        engine.emit(
+            "automation_started",
+            mapOf(
+                "testName" to testName,
+                "targetPackage" to engine.targetPackage,
+                "totalSteps" to steps.size,
+                "steps" to steps.map { mapOf("id" to it.id, "name" to it.name) },
+            ),
+        )
+        return info
+    }
+
+    // ── Step bookkeeping ────────────────────────────────────────────────────
+
+    protected fun begin(step: AutomationStepResult) {
+        step.start()
+        engine.emit(
+            "step_started",
+            mapOf(
+                "stepId" to step.id,
+                "stepIndex" to steps.indexOf(step),
+                "name" to step.name,
+            ),
+        )
+    }
+
+    protected fun pass(step: AutomationStepResult, note: String? = null) {
+        step.pass(note)
+        emitStep(step)
+    }
+
+    protected fun skip(step: AutomationStepResult, note: String) {
+        step.skip(note)
+        emitStep(step)
+    }
+
+    /**
+     * Emits the terminal event for a step. Skipped steps ride on `step_passed`
+     * with `status: "skipped"`, so the event vocabulary stays the six documented
+     * names while the UI can still tell the two apart.
+     */
+    protected fun emitStep(step: AutomationStepResult) {
+        engine.emit(
+            if (step.status == StepStatus.FAILED) "step_failed" else "step_passed",
+            mapOf(
+                "stepId" to step.id,
+                "stepIndex" to steps.indexOf(step),
+                "name" to step.name,
+                "status" to step.status.wire,
+                "durationMs" to step.durationMs,
+                "note" to step.note,
+                "reason" to step.failureReason,
+            ),
+        )
+    }
+
+    /**
+     * Marks [step] failed but lets the run continue: used where one broken
+     * tab or feature should not stop the remaining ones from being checked.
+     * The run's verdict still ends FAILED.
+     */
+    protected fun failAndContinue(step: AutomationStepResult, reason: String) {
+        step.fail(reason)
+        emitStep(step)
+        if (result.failureMessage == null) result.failureMessage = reason
+        captureScreenshot("failed_${step.id}")
+    }
+
+    protected fun reasonFor(outcome: WaitOutcome, what: String, timeoutMs: Long): String = when (outcome) {
+        is WaitOutcome.TimedOut -> buildString {
+            append(what).append(" was not detected within ").append(timeoutMs / 1000)
+            append(" seconds.")
+            if (!outcome.windowReadable) {
+                append(
+                    " The target application's window was not readable at the end of the wait — " +
+                        "it may have been closed, or another application may be in the foreground.",
+                )
+            }
+            if (engine.promptStuck) {
+                append(
+                    " A notification permission prompt was on screen and stayed there after the " +
+                        "tool clicked and tapped Allow — Android can ignore automated input on " +
+                        "permission dialogs. Allow it by hand while the run waits, or grant it " +
+                        "first with: adb shell pm grant ${engine.targetPackage} " +
+                        "android.permission.POST_NOTIFICATIONS",
+                )
+            }
+            if (outcome.visibleIdentifiers.isNotEmpty()) {
+                append(" Identifiers visible when the wait expired: ")
+                append(outcome.visibleIdentifiers.joinToString(", "))
+                append('.')
+            } else if (outcome.windowReadable) {
+                append(
+                    " No accessibility identifiers were visible at all, which usually means the " +
+                        "installed build of the target app does not carry the Semantics " +
+                        "identifiers this tool looks for.",
+                )
+            }
+        }
+        is WaitOutcome.TargetWindowLost -> "The target application stopped being the readable " +
+            "foreground window while waiting for $what. The run was stopped because another " +
+            "application appears to have taken over, or the target app closed."
+        else -> "$what could not be confirmed."
+    }
+
+    protected fun abort(step: AutomationStepResult, reason: String): AutomationRunResult {
+        step.fail(reason)
+        emitStep(step)
+        result.failureMessage = reason
+        result.passed = false
+        captureScreenshot("failed_${step.id}")
+        return complete()
+    }
+
+    protected fun abort(
+        outcome: WaitOutcome,
+        step: AutomationStepResult,
+        what: String,
+        timeoutMs: Long,
+        extra: String = "",
+    ): AutomationRunResult = abort(step, reasonFor(outcome, what, timeoutMs) + extra)
+
+    protected fun stopped(step: AutomationStepResult): AutomationRunResult {
+        val reason = if (engine.serviceGone) {
+            "The accessibility service was turned off while the run was in progress."
+        } else {
+            "The run was stopped by the operator."
+        }
+        step.skip(reason)
+        emitStep(step)
+        result.stopped = true
+        result.passed = false
+        result.failureMessage = reason
+        return complete()
+    }
+
+    protected fun finish(): AutomationRunResult {
+        result.passed = steps.none { it.status == StepStatus.FAILED } &&
+            steps.none { it.status == StepStatus.PENDING || it.status == StepStatus.RUNNING }
+        captureScreenshot("completed")
+        return complete()
+    }
+
+    private fun complete(): AutomationRunResult {
+        result.finishedAtMs = System.currentTimeMillis()
+        return result
+    }
+
+    /**
+     * Evidence capture is best effort by design: a secure screen in the target
+     * app, or an Android 10 device, means no image. That never changes the
+     * verdict of the run.
+     */
+    protected fun captureScreenshot(label: String) {
+        val path = engine.screenshot(label) { reason ->
+            if (result.screenshotUnavailableReason == null) {
+                result.screenshotUnavailableReason = reason
+            }
+        }
+        if (path != null) result.screenshots[label] = path
+    }
+
+    // ── Load check ──────────────────────────────────────────────────────────
+
+    protected data class LoadCheck(
+        val settled: Boolean,
+        val elapsedMs: Long,
+        val pages: Int,
+        val empty: Int,
+        val errors: Int,
+        val stillLoading: Int,
+    )
+
+    /**
+     * Waits, within [budgetMs] in total, until no `ui_loading` marker is on
+     * screen, then scrolls a screenful and repeats, so sections below the fold
+     * — which Flutter only builds once they are near the viewport — are
+     * checked too. Scrolls back to the top afterwards so the tab strip is
+     * reachable again.
+     *
+     * [scrollPages] is how many screenfuls to check at most (1 = the visible
+     * part only).
+     */
+    protected fun checkPageLoads(
+        budgetMs: Long,
+        scrollPages: Int = AutomationConfig.Timeouts.TAB_MAX_PAGES,
+    ): LoadCheck {
+        val ids = AutomationConfig.Ids
+        val start = android.os.SystemClock.elapsedRealtime()
+        val deadline = start + budgetMs
+        var pages = 1
+        var empty = 0
+        var errors = 0
+        var settled = true
+        var stillLoading = 0
+        var scrolled = 0
+        while (true) {
+            val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            val clear = engine.waitUntil(remaining) { engine.countOf(ids.UI_LOADING) == 0 }
+            empty = maxOf(empty, engine.countOf(ids.UI_EMPTY))
+            errors = maxOf(errors, engine.countOf(ids.UI_ERROR))
+            if (!clear) {
+                settled = false
+                stillLoading = engine.countOf(ids.UI_LOADING)
+                break
+            }
+            if (engine.cancelled || pages >= scrollPages) break
+            if (!engine.scrollPage(forward = true)) break
+            scrolled++
+            pages++
+            // Sections scrolled into view start their own fetch on the next frame.
+            if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) break
+        }
+        val elapsed = android.os.SystemClock.elapsedRealtime() - start
+        var back = 0
+        while (back < scrolled + 2 && engine.scrollPage(forward = false)) back++
+        engine.sleep(AutomationConfig.Timeouts.SETTLE)
+        return LoadCheck(settled, elapsed, pages, empty, errors, stillLoading)
+    }
+
+    /** Human readable verdict for a finished [LoadCheck], or null when it passed. */
+    protected fun loadFailure(check: LoadCheck, budgetMs: Long, what: String = ""): String? {
+        val where = if (check.pages > 1) " across ${check.pages} screenfuls" else ""
+        val empties = if (check.empty > 0) "; ${check.empty} section(s) show no data" else ""
+        val prefix = if (what.isEmpty()) "" else "$what: "
+        return when {
+            check.errors > 0 ->
+                "${prefix}Showed the 'Something went wrong / Retry' screen (${check.errors} on screen) instead of data."
+            !check.settled ->
+                "${prefix}${check.stillLoading} section(s) were still loading after ${budgetMs / 1000} seconds$where$empties."
+            else -> null
+        }
+    }
+
+    protected fun loadSummary(check: LoadCheck): String {
+        val seconds = "%.1f".format(check.elapsedMs / 1000.0)
+        val where = if (check.pages > 1) " across ${check.pages} screenfuls" else ""
+        val empties = if (check.empty > 0) "; ${check.empty} section(s) show no data" else ""
+        return "every section loaded in $seconds s$where$empties"
+    }
+
+    // ── Navigation helpers ──────────────────────────────────────────────────
+
+    /**
+     * Presses Back until [identifier] leaves the screen, at most twice.
+     *
+     * Only ever call this with [identifier] on screen: on the app's home screen
+     * Back exits Tradion (its exit dialog's `WillPopScope` returns true), and a
+     * Back that finds nothing to close would take the app with it. So this
+     * refuses to press anything while the thing to close is not there.
+     */
+    protected fun closeWithBack(identifier: String): Boolean {
+        if (!engine.isPresent(identifier)) return false
+        repeat(2) {
+            if (!engine.pressBack()) return false
+            if (engine.waitForGone(identifier, AutomationConfig.Timeouts.CONFIRM_RETRY)) return true
+            if (engine.cancelled) return false
+        }
+        return false
+    }
+}

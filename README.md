@@ -1,13 +1,16 @@
 # Mobile Automation Tool
 
-On-device test automation for an Android Flutter application. Phase 1
-automates exactly one scenario — a **successful login**:
+On-device test automation for Android Flutter applications. Two apps are
+supported, picked on the tool's **Run Automation** screen:
 
-```
-Client ID → OTP → MPIN → Skip Biometric → Home / Watchlist
-```
+| App | Package | Login | Regression pass |
+| --- | --- | --- | --- |
+| **Ashika** | `com.codifi.dhanush` | Client ID → OTP → MPIN → Skip Biometric | 60 steps: watchlist and search, load check of every tab of Home, Research, Portfolio and Orders, logout |
+| **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 67 steps: watchlist (tabs, Predefined refuses add, basket, filter, details, edit (rename, rearrange, delete, save, verify, restore), search add and delete in every segment, chart with screenshot, More Details tabs), Dashboard (Option Chain per segment, Research calls, scanners View All), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
 
-Everything runs on a single Android device. There is no Appium, no Python, no
+Sections 2–18 describe the shared tool and, unless a section says otherwise,
+Ashika's flow; Tradion's is in section 1a. Everything runs on a single Android
+device. There is no Appium, no Python, no
 Selenium, no ADB during normal execution, no PC or Mac during normal execution,
 and no external automation server. A host machine is needed only to build and
 install the two APKs.
@@ -16,19 +19,20 @@ install the two APKs.
 
 ## 1. Project purpose
 
-Two APKs are installed side by side on one phone:
+Two APKs are installed side by side on one phone (or three, with both targets):
 
 | APK | Role |
 | --- | --- |
-| The UAT build of the target app (`com.codifi.dhanush`) | the application under test |
+| The UAT build of a target app (`com.codifi.dhanush` or `com.codifi.rmoney`) | the application under test |
 | Automation Tool (`com.mobileautomation.tool`) | the test driver and reporter |
 
-The operator types the UAT Client ID, OTP and MPIN into the Automation Tool and
-taps **Start Login Automation**. The tool launches the target app, drives the
+The operator picks the app, types its UAT credentials (Ashika: Client ID, OTP,
+MPIN; Tradion: User ID, Password, OTP) into the Automation Tool and taps
+**Start … Automation**. The tool launches the target app, drives the
 login through Android's accessibility APIs, verifies that Home or the Watchlist
 is reached, and produces a pass/fail checklist as JSON, HTML and plain text.
 
-Phase 1 is the happy path only: login, then a watchlist and search pass, then a
+Ashika's pass is the happy path only: login, then a watchlist and search pass, then a
 visit to every bottom tab (Home, Research, Portfolio, Orders) checking that each
 of their tabs finishes loading within 8 seconds (5 for the Orders tabs and
 Positions), then logout from Profile. There is deliberately no invalid Client
@@ -40,6 +44,93 @@ retry widgets (`ui_loading`, `ui_empty`, `ui_error`). A tab passes when no
 `ui_loading` remains on any screenful of it within its budget. A tab that is
 still loading, or shows the Reload screen, fails its own step and the run moves
 on, so the report shows every tab and the run still logs out.
+
+## 1a. Tradion regression pass
+
+`TradionAutomationFlow` drives the Tradion app (`com.codifi.rmoney`). It shares
+the engine, the reports and the load-check idea with Ashika's flow; the screens
+and controls are Tradion's own. The identifiers it reads are listed in
+`tradion_mobile/docs/AUTOMATION_SEMANTICS.md` and mirrored in
+`AutomationConfig.TradionIds`.
+
+```
+Clear app data → launch
+User ID → Login → Password → Proceed → OTP (auto-submits) → Risk Disclosure (if shown) → Home
+
+Watchlist   tabs counted (no load test) · a Predefined list refuses Search / add · basket mode toggled
+            and restored · Filter screen opened and closed · scrip details opened and closed ·
+            Edit watchlist: long-press opens it, the watchlist is renamed, the first scrip moved
+            down ("Move down" action), the new first scrip deleted, Save; the count must drop by
+            one; then it is reopened to confirm the name and order persisted and the name is put
+            back · Search opened · its 4 segments listed · Stocks (TCS), F&O (NIFTY), Commodity
+            (CRUDEOIL): add, confirm it stays added, delete that exact result, confirm it stays
+            deleted · All (INFY): add and keep only when it replaces the verified edit deletion
+            (otherwise add then remove it) · a result's details sheet · Search closed · count =
+            net of the changes
+Scrip       details sheet → Chart loads (screenshot) · More Details tabs (Market Depth, Technicals,
+            Fundamentals, Info — equity has all four, other segments no Fundamentals) each load
+Orders      Pending · Order Book · Trade Book · Basket · GTT · SIP      (each must finish loading)
+Dashboard   Trading (+ Short/Long Buildup chips) · Option Chain: for NFO, MCX, CDS and BFO open the
+            search, pick the segment, choose the first script, its chain must load in 7 s ·
+            Research calls: every tab and sub tab loads · Investments (+ scanner chips) ·
+            Scanners › View All: every tab loads
+Portfolio   Holdings loads · Net P&L / Day P&L toggled · Stock / MTF switched and restored · sort
+            sheet opened and closed · Positions loads · Net / Day P&L toggled · sort sheet opened
+Profile     Account loads · Trade Settings loads
+Logout      Profile → Logout → Yes → back on the login screens
+```
+
+How it differs from Ashika, and why:
+
+* **No intro carousel.** After the splash screen's network and version checks a
+  fresh install routes straight to the User ID screen, so there is no "Login" step
+  before it (45 s is allowed for the splash).
+* **The OTP field is a plain text field** that submits itself on the sixth digit,
+  so the tool types the code and waits for the next screen; it taps *Confirm OTP*
+  only if nothing happens within 7.5 s, and that button ignores taps while a
+  submit is in flight.
+* **The risk disclosure is optional.** Home is built first and the disclosure is
+  pushed a frame later, so after reaching Home the tool waits up to 6 s for
+  `risk_disclosure_dialog`; if it appears the tool taps *I understand* (or *Next*)
+  until it closes, otherwise the step is reported as skipped.
+* **Back exits the app from the home screen.** Tradion's `WillPopScope` returns
+  `true` after showing its exit dialog, so the tool only presses Back to close an
+  overlay it has just confirmed is open (details sheet, sort sheets, Filter and
+  edit screens). The sort sheets and details sheet carry their own markers for
+  that reason, and the exit dialog's *Yes* is tagged `exit_confirm_button`, never
+  `logout_confirm_button`.
+* **Inner tab labels carry live counts** ("Pending (3)", "holdings (12)") and are
+  localised, so tabs are found by position-based identifiers, never by label.
+* **The watchlist is mutated, on purpose.** Like Ashika's run, the edit step
+  deletes **1** scrip from a selected editable watchlist (and briefly renames it,
+  restoring and re-verifying the name). When that deletion is verified, the
+  All-segment search adds 1 back; if the edit deletion did not persist, the All
+  add is removed again. The other segments add and delete the exact same result,
+  even if the search already shows other added scrips. A clean run therefore ends
+  with the list at its original size. Use a dedicated test account.
+
+Soft failures: any step after login that fails is recorded and the run moves on
+(steps that depend on it are marked skipped), so the report shows every tab and
+the run still logs out. Only the login steps, which nothing can proceed without,
+abort the run.
+
+Tradion-specific limits:
+
+* **A device with biometrics enrolled** gets Tradion's *Enable biometric login*
+  screen after the OTP. It has no Skip and the tool never drives fingerprint or
+  face authentication, so the run stops there with an explanation. Use a device or
+  emulator with no biometrics enrolled.
+* **TOTP accounts** (an authenticator code instead of an SMS OTP) get a different
+  screen, which this tool does not drive.
+* **A user who still has to set a password**, or a blocked account, is routed to
+  other login screens; the run fails at *Password screen displayed* and says so.
+* **A disclosure of the "blocked" type** opens an external link instead of closing;
+  the run fails at *Risk disclosure accepted* and says so.
+* **Holdings › Stock / MTF** is one toggle: the tool flips it once, checks the
+  other view loads, and flips it back. Net P&L / Day P&L are restored the same way.
+* **UAT versus live:** Tradion selects its environment with
+  `ApiLinks.isUAT` (`false` = live) in `lib/api/core/api_links.dart`, under the
+  same package name — see section 16.
 
 ---
 
@@ -60,7 +151,8 @@ on, so the report shows every tab and the run still logs out.
 │  AutomationEngine (worker thread)                                    │
 │    · polls the tree every 350 ms against a per-step deadline          │
 │    · enterText / tap / keypad taps / screenshot                       │
-│    · LoginAutomationFlow holds the 18-step checklist                  │
+│    · LoginAutomationFlow (Ashika) / TradionAutomationFlow hold the    │
+│      checklists; FlowBase is their shared bookkeeping                 │
 │         │                                                            │
 │         ├── AccessibilityNodeFinder  (locator strategies)             │
 │         ├── TargetAppLauncher        (PackageManager)                 │
@@ -118,7 +210,10 @@ mobile_automation_tool/
 │   ├── AutomationAccessibilityService.kt  # tree, gestures, screenshots
 │   ├── AccessibilityNodeFinder.kt         # locator strategies
 │   ├── AutomationEngine.kt                # primitives + run lifecycle
-│   ├── LoginAutomationFlow.kt             # the 18-step flow
+│   ├── FlowBase.kt                        # step bookkeeping, aborts, load check
+│   ├── LoginAutomationFlow.kt             # Ashika's flow (keeps its own helpers)
+│   ├── TradionAutomationFlow.kt           # Tradion's flow (extends FlowBase)
+│   ├── TargetApp.kt                       # the apps this tool may drive
 │   ├── AutomationStepResult.kt            # step + run result models
 │   ├── TargetAppLauncher.kt               # PackageManager
 │   └── AutomationConfig.kt                # allowlist, identifiers, timeouts
@@ -130,7 +225,9 @@ mobile_automation_tool/
 
 `AutomationConfig.kt` is one file beyond the suggested structure. Everything
 security relevant — the allowlist, the identifiers, the timeouts — is collected
-there so it can be reviewed in one place.
+there so it can be reviewed in one place. The allowlist itself is
+`TargetApp.kt`: `ALLOWED_PACKAGES` is derived from it, so adding an app there
+without also adding its flow does not compile.
 
 ---
 
@@ -338,21 +435,23 @@ screen — it makes no attempt to work around the restriction.
 
 ## 10. Entering UAT credentials
 
-On **Login Automation**:
+On **Run Automation**, pick the **Target application** first; the form follows it:
 
-| Field | Notes |
-| --- | --- |
-| Target application package | prefilled from the allowlist; a non-allowlisted value is refused |
-| Client ID | UAT test client code |
-| OTP | typed by hand, 6 digits |
-| MPIN | **always masked**, no reveal toggle |
+| Field | Ashika | Tradion |
+| --- | --- | --- |
+| Target application package | shown, read-only — the allowlist is enforced natively | shown, read-only |
+| User id | **Client ID** — UAT test client code | **User ID** — UAT test user |
+| OTP | typed by hand, 6 digits | typed by hand, 6 digits |
+| Secret | **MPIN** — digits, **always masked** | **Password** — **always masked** |
 
-**Remember Client ID and MPIN** stores those two in Android's Keystore-backed
-`EncryptedSharedPreferences`. The **OTP is never stored** — it is a one-time
-value, and it is cleared from the form the moment a run finishes.
-**Clear saved Client ID and MPIN** wipes what was kept.
+There is no reveal toggle on a secret. **Remember …** stores the user id and the
+secret *for the picked app* in Android's Keystore-backed
+`EncryptedSharedPreferences` (separate keys per app; Ashika's keep their original
+names, so credentials saved before Tradion was added are still found). The
+**OTP is never stored** — it is a one-time value, and it is cleared from the form
+the moment a run finishes. **Clear saved …** wipes what was kept for that app.
 
-Autofill, autocorrect and suggestions are switched off on all four fields so the
+Autofill, autocorrect and suggestions are switched off on every field so the
 values are not offered to the platform's autofill or dictionary services.
 
 ---
@@ -456,7 +555,17 @@ The report screen shows the verdict badge, the completed count, run metadata
 (target package, main activity, target version, device, Android version, start,
 end, duration, run id), the full checklist with per-step status, start, end,
 duration and reason, the failure block, screenshot paths, and the plain-text
-checklist with a Copy button.
+checklist with a Copy button. **Download Reports** is available as soon as a run
+finishes, on the report screen, and beside every run in **Test history**. It
+copies that run's HTML, JSON and plain-text files to:
+
+```
+Downloads/Automation Tool Reports/
+```
+
+The download uses Android's scoped MediaStore and therefore needs no storage
+permission. Unlike the app-specific originals below, downloaded copies remain
+available after the Automation Tool is uninstalled.
 
 Each checklist item carries: step name, status
 (Pending / Running / Passed / Failed / Skipped), start time, end time, duration,
@@ -539,7 +648,10 @@ collected, because text on a login screen can contain the value just typed.
 
 ---
 
-## 13. Sharing reports
+## 13. Downloading and sharing reports
+
+**Download Reports** saves the HTML, JSON and text versions to
+`Downloads/Automation Tool Reports/` and confirms how many files were written.
 
 **Share Report** on the report screen opens the Android share sheet with the
 HTML, JSON and text files attached and a subject line of
@@ -606,10 +718,12 @@ A missing screenshot never fails an automation run.
 
 This is an internal UAT tool for a financial trading application.
 
-* **Allowlist.** `AutomationConfig.ALLOWED_PACKAGES` contains exactly one
-  package. Any other value is refused before the app is inspected or launched.
-  The accessibility service is *additionally* scoped via `android:packageNames`
-  to that package plus the system screens used to reset it before each run:
+* **Allowlist.** `AutomationConfig.ALLOWED_PACKAGES` contains exactly the
+  packages of `TargetApp` — Ashika (`com.codifi.dhanush`) and Tradion
+  (`com.codifi.rmoney`). Any other value is refused before the app is inspected
+  or launched. The accessibility service is *additionally* scoped via
+  `android:packageNames` to those packages plus the system screens used to reset
+  them before each run:
   Settings (`com.android.settings`, and `com.miui.securitycenter` on Xiaomi) to
   clear the app's data, and the permission controller to answer the
   notification prompt that clearing brings back. It cannot read any other
@@ -674,19 +788,41 @@ responsibility:
   working tree, so a plain `flutter build apk --release` there produces the
   **live/CUG** build, not a UAT one.
 
-Giving the two variants distinct `applicationId`s (a flavour, or an
+**Tradion has the same property**, with a different switch:
+
+```dart
+// tradion_mobile/lib/api/core/api_links.dart
+static bool isUAT = false;   // true → UAT · false → live
+```
+
+Package `com.codifi.rmoney` is used for both, and at the time of writing the flag
+is `false` in the working tree, so a plain `flutter build apk` there produces the
+**live** build. Set `ApiLinks.isUAT = true` before building the app you automate,
+and use a dedicated test user: a clean Tradion run **deletes one scrip** from
+an editable watchlist and adds one back (it never places or changes an order).
+
+Giving the variants distinct `applicationId`s (a flavour, or an
 `applicationIdSuffix`) would let the allowlist enforce this properly. That is a
-change to the target app's build configuration and is out of scope here, but it
+change to the target apps' build configuration and is out of scope here, but it
 is the right fix.
 
 ---
 
 ## 17. Known limitations
 
-* **Not yet executed on a real device.** Everything here is verified by static
-  analysis, unit tests and a clean release build. The end-to-end login has
-  **not** been run on physical hardware — it needs the UAT build installed and a
-  live OTP. Section 18 lists what to watch on the first run.
+* **Ashika's flow has not been executed on a device by its author.** It is
+  verified by static analysis, unit tests and a clean release build; the
+  end-to-end login needs the UAT build installed and a live OTP. Section 18
+  lists what to watch on the first run.
+* **Tradion's flow was observed on an Android 16 (API 36) emulator** through the
+  checks the first version of it reached: data clear (≈3.5 s), launch, User ID →
+  Password → OTP (auto-submitted) → risk disclosure ("confirmed across 1 page")
+  → Home, the watchlist (9 scrips), all 6 watchlist tabs and all 5 Predefined
+  tabs loading. Every step after the Predefined check — basket, filter, details,
+  edit/trim, search/add, the Orders / Dashboard / Portfolio / Profile load
+  checks and logout — is compiled and analysed but **not yet seen running**.
+  The first full run should be read step by step (the report's per-step notes
+  say how each tap was made).
 * **The target app must not be already logged in.** With a stored session it
   opens on the MPIN screen; the run fails and says so. Force stop it first.
 * **An already-enabled biometric login can block the MPIN screen.** If the test
@@ -714,7 +850,23 @@ is the right fix.
   narrow.
 * **Screenshots may be unavailable** — see section 14.
 * **Identifiers are duplicated** between `AutomationConfig.kt` and
-  `automation_ids.dart` and are kept in step by hand.
+  `automation_ids.dart` (Ashika's) and, for Tradion, between
+  `AutomationConfig.TradionIds` and `tradion_mobile/docs/AUTOMATION_SEMANTICS.md`.
+  They are kept in step by hand.
+* **The notification prompt after a data reset.** Clearing the target's data
+  resets its notification permission, so the app asks again on launch and the tool
+  answers *Allow*: ACTION_CLICK first, then a tap gesture at the button, and while
+  the prompt is up the run waits for it rather than treating it as the app being
+  lost (so a person may tap *Allow* by hand). If Android ignores the automated
+  input — it can on recent versions — the failure says so and gives the
+  `adb shell pm grant <package> android.permission.POST_NOTIFICATIONS` fix.
+  Android also stops asking after a user dismisses the prompt twice, so on a
+  device that has already refused it the prompt simply does not appear.
+* **Do not run the tool on a device someone else is using.** It types into and
+  taps the screen of a shared device, clears the target app's data, and a
+  reinstall of either APK stops a run in progress ("the accessibility service was
+  turned off"). Its form fields opt out of Android autofill, so a saved login
+  from a password manager cannot land in them.
 * **The release APK is debug-signed.** Fine for a test bench, not for
   distribution.
 * **Android 10+ only** (minSdk 29). Tested against compileSdk/targetSdk 35.
@@ -723,7 +875,11 @@ is the right fix.
 
 ## 18. Adding future test flows
 
-The engine is flow-agnostic; `LoginAutomationFlow` is just one consumer of it.
+The engine is flow-agnostic; `LoginAutomationFlow` (Ashika) and
+`TradionAutomationFlow` are consumers of it. To add a third app, follow how Tradion
+was added: an entry in `TargetApp.kt` (which is the allowlist), its package in
+`accessibility_service_config.xml`'s `packageNames` and the manifest's `<queries>`,
+an `object …Ids` in `AutomationConfig.kt`, and a flow that extends `FlowBase`.
 
 1. **Annotate the target app.** Add `Semantics(identifier: ...)` to the widgets
    the new flow touches, and record them in
@@ -732,17 +888,21 @@ The engine is flow-agnostic; `LoginAutomationFlow` is just one consumer of it.
    section 4).
 2. **Add the identifiers** to `AutomationConfig.Ids` and, if the UI needs them,
    to `automation_ids.dart`.
-3. **Write the flow.** Copy the shape of `LoginAutomationFlow`: declare the
+3. **Write the flow.** Extend `FlowBase` (see `TradionAutomationFlow`): declare the
    checklist as a `List<AutomationStepResult>`, then use the engine primitives —
-   `waitForAny`, `findNow`, `isPresent`, `enterText`, `tap`, `tapKeypadDigits`,
-   `verifyLength`, `screenshot` — and `begin` / `pass` / `abort` / `skip` for
-   bookkeeping. Add a timeout block to `AutomationConfig.Timeouts`.
-4. **Route it.** Add a command alongside `startLoginAutomation` in
-   `MainActivity.handle`, and let `AutomationEngine.start` pick the flow. The
+   `waitForAny`, `findNow`, `isPresent`, `enterText`, `tap`, `longTap`,
+   `tapAndConfirm`, `tapUpTo`, `revealInList`, `scrollPage`, `verifyLength`,
+   `screenshot` — and `begin` / `pass` / `skip` / `abort` / `failAndContinue` for
+   bookkeeping. `checkPageLoads` is the "every section finished loading" check.
+   Add a timeout block to `AutomationConfig.Timeouts`.
+4. **Route it.** Add the app to `TargetApp` and let `AutomationEngine.start` pick
+   its flow (a `when` over `TargetApp`, so a missing flow does not compile). The
    existing event vocabulary and report pipeline need no changes — reports are
-   rendered from whatever checklist the flow declares.
-5. **Add the checklist to `AutomationChecklist`** so the UI can show the steps
-   before the first event arrives.
+   rendered from whatever checklist the flow declares, and the running screen
+   shows the checklist the flow announces when it starts.
+5. **Show it in the UI.** The app picker lists whatever `getAutomationConfig`
+   reports; give the new app's credentials a label in `TargetAppInfo` if they
+   differ from the existing two.
 
 Two rules for anything new: **read-only or login-only**. Do not add a flow that
 can place an order, trade, or move funds, and do not widen the allowlist or the

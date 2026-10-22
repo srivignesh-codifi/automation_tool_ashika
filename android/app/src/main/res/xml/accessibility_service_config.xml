@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Capabilities are deliberately limited to what the UAT login flow needs.
+  Capabilities are deliberately limited to what the UAT flows need.
 
   android:packageNames  - the service only receives events from, and can only
-                          inspect, the allowlisted UAT package plus the system
+                          inspect, the allowlisted UAT packages (Ashika and
+                          Tradion, see TargetApp.kt) plus the system
                           screens needed to reset it before a run: Settings
                           (App info > Storage > Clear storage; MIUI puts App
                           info in com.miui.securitycenter) and the permission
@@ -45,5 +46,5 @@
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
-    android:packageNames="com.codifi.dhanush,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller"
+    android:packageNames="com.codifi.dhanush,com.codifi.rmoney,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller"
     android:summary="@string/accessibility_service_summary" />

@@ -1,29 +1,32 @@
 package com.mobileautomation.tool
 
 /**
- * Static configuration for the Phase 1 UAT login automation.
+ * Static configuration for the UAT automation flows (Ashika's Phase 1 login
+ * pass, and Tradion's regression pass).
  *
  * Everything security relevant lives here so it can be reviewed in one place.
  */
 object AutomationConfig {
 
     /**
-     * The ONLY packages this tool is permitted to drive.
+     * The ONLY packages this tool is permitted to drive — exactly the entries
+     * of [TargetApp].
      *
-     * `com.codifi.dhanush` is the applicationId declared by the target Flutter
-     * project (android/app/build.gradle.kts). That project builds its UAT and
-     * its CUG/live variants from the same applicationId — they differ only in
-     * the API endpoints baked into the build — so the allowlist cannot tell them
-     * apart by package name. The operator is responsible for installing the UAT
-     * build; see the "Safety restrictions" section of the README.
+     * `com.codifi.dhanush` (Ashika) and `com.codifi.rmoney` (Tradion) are the
+     * applicationIds declared by the two target Flutter projects. Each builds
+     * its UAT and its CUG/live variants from the same applicationId — they
+     * differ only in the API endpoints baked into the build — so the allowlist
+     * cannot tell them apart by package name. The operator is responsible for
+     * installing the UAT build; see the "Safety restrictions" section of the
+     * README.
      *
-     * The AccessibilityService is additionally scoped to this same package via
-     * android:packageNames in res/xml/accessibility_service_config.xml, so the
-     * service is technically incapable of reading any other application.
+     * The AccessibilityService is additionally scoped to these same packages
+     * via android:packageNames in res/xml/accessibility_service_config.xml, so
+     * the service is technically incapable of reading any other application.
      */
-    val ALLOWED_PACKAGES: Set<String> = setOf("com.codifi.dhanush")
+    val ALLOWED_PACKAGES: Set<String> = TargetApp.values().map { it.packageName }.toSet()
 
-    const val DEFAULT_TARGET_PACKAGE = "com.codifi.dhanush"
+    val DEFAULT_TARGET_PACKAGE: String = TargetApp.ASHIKA.packageName
 
     /**
      * System packages the service may also read, solely to reset the target
@@ -196,6 +199,143 @@ object AutomationConfig {
         const val LOGOUT_CONFIRM_BUTTON = "logout_confirm_button"
     }
 
+
+    /**
+     * Identifiers published by the Tradion app (`com.codifi.rmoney`). Tradion's
+     * screens are tagged in `lib/shared_widgets/automation_markers.dart` and
+     * documented in `docs/AUTOMATION_SEMANTICS.md` of that project.
+     *
+     * Tab suffixes are keyed by position or role, never by label: the labels
+     * carry live counts ("Pending (3)") and are localised.
+     */
+    object TradionIds {
+        // Login
+        const val USER_ID_SCREEN = "user_id_screen"
+        const val USER_ID_INPUT = "user_id_input"
+        const val USER_ID_LOGIN_BUTTON = "user_id_login_button"
+        const val PASSWORD_SCREEN = "password_screen"
+        const val PASSWORD_INPUT = "password_input"
+        const val PASSWORD_SUBMIT_BUTTON = "password_submit_button"
+        const val OTP_SCREEN = "otp_screen"
+        const val OTP_INPUT = "otp_input"
+        const val OTP_SUBMIT_BUTTON = "otp_submit_button"
+
+        /** Offered only on a device with biometrics; has no Skip, so a run cannot pass it. */
+        const val BIOMETRIC_SCREEN = "biometric_screen"
+
+        /** "Risk Disclosure on Derivatives" and its "I understand" / "Next" button. */
+        const val RISK_DISCLOSURE_DIALOG = "risk_disclosure_dialog"
+        const val DISCLOSURE_UNDERSTAND_BUTTON = "disclosure_understand_button"
+
+        // Shell
+        const val HOME_SCREEN = "home_screen"
+        const val BOTTOMNAV_WATCHLIST_TAB = "bottomnav_watchlist_tab"
+        const val BOTTOMNAV_ORDER_TAB = "bottomnav_order_tab"
+        const val BOTTOMNAV_DASHBOARD_TAB = "bottomnav_home_tab"
+        const val BOTTOMNAV_PORTFOLIO_TAB = "bottomnav_portfolio_tab"
+        const val BOTTOMNAV_PROFILE_TAB = "bottomnav_profile_tab"
+        const val WATCHLIST_SCREEN = "watchlist_screen"
+        const val ORDERBOOK_SCREEN = "orderbook_screen"
+        const val DASHBOARD_SCREEN = "dashboard_screen"
+        const val PORTFOLIO_SCREEN = "portfolio_screen"
+        const val PROFILE_SCREEN = "profile_screen"
+
+        // Watchlist
+        const val WATCHLIST_TAB_PREFIX = "watchlist_tab_"
+        const val PREDEFINED_TAB_PREFIX = "predefined_tab_"
+        const val WATCHLIST_MODE_WATCHLIST = "watchlist_mode_watchlist"
+        const val WATCHLIST_MODE_PREDEFINED = "watchlist_mode_predefined"
+        const val WATCHLIST_SEARCH_BUTTON = "watchlist_search_button"
+        const val WATCHLIST_SCRIP_COUNT = "watchlist_scrip_count"
+        const val WATCHLIST_BASKET_BUTTON = "watchlist_basket_button"
+        const val WATCHLIST_FILTER_BUTTON = "watchlist_filter_button"
+        const val WATCHLIST_FILTER_SCREEN = "watchlist_filter_screen"
+        const val WATCHLIST_LIST_VIEW = "watchlist_list_view"
+        const val WATCHLIST_GRID_VIEW = "watchlist_grid_view"
+        const val WATCHLIST_EMPTY_STATE = "watchlist_empty_state"
+        const val WATCHLIST_SCRIP_ROW = "watchlist_scrip_row"
+        const val SCRIP_DETAILS_SHEET = "scrip_details_sheet"
+        const val INDEX_DETAILS_SHEET = "index_details_sheet"
+        const val SCRIP_SHEET_CHART_BUTTON = "scrip_sheet_chart_button"
+        const val SCRIP_SHEET_MORE_BUTTON = "scrip_sheet_more_button"
+        const val CHART_SCREEN = "chart_screen"
+        const val CHART_READY = "chart_ready"
+        const val MORE_INFO_SCREEN = "more_info_screen"
+        const val MORE_INFO_TAB_PREFIX = "more_info_tab_"
+        const val REORDER_SCREEN = "watchlist_reorder_screen"
+        const val REORDER_DELETE_BUTTON = "reorder_delete_button"
+        const val REORDER_SAVE_BUTTON = "reorder_save_button"
+        const val REORDER_ROW = "reorder_row"
+        const val REORDER_RENAME_INPUT = "reorder_rename_input"
+        const val REORDER_DISCARD_BUTTON = "reorder_discard_button"
+
+        // Search
+        const val SEARCH_SCREEN = "search_screen"
+        const val SEARCH_SCRIP_INPUT = "search_scrip_input"
+        const val SEARCH_BACK_BUTTON = "search_back_button"
+        const val SEARCH_TAB_ALL = "search_tab_all"
+        const val SEARCH_TAB_FNO = "search_tab_f_o"
+        const val SEARCH_TAB_COMMODITY = "search_tab_commodity"
+        const val SEARCH_TAB_STOCKS = "search_tab_stocks"
+        const val SEARCH_LOADING = "search_loading"
+        const val SEARCH_RESULTS_LIST = "search_results_list"
+        const val SEARCH_NO_RESULT = "search_no_result"
+        const val SEARCH_SCRIP_ADD_BUTTON = "search_scrip_add_button"
+        const val SEARCH_SCRIP_ADDED_ICON = "search_scrip_added_icon"
+        const val SEARCH_RESULT_ROW = "search_result_row"
+        const val SEARCH_RESULT_SHEET = "search_result_sheet"
+
+        val SEARCH_TABS = listOf(SEARCH_TAB_ALL, SEARCH_TAB_FNO, SEARCH_TAB_COMMODITY, SEARCH_TAB_STOCKS)
+
+        // Orders
+        const val ORDERS_TAB_PENDING = "orders_tab_pending"
+        const val ORDERS_TAB_ORDER_BOOK = "orders_tab_order_book"
+        const val ORDERS_TAB_TRADE_BOOK = "orders_tab_trade_book"
+        const val ORDERS_TAB_BASKET = "orders_tab_basket"
+        const val ORDERS_TAB_GTT = "orders_tab_gtt"
+        const val ORDERS_TAB_SIP = "orders_tab_sip"
+
+        // Dashboard
+        const val DASHBOARD_TAB_TRADING = "dashboard_tab_trading"
+        const val DASHBOARD_TAB_INVESTMENTS = "dashboard_tab_investments"
+        const val DASHBOARD_SCANNER_TAB_PREFIX = "dashboard_scanner_tab_"
+        const val DASHBOARD_OPEN_OPTION_CHAIN = "dashboard_open_option_chain"
+        const val DASHBOARD_OPEN_RESEARCH_CALLS = "dashboard_open_research_calls"
+        const val DASHBOARD_SCANNERS_VIEW_ALL = "dashboard_scanners_view_all"
+        const val OPTION_CHAIN_SCREEN = "option_chain_screen"
+        const val OPTION_CHAIN_SEARCH_BUTTON = "option_chain_search_button"
+        const val OPTION_CHAIN_TABLE = "option_chain_table"
+        const val OPTION_CHAIN_SPOT_SEARCH_SCREEN = "option_chain_spot_search_screen"
+        const val OPTION_CHAIN_SEGMENT_PREFIX = "option_chain_segment_"
+        const val OPTION_CHAIN_SPOT_ROW = "option_chain_spot_row"
+        const val RESEARCH_CALL_SCREEN = "research_call_screen"
+        const val RESEARCH_TAB_PREFIX = "research_tab_"
+        const val RESEARCH_SUBTAB_PREFIX = "research_subtab_"
+        const val SCANNERS_SCREEN = "scanners_screen"
+        const val SCANNERS_TAB_PREFIX = "scanners_tab_"
+
+        // Portfolio
+        const val PORTFOLIO_TAB_HOLDINGS = "portfolio_tab_holdings"
+        const val PORTFOLIO_TAB_POSITIONS = "portfolio_tab_positions"
+        const val HOLDINGS_VIEW = "holdings_view"
+        const val POSITIONS_VIEW = "positions_view"
+        const val HOLDINGS_MODE_NET_PNL = "holdings_mode_net_pnl"
+        const val HOLDINGS_MODE_DAY_PNL = "holdings_mode_day_pnl"
+        const val HOLDINGS_SWITCH_TOGGLE = "holdings_switch_toggle"
+        const val HOLDINGS_SORT_BUTTON = "holdings_sort_button"
+        const val HOLDINGS_SORT_SHEET = "holdings_sort_sheet"
+        const val POSITIONS_MODE_NET = "positions_mode_net_p_l"
+        const val POSITIONS_MODE_DAY = "positions_mode_day_p_l"
+        const val POSITIONS_SORT_BUTTON = "positions_sort_button"
+        const val POSITIONS_SORT_SHEET = "positions_sort_sheet"
+
+        // Profile and logout
+        const val PROFILE_TAB_ACCOUNT = "profile_tab_account"
+        const val PROFILE_TAB_TRADE_SETTINGS = "profile_tab_trade_settings"
+        const val PROFILE_LOGOUT_BUTTON = "profile_logout_button"
+        const val LOGOUT_CONFIRM_BUTTON = "logout_confirm_button"
+    }
+
     /** View ids of the system runtime permission prompt (AOSP and Google builds alike). */
     object SystemIds {
         const val PERMISSION_MESSAGE = "permission_message"
@@ -224,6 +364,8 @@ object AutomationConfig {
     /** Fallback visible-text labels, used only when an identifier is missing. */
     object Texts {
         val LOGIN = listOf("Login", "LOGIN", "Log In", "LOG IN")
+        val PROCEED = listOf("Proceed", "PROCEED")
+        val CONFIRM_OTP = listOf("Confirm OTP", "CONFIRM OTP", "Verify", "Submit")
         val CONTINUE = listOf("Continue", "CONTINUE", "Proceed")
         val OTP_SUBMIT = listOf("Verify", "VERIFY", "Submit", "Continue")
         val BIOMETRIC_SKIP = listOf("Skip", "SKIP", "Not Now", "Not now", "Later", "Maybe Later")
@@ -260,6 +402,16 @@ object AutomationConfig {
 
         /** A tapped text field taking focus, and entered text showing up in it. */
         const val FIELD_FOCUS = 2_000L
+
+        /**
+         * A notification prompt that ACTION_CLICK did not dismiss is tapped as a
+         * gesture after this long, and is reported as one the tool cannot answer
+         * after [PROMPT_STUCK] (Android can ignore automated taps on permission
+         * dialogs). While a prompt is up the run waits for it — a person may
+         * allow it by hand — instead of treating it as the app being lost.
+         */
+        const val PROMPT_GESTURE_AFTER = 2_500L
+        const val PROMPT_STUCK = 6_000L
 
         /** Settle time after a text entry or a tap, before the next lookup. */
         const val SETTLE = 500L
@@ -304,6 +456,45 @@ object AutomationConfig {
 
         /** Logout's API call and the jump to the Client ID screen. */
         const val LOGOUT = 30_000L
+
+        // ── Tradion ──────────────────────────────────────────────────────────
+
+        /**
+         * A fresh install checks the network and the app version on the splash
+         * screen (each probe can take several seconds) before it routes.
+         */
+        const val USER_ID_SCREEN = 45_000L
+        const val PASSWORD_SCREEN = 30_000L
+
+        /** OTP verification, then the disclosure fetch, then the jump to Home. */
+        const val OTP_SUBMIT = 30_000L
+
+        /**
+         * After login Home is built first and the disclosure route is pushed in
+         * the frame after it, so Home alone is not proof there is no dialog.
+         */
+        const val DISCLOSURE_APPEARS = 6_000L
+
+        /** Per Tradion tab (watchlist, orders, dashboard, portfolio, profile). */
+        const val TRADION_TAB_LOAD = 10_000L
+
+        /** Per watchlist or predefined-watchlist tab: a quote fetch each. */
+        const val WATCHLIST_TAB_LOAD = 10_000L
+
+        /** An option chain's data after its underlying is chosen. */
+        const val OPTION_CHAIN_LOAD = 7_000L
+
+        /** The chart is a web page: how long it may take to finish loading. */
+        const val CHART_LOAD = 15_000L
+
+        /** Per More Details tab (Market Depth, Technicals, Fundamentals, Info). */
+        const val MORE_INFO_LOAD = 7_000L
+
+        /** Saving the edit screen sorts and deletes over the network before it closes. */
+        const val EDIT_SAVE = 20_000L
+
+        /** Tabs probed on the watchlist strips; stops at the first missing index. */
+        const val MAX_WATCHLIST_TABS = 20
     }
 
     /** Accessibility tree polling interval — no long blocking sleeps. */
@@ -321,5 +512,6 @@ object AutomationConfig {
     const val MAX_NODES_PER_SCAN = 4_000
     const val MAX_TREE_DEPTH = 60
 
+    /** Ashika's test name; the other apps carry theirs in [TargetApp.testName]. */
     const val TEST_NAME = "Phase 1 - Login Automation"
 }

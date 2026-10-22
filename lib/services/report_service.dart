@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -20,6 +21,11 @@ import '../models/test_run.dart';
 /// Client ID, an OTP or an MPIN, so a credential cannot reach a report by
 /// construction.
 class ReportService {
+  ReportService({MethodChannel? downloads})
+    : _downloads =
+          downloads ??
+          const MethodChannel('com.mobileautomation.tool/commands');
+
   static const String _historyFile = 'history.json';
   static const int _historyLimit = 50;
 
@@ -27,6 +33,7 @@ class ReportService {
   static final DateFormat _fileStamp = DateFormat('yyyyMMdd_HHmmss');
 
   Directory? _cachedDir;
+  final MethodChannel _downloads;
 
   /// `<app-specific external>/reports`, falling back to app documents when the
   /// device exposes no external app directory.
@@ -125,6 +132,51 @@ class ReportService {
     }
     await Share.shareXFiles(files, subject: subject, text: subject);
   }
+
+  /// Copies all available formats for [run] into public Downloads.
+  ///
+  /// Android's MediaStore performs the write, so Android 10+ needs no storage
+  /// permission and the files remain available after the app is uninstalled.
+  Future<ReportDownloadResult> download(TestRun run) async {
+    final candidates = <(String, String)>[
+      (run.htmlPath, 'text/html'),
+      (run.jsonPath, 'application/json'),
+      (run.textPath, 'text/plain'),
+    ];
+    final files = <Map<String, String>>[];
+    for (final (path, mimeType) in candidates) {
+      if (path.isEmpty || !await File(path).exists()) continue;
+      files.add(<String, String>{
+        'path': path,
+        'name': File(path).uri.pathSegments.last,
+        'mimeType': mimeType,
+      });
+    }
+    if (files.isEmpty) {
+      throw const FileSystemException('No saved report files were found.');
+    }
+
+    final raw = await _downloads.invokeMethod<Object?>(
+      'downloadReportFiles',
+      <String, Object?>{'files': files},
+    );
+    if (raw is! Map<Object?, Object?>) {
+      throw PlatformException(
+        code: 'invalid_download_result',
+        message: 'Android returned an invalid report download result.',
+      );
+    }
+    return ReportDownloadResult(
+      savedNames: _stringList(raw['savedNames']),
+      failedNames: _stringList(raw['failedNames']),
+      directory:
+          raw['directory'] as String? ?? 'Downloads/Automation Tool Reports',
+    );
+  }
+
+  static List<String> _stringList(Object? value) => value is List
+      ? value.whereType<String>().toList(growable: false)
+      : const <String>[];
 
   Future<void> _addToHistory(TestRun run) async {
     final dir = await reportsDirectory();
@@ -347,4 +399,29 @@ $failureBlock$shots
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;');
+}
+
+class ReportDownloadResult {
+  const ReportDownloadResult({
+    required this.savedNames,
+    required this.failedNames,
+    required this.directory,
+  });
+
+  final List<String> savedNames;
+  final List<String> failedNames;
+  final String directory;
+
+  bool get succeeded => savedNames.isNotEmpty && failedNames.isEmpty;
+
+  String get message {
+    if (succeeded) {
+      return 'Downloaded ${savedNames.length} report files to $directory.';
+    }
+    if (savedNames.isNotEmpty) {
+      return 'Downloaded ${savedNames.length} report files to $directory; '
+          '${failedNames.length} could not be saved.';
+    }
+    return 'The report files could not be downloaded.';
+  }
 }

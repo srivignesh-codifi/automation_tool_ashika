@@ -79,6 +79,17 @@ object AccessibilityNodeFinder {
         return search(root) { matchesIdentifier(it, identifier) }
     }
 
+    /** Every node carrying [identifier], in accessibility-tree order. */
+    fun allByIdentifier(root: AccessibilityNodeInfo?, identifier: String): List<AccessibilityNodeInfo> {
+        if (root == null) return emptyList()
+        val found = mutableListOf<AccessibilityNodeInfo>()
+        search(root) { node ->
+            if (matchesIdentifier(node, identifier)) found += node
+            false
+        }
+        return found
+    }
+
     /** Priority 2: content description, exact then case insensitive. */
     fun byContentDescription(
         root: AccessibilityNodeInfo?,
@@ -109,6 +120,98 @@ object AccessibilityNodeFinder {
     /** Priority 5: node class name. */
     fun byClassName(root: AccessibilityNodeInfo?, className: String): AccessibilityNodeInfo? =
         search(root) { it.className?.toString() == className }
+
+    /**
+     * Every piece of text under (and including) each node carrying [identifier]:
+     * its own text and description first, then its descendants'. A label can sit
+     * on the tagged node or, when Flutter did not merge it upwards, on a child;
+     * and a tab strip keeps neighbouring tabs built, so several nodes can share
+     * one identifier. Only for static display text such as a scrip count.
+     */
+    fun labelsOf(root: AccessibilityNodeInfo?, identifier: String): List<String> {
+        if (root == null) return emptyList()
+        val labels = mutableListOf<String>()
+        search(root) { node ->
+            if (matchesIdentifier(node, identifier)) {
+                (node.text ?: node.contentDescription)?.toString()?.takeIf { it.isNotBlank() }?.let(labels::add)
+                search(node) { child ->
+                    if (child !== node) {
+                        (child.text ?: child.contentDescription)?.toString()?.takeIf { it.isNotBlank() }?.let(labels::add)
+                    }
+                    false
+                }
+            }
+            false
+        }
+        return labels
+    }
+
+    /** The own text of every node carrying [identifier], top to bottom (not their children's). */
+    fun ownLabelsOf(root: AccessibilityNodeInfo?, identifier: String): List<String> {
+        if (root == null) return emptyList()
+        val labels = mutableListOf<String>()
+        search(root) { node ->
+            if (matchesIdentifier(node, identifier)) {
+                (node.text ?: node.contentDescription)?.toString()?.let(labels::add)
+            }
+            false
+        }
+        return labels
+    }
+
+    /**
+     * One combined label per node carrying [identifier]. This is for static list
+     * rows: a Semantics boundary can keep the row's text on descendants rather
+     * than on the tagged node itself, so [ownLabelsOf] alone is not sufficient.
+     */
+    fun groupedLabelsOf(root: AccessibilityNodeInfo?, identifier: String): List<String> =
+        allByIdentifier(root, identifier).map { node ->
+            val parts = LinkedHashSet<String>()
+            search(node) { child ->
+                (child.text ?: child.contentDescription)
+                    ?.toString()
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let(parts::add)
+                false
+            }
+            parts.joinToString(" ")
+        }
+
+    /**
+     * The custom accessibility action whose label contains [labelPart], looked
+     * for on [anchor], its descendants, and up to eight ancestors. Flutter
+     * publishes a widget's `CustomSemanticsAction`s (a reorderable list's "Move
+     * down", for one) as such actions, usually on a wrapper above the tagged
+     * node. Returns the node carrying it with the action, or null; [available]
+     * collects every custom label seen, for a failure message.
+     */
+    fun findCustomAction(
+        anchor: AccessibilityNodeInfo,
+        labelPart: String,
+        available: MutableList<String>,
+    ): Pair<AccessibilityNodeInfo, AccessibilityNodeInfo.AccessibilityAction>? {
+        fun check(node: AccessibilityNodeInfo): AccessibilityNodeInfo.AccessibilityAction? {
+            val custom = node.actionList.filter { it.label != null }
+            custom.forEach { available.add(it.label.toString()) }
+            return custom.firstOrNull { it.label.toString().contains(labelPart, ignoreCase = true) }
+        }
+        check(anchor)?.let { return anchor to it }
+        var found: Pair<AccessibilityNodeInfo, AccessibilityNodeInfo.AccessibilityAction>? = null
+        search(anchor) { node ->
+            check(node)?.let { found = node to it }
+            found != null
+        }
+        found?.let { return it }
+        var parent = try { anchor.parent } catch (_: Throwable) { null }
+        var hops = 0
+        while (parent != null && hops < 8) {
+            check(parent)?.let { return parent to it }
+            parent = try { parent.parent } catch (_: Throwable) { null }
+            hops++
+        }
+        return null
+    }
 
     /** Number of nodes carrying [identifier]. */
     fun countByIdentifier(root: AccessibilityNodeInfo?, identifier: String): Int {
@@ -240,9 +343,19 @@ object AccessibilityNodeFinder {
             ?: resolve(anchor) { isEditableLike(it) }
     }
 
+    /** Text held by the actual editable node below [anchor], when exposed. */
+    fun editableText(anchor: AccessibilityNodeInfo): String? =
+        resolve(anchor) { node -> isEditableLike(node) && node.text != null }
+            ?.text
+            ?.toString()
+
     /** The node that can accept ACTION_CLICK for this anchor, if any. */
     fun resolveClickable(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? =
         resolve(anchor) { isClickableLike(it) }
+
+    /** The node that can accept ACTION_LONG_CLICK for this anchor, if any. */
+    fun resolveLongClickable(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        resolve(anchor) { supportsAction(it, AccessibilityNodeInfo.ACTION_LONG_CLICK) }
 
     // ── Diagnostics ─────────────────────────────────────────────────────────
 

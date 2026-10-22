@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_automation_tool/constants/automation_ids.dart';
 import 'package:mobile_automation_tool/models/automation_result.dart';
 import 'package:mobile_automation_tool/models/automation_step.dart';
+import 'package:mobile_automation_tool/models/test_run.dart';
+import 'package:mobile_automation_tool/services/automation_service.dart';
 import 'package:mobile_automation_tool/services/report_service.dart';
 
 AutomationStep _step(
@@ -50,12 +55,35 @@ AutomationResult _result({
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final reports = ReportService();
 
   test('checklist mirrors the 60 native steps in order', () {
     expect(AutomationChecklist.steps.length, 60);
     expect(AutomationChecklist.steps.first.id, 'target_app_installed');
     expect(AutomationChecklist.steps.last.id, 'logged_out');
+  });
+
+  test('the app picker offers Ashika and Tradion with their own credentials', () {
+    final targets = const AutomationConfigInfo.fallback().targets;
+    expect(targets.map((t) => t.id), <String>['ashika', 'tradion']);
+
+    final ashika = targets.first;
+    expect(ashika.packageName, 'com.codifi.dhanush');
+    expect(ashika.secret, TargetSecret.mpin);
+    expect(ashika.userIdLabel, 'Client ID');
+
+    final tradion = targets.last;
+    expect(tradion.packageName, 'com.codifi.rmoney');
+    expect(tradion.secret, TargetSecret.password);
+    expect(tradion.userIdLabel, 'User ID');
+    expect(tradion.runSummary, contains('never places or changes an order'));
+  });
+
+  test('the secret kind decodes from the platform shape, defaulting to MPIN', () {
+    expect(TargetSecret.parse('password'), TargetSecret.password);
+    expect(TargetSecret.parse('mpin'), TargetSecret.mpin);
+    expect(TargetSecret.parse(null), TargetSecret.mpin);
   });
 
   test('a fully passing run renders PASSED with a full count', () {
@@ -231,5 +259,60 @@ void main() {
     expect(decoded.steps, isEmpty);
     expect(decoded.screenshots, <String, String>{'ok': '/tmp/a.png'});
     expect(decoded.verdict, 'FAILED');
+  });
+
+  test('download sends all available report formats to Android', () async {
+    final temp = await Directory.systemTemp.createTemp('automation_reports_');
+    final html = File('${temp.path}/run.html');
+    final json = File('${temp.path}/run.json');
+    final text = File('${temp.path}/run.txt');
+    await html.writeAsString('<html></html>');
+    await json.writeAsString('{}');
+    await text.writeAsString('PASSED');
+
+    const channel = MethodChannel('report_download_test');
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          received = call;
+          return <String, Object?>{
+            'savedNames': <String>['run.html', 'run.json', 'run.txt'],
+            'failedNames': <String>[],
+            'directory': 'Downloads/Automation Tool Reports',
+          };
+        });
+    addTearDown(() async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+
+    final service = ReportService(downloads: channel);
+    final run = TestRun(
+      runId: 'download-test',
+      testName: 'Download test',
+      targetPackage: 'com.codifi.rmoney',
+      startedAtMs: 1700000000000,
+      passed: true,
+      stopped: false,
+      completedSteps: 3,
+      totalSteps: 3,
+      jsonPath: json.path,
+      htmlPath: html.path,
+      textPath: text.path,
+    );
+
+    final result = await service.download(run);
+    expect(result.succeeded, isTrue);
+    expect(result.message, contains('Downloaded 3 report files'));
+    expect(received?.method, 'downloadReportFiles');
+
+    final arguments = received?.arguments as Map<Object?, Object?>;
+    final files = arguments['files'] as List<Object?>;
+    expect(files, hasLength(3));
+    expect(
+      files.whereType<Map<Object?, Object?>>().map((file) => file['mimeType']),
+      <String>['text/html', 'application/json', 'text/plain'],
+    );
   });
 }

@@ -2,13 +2,14 @@
 
     <!--
       Package visibility (Android 11+): the tool must be able to resolve the
-      launch intent of the UAT application it drives. Only the single
-      allowlisted UAT package is declared here — QUERY_ALL_PACKAGES is
+      launch intent of the UAT applications it drives. Only the allowlisted
+      packages (see TargetApp.kt) are declared here — QUERY_ALL_PACKAGES is
       deliberately NOT requested, so the tool cannot enumerate other
       installed apps.
     -->
     <queries>
         <package android:name="com.codifi.dhanush" />
+        <package android:name="com.codifi.rmoney" />
     </queries>
 
     <application
@@ -37,7 +38,7 @@
         </activity>
 
         <!--
-          The automation driver. Scoped to the single UAT package via
+          The automation driver. Scoped to the allowlisted UAT packages via
           android:packageNames in accessibility_service_config.xml.
         -->
         <service

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/automation_step.dart';
 import '../models/test_run.dart';
 import '../services/automation_service.dart';
 import '../services/report_service.dart';
@@ -9,7 +10,9 @@ import '../widgets/status_indicator.dart';
 import 'report_screen.dart';
 import 'running_test_screen.dart';
 
-/// Credentials form and pre-flight checks for the Phase 1 login automation.
+/// Target app picker, credentials form and pre-flight checks for an automation
+/// run. The two apps ask for different credentials (Ashika: Client ID, OTP,
+/// MPIN; Tradion: User ID, Password, OTP), so the form follows the picker.
 class LoginAutomationScreen extends StatefulWidget {
   const LoginAutomationScreen({
     required this.automation,
@@ -32,10 +35,13 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   final _packageController = TextEditingController();
   final _clientIdController = TextEditingController();
   final _otpController = TextEditingController();
-  final _mpinController = TextEditingController();
+
+  /// The MPIN (Ashika) or password (Tradion), whichever the picked app needs.
+  final _secretController = TextEditingController();
 
   AccessibilityStatus _accessibility = const AccessibilityStatus.unknown();
   AutomationConfigInfo _config = const AutomationConfigInfo.fallback();
+  late TargetAppInfo _app = _config.targets.first;
   TargetAppStatus? _target;
   bool _remember = false;
   bool _busy = true;
@@ -56,7 +62,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     // The OTP is one-time: drop it as the screen goes away.
     _otpController.clear();
     _otpController.dispose();
-    _mpinController.dispose();
+    _secretController.dispose();
     super.dispose();
   }
 
@@ -68,20 +74,52 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   Future<void> _load() async {
     final config = await widget.automation.config();
     final savedPackage = await widget.storage.readTargetPackage();
-    final remember = await widget.storage.readRemember();
-    final clientId = remember ? await widget.storage.readClientId() : null;
-    final mpin = remember ? await widget.storage.readMpin() : null;
+    final app = config.targets.firstWhere(
+      (t) => t.packageName == (savedPackage ?? config.defaultTargetPackage),
+      orElse: () => config.targets.first,
+    );
 
     if (!mounted) return;
     setState(() {
       _config = config;
-      _packageController.text = savedPackage ?? config.defaultTargetPackage;
-      _remember = remember;
-      if (clientId != null) _clientIdController.text = clientId;
-      if (mpin != null) _mpinController.text = mpin;
-      _busy = false;
+      _app = app;
+      _packageController.text = app.packageName;
     });
+    await _loadSaved(app);
+    if (!mounted) return;
+    setState(() => _busy = false);
     await _refreshStatuses();
+  }
+
+  /// Fills the user id and secret last saved for [app], if the operator asked
+  /// for them to be remembered; otherwise leaves the form empty.
+  Future<void> _loadSaved(TargetAppInfo app) async {
+    final remember = await widget.storage.readRemember(appId: app.id);
+    final clientId = remember
+        ? await widget.storage.readClientId(appId: app.id)
+        : null;
+    final secret = remember
+        ? await widget.storage.readSecret(appId: app.id)
+        : null;
+    if (!mounted) return;
+    setState(() {
+      _remember = remember;
+      _clientIdController.text = clientId ?? '';
+      _secretController.text = secret ?? '';
+      _otpController.clear();
+    });
+  }
+
+  Future<void> _selectApp(TargetAppInfo app) async {
+    if (app.id == _app.id) return;
+    setState(() {
+      _app = app;
+      _packageController.text = app.packageName;
+      _target = null;
+    });
+    await _loadSaved(app);
+    await widget.storage.saveTargetPackage(app.packageName);
+    await _checkTargetApp();
   }
 
   Future<void> _refreshStatuses() async {
@@ -133,10 +171,11 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   Future<void> _start() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final packageName = _packageController.text.trim();
+    final app = _app;
+    final packageName = app.packageName;
     final clientId = _clientIdController.text.trim();
     final otp = _otpController.text.trim();
-    final mpin = _mpinController.text;
+    final secret = _secretController.text;
 
     await _refreshStatuses();
     if (!mounted) return;
@@ -161,12 +200,16 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     }
 
     await widget.storage.saveTargetPackage(packageName);
-    await widget.storage.setRemember(_remember);
+    await widget.storage.setRemember(_remember, appId: app.id);
     if (_remember) {
       // Deliberately not the OTP — it is a one-time value.
-      await widget.storage.saveCredentials(clientId: clientId, mpin: mpin);
+      await widget.storage.saveCredentials(
+        clientId: clientId,
+        secret: secret,
+        appId: app.id,
+      );
     } else {
-      await widget.storage.clearCredentials();
+      await widget.storage.clearCredentials(appId: app.id);
     }
     if (!mounted) return;
 
@@ -178,11 +221,16 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
           automation: widget.automation,
           reports: widget.reports,
           targetPackage: packageName,
+          testName: app.testName,
+          // Only Ashika's checklist is mirrored in Dart; for the others the
+          // driver announces its own the moment the run starts.
+          initialSteps: app.id == 'ashika' ? null : const <AutomationStep>[],
           starter: () => widget.automation.startLoginAutomation(
             targetPackage: packageName,
             clientId: clientId,
             otp: otp,
-            mpin: mpin,
+            mpin: app.secret == TargetSecret.mpin ? secret : '',
+            password: app.secret == TargetSecret.password ? secret : '',
           ),
         ),
       ),
@@ -213,7 +261,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     final result = await widget.automation.lastReport();
     if (!mounted) return;
     if (result == null) {
-      _snack('No report yet. Run the login automation first.');
+      _snack('No report yet. Run the automation first.');
       return;
     }
     final run = await widget.reports.save(result);
@@ -236,14 +284,14 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   }
 
   Future<void> _clearSaved() async {
-    await widget.storage.clearCredentials();
+    await widget.storage.clearCredentials(appId: _app.id);
     if (!mounted) return;
     setState(() {
       _clientIdController.clear();
-      _mpinController.clear();
+      _secretController.clear();
       _remember = false;
     });
-    _snack('Saved Client ID and MPIN cleared.');
+    _snack('Saved ${_app.userIdLabel} and ${_app.secret.label} cleared.');
   }
 
   void _snack(String message) {
@@ -258,7 +306,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     final target = _target;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Login Automation')),
+      appBar: AppBar(title: const Text('Run Automation')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -280,6 +328,28 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
             const SizedBox(height: 20),
 
+            Text('Target application', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: [
+                for (final app in _config.targets)
+                  ButtonSegment<String>(
+                    value: app.id,
+                    label: Text(app.displayName),
+                  ),
+              ],
+              selected: <String>{_app.id},
+              showSelectedIcon: false,
+              onSelectionChanged: _running
+                  ? null
+                  : (selection) => _selectApp(
+                      _config.targets.firstWhere(
+                        (t) => t.id == selection.first,
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 20),
+
             Text('Credentials', style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
@@ -294,19 +364,16 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               controller: _packageController,
               label: 'Target application package',
               helper: 'Allowlist: ${_config.allowedPackages.join(", ")}',
-              enabled: !_running,
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Enter the target package name'
-                  : null,
+              enabled: false,
             ),
             const SizedBox(height: 14),
             CredentialField(
               controller: _clientIdController,
-              label: 'Client ID',
-              hint: 'UAT test client code',
+              label: _app.userIdLabel,
+              hint: 'UAT test ${_app.userIdLabel}',
               enabled: !_running,
               validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Enter the Client ID'
+                  ? 'Enter the ${_app.userIdLabel}'
                   : null,
             ),
             const SizedBox(height: 14),
@@ -324,15 +391,17 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
             const SizedBox(height: 14),
             CredentialField(
-              controller: _mpinController,
-              label: 'MPIN',
+              controller: _secretController,
+              label: _app.secret.label,
               obscure: true,
-              digitsOnly: true,
-              maxLength: 6,
+              // An MPIN is digits; a password is anything.
+              digitsOnly: _app.secret == TargetSecret.mpin,
+              maxLength: _app.secret == TargetSecret.mpin ? 6 : null,
               enabled: !_running,
               textInputAction: TextInputAction.done,
-              validator: (value) =>
-                  (value == null || value.isEmpty) ? 'Enter the MPIN' : null,
+              validator: (value) => (value == null || value.isEmpty)
+                  ? 'Enter the ${_app.secret.label}'
+                  : null,
             ),
             const SizedBox(height: 6),
             SwitchListTile(
@@ -341,7 +410,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               onChanged: _running
                   ? null
                   : (value) => setState(() => _remember = value),
-              title: const Text('Remember Client ID and MPIN'),
+              title: Text(
+                'Remember ${_app.userIdLabel} and ${_app.secret.label}',
+              ),
               subtitle: const Text(
                 'Stored in the Android Keystore. The OTP is never stored.',
               ),
@@ -351,7 +422,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               child: TextButton.icon(
                 onPressed: _running ? null : _clearSaved,
                 icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Clear saved Client ID and MPIN'),
+                label: Text(
+                  'Clear saved ${_app.userIdLabel} and ${_app.secret.label}',
+                ),
               ),
             ),
 
@@ -359,7 +432,14 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             FilledButton.icon(
               onPressed: _running ? null : _start,
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Start Login Automation'),
+              label: Text('Start ${_app.displayName} Automation'),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _app.runSummary,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(

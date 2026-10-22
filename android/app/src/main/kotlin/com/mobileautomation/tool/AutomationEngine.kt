@@ -41,6 +41,7 @@ class AutomationEngine private constructor(
         val clientId: String,
         val otp: String,
         val mpin: String,
+        val password: String = "",
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
@@ -75,9 +76,16 @@ class AutomationEngine private constructor(
                 return "Refusing to run: '${request.targetPackage}' is not in the automation " +
                     "allowlist. Allowed: ${AutomationConfig.ALLOWED_PACKAGES.joinToString()}."
             }
-            if (request.clientId.isBlank()) return "Client ID is required."
+            val app = TargetApp.forPackage(request.targetPackage)
+                ?: return "'${request.targetPackage}' has no automation flow."
+            if (request.clientId.isBlank()) {
+                return if (app == TargetApp.TRADION) "User ID is required." else "Client ID is required."
+            }
             if (request.otp.isBlank()) return "OTP is required."
-            if (request.mpin.isBlank()) return "MPIN is required."
+            when (app.secret) {
+                TargetApp.Secret.MPIN -> if (request.mpin.isBlank()) return "MPIN is required."
+                TargetApp.Secret.PASSWORD -> if (request.password.isBlank()) return "Password is required."
+            }
 
             val service = AutomationAccessibilityService.connected()
                 ?: return "The Automation Tool accessibility service is not running. " +
@@ -93,11 +101,18 @@ class AutomationEngine private constructor(
 
             val thread = Thread({
                 try {
-                    val result = LoginAutomationFlow(engine).run(
-                        clientId = request.clientId,
-                        otp = request.otp,
-                        mpin = request.mpin,
-                    )
+                    val result = when (app) {
+                        TargetApp.ASHIKA -> LoginAutomationFlow(engine).run(
+                            clientId = request.clientId,
+                            otp = request.otp,
+                            mpin = request.mpin,
+                        )
+                        TargetApp.TRADION -> TradionAutomationFlow(engine).run(
+                            userId = request.clientId,
+                            password = request.password,
+                            otp = request.otp,
+                        )
+                    }
                     lastResult = result.toMap()
                     engine.emit(
                         if (result.stopped) "automation_stopped" else "automation_completed",
@@ -208,6 +223,23 @@ class AutomationEngine private constructor(
     var notificationPromptsAllowed: Int = 0
         private set
 
+    /** A notification permission prompt is on screen right now. */
+    @Volatile
+    var promptVisible: Boolean = false
+        private set
+
+    /**
+     * A notification prompt stayed up after the tool clicked Allow and then
+     * tapped it: Android ignored the automated input. Reported so a failure
+     * that follows can say so, rather than blaming the app.
+     */
+    @Volatile
+    var promptStuck: Boolean = false
+        private set
+
+    private var promptFirstSeenMs = 0L
+    private var promptLastGestureMs = 0L
+
     /**
      * Root of the target app's window, or null when anything else is in front.
      *
@@ -222,20 +254,43 @@ class AutomationEngine private constructor(
         // while the system still reports the app as the active window, and
         // while it is up, coordinate taps land on the prompt instead.
         service.windowRootOf(AutomationConfig.PERMISSION_CONTROLLER_PACKAGES)?.let { prompt ->
+            promptVisible = true
             allowNotificationPrompt(prompt)
             return null
         }
+        promptVisible = false
+        promptFirstSeenMs = 0L
         val root = service.rootNode() ?: return null
         return root.takeIf { it.packageName?.toString() == targetPackage }
     }
 
-    /** Taps "Allow" on the prompt only if it is asking about notifications. */
+    /**
+     * Taps "Allow" on the prompt only if it is asking about notifications.
+     *
+     * ACTION_CLICK first. If the prompt is still up a few seconds later the
+     * click was ignored, so the button is tapped as a gesture at its own bounds,
+     * and if it is still up after that it is flagged [promptStuck]. Whatever the
+     * outcome nothing but the Allow button of a *notification* prompt is touched.
+     */
     private fun allowNotificationPrompt(root: AccessibilityNodeInfo) {
         val message = AccessibilityNodeFinder.byIdentifier(root, SystemIds.PERMISSION_MESSAGE)
             ?.text?.toString() ?: return
         if (!message.contains("notification", ignoreCase = true)) return
         val allow = AccessibilityNodeFinder.byIdentifier(root, SystemIds.PERMISSION_ALLOW_BUTTON) ?: return
-        if (clickResolved(allow)) notificationPromptsAllowed++
+        val now = SystemClock.elapsedRealtime()
+        if (promptFirstSeenMs == 0L) promptFirstSeenMs = now
+        val waited = now - promptFirstSeenMs
+        when {
+            waited < AutomationConfig.Timeouts.PROMPT_GESTURE_AFTER -> {
+                val clickable = AccessibilityNodeFinder.resolveClickable(allow)
+                if (clickable != null && performClick(clickable)) notificationPromptsAllowed++
+            }
+            now - promptLastGestureMs >= 1_000L -> {
+                promptLastGestureMs = now
+                if (tapNode(allow)) notificationPromptsAllowed++
+                if (waited >= AutomationConfig.Timeouts.PROMPT_STUCK) promptStuck = true
+            }
+        }
     }
 
     // ── App data reset ──────────────────────────────────────────────────────
@@ -385,10 +440,13 @@ class AutomationEngine private constructor(
                 lastIdentifiers = AccessibilityNodeFinder.collectIdentifiers(root)
             } else {
                 lastReadable = false
-                // The service is scoped to a single package, so another app in
-                // the foreground shows up as an unreadable window rather than as
-                // a different package name. A sustained gap means we lost the app.
-                if (everSawTarget) {
+                // The service is scoped to a few packages, so another app in the
+                // foreground shows up as an unreadable window rather than as a
+                // different package name. A sustained gap means we lost the app —
+                // unless the gap is a notification prompt, which is waited out.
+                if (promptVisible) {
+                    nullRootSinceMs = 0L
+                } else if (everSawTarget) {
                     val now = SystemClock.elapsedRealtime()
                     if (nullRootSinceMs == 0L) {
                         nullRootSinceMs = now
@@ -451,6 +509,129 @@ class AutomationEngine private constructor(
         return (node.text ?: node.contentDescription)?.toString()
     }
 
+    /** Every label under nodes carrying [identifier]; see [AccessibilityNodeFinder.labelsOf]. */
+    fun labelsOf(identifier: String): List<String> =
+        AccessibilityNodeFinder.labelsOf(targetRoot(), identifier)
+
+    /** The own text of each node carrying [identifier], top to bottom. For static list rows only. */
+    fun ownLabelsOf(identifier: String): List<String> =
+        AccessibilityNodeFinder.ownLabelsOf(targetRoot(), identifier)
+
+    /** One combined, non-secret display label per tagged static list row. */
+    fun groupedLabelsOf(identifier: String): List<String> =
+        AccessibilityNodeFinder.groupedLabelsOf(targetRoot(), identifier)
+
+    /**
+     * Reads the current watchlist-name field through its actual editable node.
+     * This accessor is deliberately restricted to that one non-credential field
+     * so a login value cannot accidentally be copied into a report.
+     */
+    fun watchlistName(): String? {
+        val identifier = AutomationConfig.TradionIds.REORDER_RENAME_INPUT
+        val anchor = findNow(identifier) ?: return null
+        return AccessibilityNodeFinder.editableText(anchor)
+    }
+
+    data class DescendantActionOutcome(
+        val ok: Boolean,
+        val detail: String,
+        val containerIndex: Int? = null,
+    )
+
+    /**
+     * Taps [descendantIdentifier] inside the first [containerIdentifier] row
+     * that carries it, returning that row's index. Search uses the index to tap
+     * the *same* result after its + changes into an added icon.
+     */
+    fun tapFirstDescendant(
+        containerIdentifier: String,
+        descendantIdentifier: String,
+    ): DescendantActionOutcome {
+        val root = targetRoot()
+            ?: return DescendantActionOutcome(false, "the target application window is not readable")
+        val containers = AccessibilityNodeFinder.allByIdentifier(root, containerIdentifier)
+        val index = containers.indexOfFirst {
+            AccessibilityNodeFinder.byIdentifier(it, descendantIdentifier) != null
+        }
+        if (index < 0) {
+            return DescendantActionOutcome(
+                false,
+                "no '$containerIdentifier' row contains '$descendantIdentifier'",
+            )
+        }
+        return tapDescendantAt(containers, index, containerIdentifier, descendantIdentifier)
+    }
+
+    /** True when the indexed tagged row currently contains [descendantIdentifier]. */
+    fun hasDescendantAt(
+        containerIdentifier: String,
+        containerIndex: Int,
+        descendantIdentifier: String,
+    ): Boolean {
+        val containers = AccessibilityNodeFinder.allByIdentifier(targetRoot(), containerIdentifier)
+        val container = containers.getOrNull(containerIndex) ?: return false
+        return AccessibilityNodeFinder.byIdentifier(container, descendantIdentifier) != null
+    }
+
+    /** Taps a tagged descendant in the indexed tagged row. */
+    fun tapDescendantAt(
+        containerIdentifier: String,
+        containerIndex: Int,
+        descendantIdentifier: String,
+    ): DescendantActionOutcome {
+        val containers = AccessibilityNodeFinder.allByIdentifier(targetRoot(), containerIdentifier)
+        return tapDescendantAt(containers, containerIndex, containerIdentifier, descendantIdentifier)
+    }
+
+    private fun tapDescendantAt(
+        containers: List<AccessibilityNodeInfo>,
+        containerIndex: Int,
+        containerIdentifier: String,
+        descendantIdentifier: String,
+    ): DescendantActionOutcome {
+        val container = containers.getOrNull(containerIndex)
+            ?: return DescendantActionOutcome(
+                false,
+                "'$containerIdentifier' row $containerIndex is no longer built",
+                containerIndex,
+            )
+        val anchor = AccessibilityNodeFinder.byIdentifier(container, descendantIdentifier)
+            ?: return DescendantActionOutcome(
+                false,
+                "'$containerIdentifier' row $containerIndex has no '$descendantIdentifier'",
+                containerIndex,
+            )
+        val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
+        val ok = clickable?.let(::performClick) == true || tapNode(clickable ?: anchor)
+        val detail = if (ok) {
+            "tapped '$descendantIdentifier' in '$containerIdentifier' row $containerIndex"
+        } else {
+            "found '$descendantIdentifier' in '$containerIdentifier' row $containerIndex, but the tap failed"
+        }
+        return DescendantActionOutcome(ok, detail, containerIndex)
+    }
+
+    /**
+     * Performs the custom accessibility action whose label contains [labelPart]
+     * on the first node carrying [identifier] (e.g. "Move down" on a reorderable
+     * row). No coordinate fallback: a drag is never guessed at.
+     */
+    fun customAction(identifier: String, labelPart: String): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        val anchor = AccessibilityNodeFinder.byIdentifier(root, identifier)
+            ?: return ActionOutcome(false, "no node matched the identifier '$identifier'")
+        val available = mutableListOf<String>()
+        val (node, action) = AccessibilityNodeFinder.findCustomAction(anchor, labelPart, available)
+            ?: return ActionOutcome(
+                false,
+                "'$identifier' offers no '$labelPart' action; custom actions seen: " +
+                    "${available.distinct().ifEmpty { listOf("none") }.joinToString()}",
+            )
+        val ok = try { node.performAction(action.id) } catch (_: Throwable) { false }
+        return if (ok) ActionOutcome(true, "performed '${action.label}' on '$identifier'")
+        else ActionOutcome(false, "'${action.label}' was rejected by '$identifier'")
+    }
+
     /** Identifiers on screen right now, for failure messages. */
     fun visibleIdentifiers(): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot())
 
@@ -476,7 +657,10 @@ class AutomationEngine private constructor(
      * still on screen — a page that really opened would have covered it — the
      * tap is repeated, until [timeoutMs]. With [tapAtLeastOnce], [expect]
      * already being on screen does not excuse the tap (e.g. another watchlist
-     * tab already shows the same controls).
+     * tab already shows the same controls). When any [stopOn] identifier
+     * appears, the wait fails immediately. This lets a flow distinguish a
+     * target-app redirect (for example, an expired session returning to Login)
+     * from an ordinary navigation timeout.
      */
     fun tapAndConfirm(
         identifier: String,
@@ -484,6 +668,8 @@ class AutomationEngine private constructor(
         timeoutMs: Long,
         retryAfterMs: Long = AutomationConfig.Timeouts.CONFIRM_RETRY,
         tapAtLeastOnce: Boolean = false,
+        longPress: Boolean = false,
+        stopOn: List<String> = emptyList(),
     ): ActionOutcome {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         var taps = 0
@@ -496,9 +682,21 @@ class AutomationEngine private constructor(
                 val retries = if (taps > 1) " after $taps taps (earlier ones were dropped)" else ""
                 return ActionOutcome(true, "$how; '$found' appeared$retries")
             }
+            firstPresent(stopOn)?.let { found ->
+                val attempted = if (taps == 0) {
+                    "before '$identifier' could be tapped"
+                } else {
+                    "after tapping '$identifier' $taps time(s)"
+                }
+                return ActionOutcome(
+                    false,
+                    "'$found' appeared $attempted instead of " +
+                        expect.joinToString(" or ") { "'$it'" } + ".",
+                )
+            }
             val now = SystemClock.elapsedRealtime()
             if (now >= nextTapAt && isPresent(identifier)) {
-                val outcome = tap(identifier)
+                val outcome = if (longPress) longTap(identifier) else tap(identifier)
                 if (outcome.ok) {
                     taps++
                     lastTap = outcome
@@ -718,6 +916,31 @@ class AutomationEngine private constructor(
             )
         } else {
             ActionOutcome(false, "found by $how but neither ACTION_CLICK nor a bounds tap worked")
+        }
+    }
+
+    /**
+     * Long-presses the control anchored by [identifier] through its
+     * ACTION_LONG_CLICK (Flutter publishes an `onLongPress` handler as that
+     * action). There is deliberately no coordinate fallback: a long press that
+     * the node does not advertise is reported rather than guessed at.
+     */
+    fun longTap(identifier: String): ActionOutcome {
+        val root = targetRoot()
+            ?: return ActionOutcome(false, "the target application window is not readable")
+        val anchor = AccessibilityNodeFinder.byIdentifier(root, identifier)
+            ?: return ActionOutcome(false, "no node matched the identifier '$identifier'")
+        val target = AccessibilityNodeFinder.resolveLongClickable(anchor)
+            ?: return ActionOutcome(false, "'$identifier' advertises no ACTION_LONG_CLICK")
+        val accepted = try {
+            target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+        } catch (_: Throwable) {
+            false
+        }
+        return if (accepted) {
+            ActionOutcome(true, "long-pressed via ACTION_LONG_CLICK, located by identifier '$identifier'")
+        } else {
+            ActionOutcome(false, "ACTION_LONG_CLICK was rejected by '$identifier'")
         }
     }
 

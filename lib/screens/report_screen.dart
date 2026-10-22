@@ -32,6 +32,7 @@ class _ReportScreenState extends State<ReportScreen> {
   AutomationResult? _result;
   String? _text;
   bool _loading = true;
+  bool _downloading = false;
 
   @override
   void initState() {
@@ -69,6 +70,27 @@ class _ReportScreenState extends State<ReportScreen> {
     await widget.reports.share(widget.run);
   }
 
+  Future<void> _download() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final downloaded = await widget.reports.download(widget.run);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(downloaded.message)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The report files could not be downloaded.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
   Future<void> _copyText() async {
     final text = _text;
     if (text == null) return;
@@ -88,6 +110,16 @@ class _ReportScreenState extends State<ReportScreen> {
       appBar: AppBar(
         title: const Text('Report'),
         actions: [
+          IconButton(
+            onPressed: _downloading ? null : _download,
+            icon: _downloading
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_outlined),
+            tooltip: 'Download Reports',
+          ),
           IconButton(
             onPressed: _share,
             icon: const Icon(Icons.share_outlined),
@@ -212,6 +244,19 @@ class _ReportScreenState extends State<ReportScreen> {
 
                 const SizedBox(height: 20),
                 FilledButton.icon(
+                  onPressed: _downloading ? null : _download,
+                  icon: _downloading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_outlined),
+                  label: Text(
+                    _downloading ? 'Downloading…' : 'Download Reports',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
                   onPressed: _share,
                   icon: const Icon(Icons.share_outlined),
                   label: const Text('Share Report'),
