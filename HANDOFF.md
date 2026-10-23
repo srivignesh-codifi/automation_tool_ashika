@@ -23,7 +23,7 @@ Safety rules baked in:
   - `TargetApp.kt`: enum of supported apps; this IS the allowlist. `ALLOWED_PACKAGES` derives from it.
   - `FlowBase.kt`: shared step bookkeeping, aborts, `checkPageLoads`, `closeWithBack`.
   - `LoginAutomationFlow.kt`: Ashika's flow (60 steps). Kept with its own private helpers; deliberately NOT refactored.
-  - `TradionAutomationFlow.kt`: Tradion's flow (67 steps), extends FlowBase.
+  - `TradionAutomationFlow.kt`: Tradion's flow (75 steps), extends FlowBase.
   - Flutter UI under `lib/`: `screens/login_automation_screen.dart` (app picker + credentials form), `services/automation_service.dart`, `services/secure_storage_service.dart`, `screens/running_test_screen.dart`.
   - `README.md` documents everything (sections 1a, 16, 17, 18 are the relevant ones).
   - Build: `flutter build apk --release`, output `build/app/outputs/flutter-apk/app-release.apk`.
@@ -76,6 +76,21 @@ Observed on an Android 16 (API 36) emulator in earlier runs (older builds):
 
 NOT yet seen running: the newest steps (Edit watchlist rename/reorder/save/verify/restore, Chart screenshot, More Details tabs, Option Chain per segment, Research calls, Scanners View All, Portfolio extras, Logout). They compile but are unverified on a device. The user runs the APKs themselves on their emulator and sends back screenshots of the run report; debug from those.
 
+## 4a. Added 2026-10-22 (not yet run on a device)
+- Screen recording of a whole run (README 13a): `ScreenRecorder.kt`, `requestScreenRecording` on the channel, `recordScreen` on start, `videoPath` / `recordingStartedAtMs` / `recordingNote` on the result, report video player and per-step seek links. Compiles, analyzes, unit-tested for the report side; the MediaProjection capture itself has NOT been seen running.
+- Target apps skip their notification permission request when the tool launches them: the tool adds the `com.mobileautomation.tool.AUTOMATION_RUN` extra (`TargetAppLauncher`), each app's `MainActivity` exposes it (extra or launching package) on channel `com.codifi.automation/run`, and `AutomationRun.isActive()` (`shared_widgets/automation_markers.dart`) gates the requests; the old `--dart-define=AUTOMATION_TEST=true` flag still works as an override. Root cause of the repeated prompt: the tool's own Clear-storage reset revokes runtime permissions each run. Known issue 3 below applies only to app builds without this change. Ashika's version is a patch (`ashika_automation_run.patch`) for `improvement/automation_aug06`; its Kotlin was not compiled (its AGP is not cached offline).
+
+## 4d. Build script (2026-10-23)
+- `build.sh` bumps `pubspec.yaml`, generates `lib/build_info.dart`, builds with `--build-name/--build-number`, renames the APK, writes a release note, and can commit. Verified: syntax, rollback on a failed build, and a full run on a throwaway copy (the APK reported versionCode 2 / versionName 1.0.1). The commit/push prompts and `split`/`appbundle` paths were not exercised.
+
+## 4c. Modules (2026-10-23)
+- The run form has a module checklist (`ModulePicker`, `AppModules.kt`); the selection reaches the flows as `ModuleSelection`, and an unselected module's steps are skipped ("module not selected: X"). Sign-in and sign-out are never modules. Tradion's blocks are gated with `if (moduleOn(..))` / `run {}` in `run()`, `runWatchlist()` and `runTabs()`; Ashika's watchlist block and its tab sections likewise. Compiled and unit-tested on the Dart side; NOT run on a device.
+- Edit watchlist without Search and add never deletes (nothing would put the scrip back).
+
+## 4b. Edit watchlist, step 38 flake (2026-10-23)
+- "name restored and saved" failed only when the first watchlist held ONE scrip: the edit session deleted it, leaving an empty watchlist, and the rename-back Save never closed the screen (20 s). Why the app does not close Save on an empty watchlist is NOT established (Tradion's `savebutton` returns without popping on a failed name validation or an exception, and pops otherwise); reproduce by hand: empty a watchlist, rename it, Save. The tool now skips the delete when there is one scrip, retries the restore Save once, and puts the screen's texts (snackbars) in the failure message.
+- A failed restore leaves the watchlist named with the temporary `…Q` suffix; rename it back by hand.
+
 ## 5. Known issues and open questions
 1. Count label "nothing readable" after mutations (edit or search). Likely cause: Tradion drifts to the Orders tab on its own. It handles an "orderBook" push notification with `changeTabOrder`, and also drifted during automation. The flow now re-opens Watchlist via `backOnWatchlist()` before reading, and the failure message prints the label state plus visible identifiers. The root cause is not confirmed.
 2. The edit screen once "hung": Save is disabled when nothing changed, so waiting for the screen to close timed out and every later step ran on the Edit screen. Fix: after a failed Save, press Back and tap `reorder_discard_button`.
@@ -103,7 +118,7 @@ While smoke-testing, scripted `adb` taps and reinstalls ran on the owner's emula
 - Adding an app: add to `TargetApp.kt` (allowlist), its package to `accessibility_service_config.xml` `packageNames` and the manifest `<queries>`, an ids object in `AutomationConfig.kt`, a flow extending `FlowBase`, and a `when` branch in `AutomationEngine.start`. Annotate the target app and document the ids.
 
 ## 9. What to do next (suggested)
-1. Ask the owner for the report from the newest run (67 steps) and fix by root cause, in this order: first failing step, then dependent skips.
+1. Ask the owner for the report from the newest run (75 steps) and fix by root cause, in this order: first failing step, then dependent skips.
 2. Confirm or refute known issues 1, 3 and 4 from real report text, not from guesses.
 3. Once the flow is stable: commit both repos in sensible commits (Tradion annotations separate from the tool), and consider the `applicationIdSuffix` or flavour fix so the allowlist can enforce UAT-only.
 4. Keep the owner's style: concise replies, root-cause fixes, flows that continue past failures, and honest reporting of what was and wasn't run.

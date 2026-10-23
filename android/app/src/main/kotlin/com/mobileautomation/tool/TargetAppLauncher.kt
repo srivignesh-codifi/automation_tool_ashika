@@ -80,6 +80,7 @@ class TargetAppLauncher(private val context: Context) {
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
         )
+        intent.putExtra(AutomationConfig.AUTOMATION_RUN_EXTRA, true)
         return try {
             context.startActivity(intent)
             null

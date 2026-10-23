@@ -1,7 +1,12 @@
 package com.mobileautomation.tool
 
+import android.Manifest
+import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -29,7 +34,15 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val COMMAND_CHANNEL = "com.mobileautomation.tool/commands"
         const val EVENT_CHANNEL = "com.mobileautomation.tool/events"
+        const val REQUEST_SCREEN_CAPTURE = 4711
+        const val REQUEST_NOTIFICATIONS = 4713
     }
+
+    /** The Dart call waiting on the notification permission dialog. */
+    private var notificationResult: MethodChannel.Result? = null
+
+    /** The Dart call waiting on the system screen-recording dialog. */
+    private var consentResult: MethodChannel.Result? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -87,10 +100,22 @@ class MainActivity : FlutterActivity() {
                     otp = call.argument<String>("otp").orEmpty(),
                     mpin = call.argument<String>("mpin").orEmpty(),
                     password = call.argument<String>("password").orEmpty(),
+                    recordScreen = call.argument<Boolean>("recordScreen") == true,
+                    modules = call.argument<List<*>>("modules")?.filterIsInstance<String>(),
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))
             }
+
+            "requestScreenRecording" -> requestScreenRecording(result)
+
+            "testScreenRecording" -> testScreenRecording(result)
+
+            "notificationPermission" -> result.success(notificationsGranted())
+
+            "requestNotificationPermission" -> requestNotificationPermission(result)
+
+            "buildSummaryZip" -> buildSummaryZip(call, result)
 
             "stopAutomation" -> result.success(AutomationEngine.stop())
 
@@ -120,6 +145,7 @@ class MainActivity : FlutterActivity() {
                             "packageName" to it.packageName,
                             "testName" to it.testName,
                             "secret" to it.secret.name.lowercase(),
+                            "modules" to AppModules.toMaps(it),
                         )
                     },
                     "testName" to AutomationConfig.TEST_NAME,
@@ -130,6 +156,136 @@ class MainActivity : FlutterActivity() {
 
             else -> result.notImplemented()
         }
+    }
+
+    private fun notificationsGranted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /** Asks for the tool's own notification permission (Android 13+). Already granted or older: true. */
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (notificationsGranted()) {
+            result.success(true)
+            return
+        }
+        if (notificationResult != null) {
+            result.success(false)
+            return
+        }
+        notificationResult = result
+        try {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+        } catch (_: Throwable) {
+            notificationResult = null
+            result.success(false)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATIONS) return
+        val waiting = notificationResult
+        notificationResult = null
+        waiting?.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+    }
+
+    /**
+     * Records the screen for a couple of seconds and throws the file away, so
+     * the operator finds out at setup, not mid-run, that recording works on this
+     * device. Spends the grant [requestScreenRecording] just collected.
+     */
+    private fun testScreenRecording(result: MethodChannel.Result) {
+        Thread {
+            val file = File(cacheDir, "recording_check.mp4")
+            val started = ScreenRecorder.start(applicationContext, file)
+            val outcome: Map<String, Any?> = if (!started.ok) {
+                mapOf("ok" to false, "detail" to started.detail)
+            } else {
+                try {
+                    Thread.sleep(2_500L)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                val finished = ScreenRecorder.stop()
+                val ok = finished.file != null
+                mapOf(
+                    "ok" to ok,
+                    "detail" to if (ok) {
+                        "a 2.5 second test video was recorded, then deleted"
+                    } else {
+                        finished.note ?: "no video was produced"
+                    },
+                )
+            }
+            file.delete()
+            mainHandler.post { result.success(outcome) }
+        }.start()
+    }
+
+    /** Zips a run's evidence and copies it to Downloads; see [SummaryZip]. */
+    private fun buildSummaryZip(call: MethodCall, result: MethodChannel.Result) {
+        val zipPath = call.argument<String>("zipPath")
+        val displayName = call.argument<String>("displayName")
+        val entries = call.argument<List<*>>("entries").orEmpty().mapNotNull {
+            val item = it as? Map<*, *>
+            val path = item?.get("path") as? String
+            val name = item?.get("name") as? String
+            if (path == null || name == null) null else SummaryZip.Entry(path, name)
+        }
+        if (zipPath == null || displayName == null) {
+            result.error("bad_zip_request", "zipPath and displayName are required.", null)
+            return
+        }
+        Thread {
+            val outcome = SummaryZip.build(applicationContext, File(zipPath), displayName, entries)
+            mainHandler.post { result.success(outcome.toMap()) }
+        }.start()
+    }
+
+    /**
+     * Shows the system "start recording" dialog. The answer is single use: the
+     * next run that asks for a recording spends it. On Android 14+ the dialog is
+     * pinned to the entire screen, because a recording of one app (this tool)
+     * would miss the app under test.
+     */
+    private fun requestScreenRecording(result: MethodChannel.Result) {
+        if (consentResult != null) {
+            result.success(false)
+            return
+        }
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else {
+            manager.createScreenCaptureIntent()
+        }
+        consentResult = result
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_SCREEN_CAPTURE)
+            RecordingPromptAccepter.start(applicationContext)
+        } catch (_: Throwable) {
+            consentResult = null
+            result.success(false)
+        }
+    }
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != REQUEST_SCREEN_CAPTURE) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        RecordingPromptAccepter.cancel()
+        val waiting = consentResult
+        consentResult = null
+        val granted = resultCode == Activity.RESULT_OK && data != null
+        ScreenRecorder.setConsent(if (granted) ScreenRecorder.Consent(resultCode, data!!) else null)
+        waiting?.success(granted)
     }
 
     /**

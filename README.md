@@ -6,7 +6,7 @@ supported, picked on the tool's **Run Automation** screen:
 | App | Package | Login | Regression pass |
 | --- | --- | --- | --- |
 | **Ashika** | `com.codifi.dhanush` | Client ID → OTP → MPIN → Skip Biometric | 60 steps: watchlist and search, load check of every tab of Home, Research, Portfolio and Orders, logout |
-| **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 67 steps: watchlist (tabs, Predefined refuses add, basket, filter, details, edit (rename, rearrange, delete, save, verify, restore), search add and delete in every segment, chart with screenshot, More Details tabs), Dashboard (Option Chain per segment, Research calls, scanners View All), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
+| **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 75 steps: login side paths (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, Login with OTP, Confirm OTP button, Enable 2FA), watchlist (tabs, Predefined refuses add, basket, filter, details, edit (rename, rearrange, delete, save, verify, restore), search add and delete in every segment, chart with screenshot, More Details tabs), Dashboard (Option Chain per segment, Research calls, scanners View All), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
 
 Sections 2–18 describe the shared tool and, unless a section says otherwise,
 Ashika's flow; Tradion's is in section 1a. Everything runs on a single Android
@@ -55,7 +55,10 @@ and controls are Tradion's own. The identifiers it reads are listed in
 
 ```
 Clear app data → launch
-User ID → Login → Password → Proceed → OTP (auto-submits) → Risk Disclosure (if shown) → Home
+User ID page   Guest User · Unblock Account · Join Now (each opened and left; see below)
+User ID → Login → Password page   Forgot Password · Switch Account (back to login and again to the password page)
+Password → Proceed → (authenticator accounts: Login with OTP) → OTP: Confirm OTP button checked,
+OTP typed (auto-submits) → Enable 2FA (biometric devices only) → Risk Disclosure (if shown) → Home
 
 Watchlist   tabs counted (no load test) · a Predefined list refuses Search / add · basket mode toggled
             and restored · Filter screen opened and closed · scrip details opened and closed ·
@@ -79,6 +82,41 @@ Portfolio   Holdings loads · Net P&L / Day P&L toggled · Stock / MTF switched 
 Profile     Account loads · Trade Settings loads
 Logout      Profile → Logout → Yes → back on the login screens
 ```
+
+**Edit watchlist never empties a watchlist.** The edit session renames the first
+watchlist, moves a scrip, deletes the first scrip, saves, reopens to check, and renames
+it back. If the watchlist holds **one** scrip the delete is skipped (with a note), because
+deleting it leaves an empty watchlist and, in a recorded run, the rename back then never
+completed: Save left the screen open for the full 20 s and the temporary name (`…Q`)
+stayed. The run's own INFY add put one scrip back each time, so an account at one scrip
+failed step 38 on every run, while one with two or more passed, which looked random. The
+restore Save is also pressed once more if the screen is still open after 8 s, and a Save
+that still does not close reports what the app showed (for example a "Market watch name
+already exists" snackbar).
+
+**Login side paths** (steps `guest_user_checked` … `enable_2fa_checked`). A link's form is opened,
+a fixed fake value (`9999999999`, `ABCDE1234F`) is typed into each field that accepts typing, and
+Back returns to the page it came from. No button on those forms is tapped, so nothing is sent.
+Facts that shape them:
+
+* The User ID field on Unblock Account and Forgot Password is read-only and prefilled, so only
+  its PAN field is typed into. The Guest form has one field (mobile number).
+* Join Now opens the registration page in the **browser**, which the tool cannot read. The check
+  is that Tradion leaves the foreground and can be brought back to the login page; the page's
+  content is not inspected.
+* Switch Account clears the app's saved user (local only) and returns to the User ID page; the
+  tool signs the same User ID in again to reach the password page.
+* "Login with OTP" lives on the authenticator (TOTP) screen, shown only to accounts that use one.
+  Other accounts go straight to the OTP screen and the step is skipped with that note.
+* The Confirm OTP button is checked (on screen, enabled, tappable) but never tapped, because the
+  OTP auto-submits and a second submit could spend the one-time code twice.
+* "Enable 2FA" is the biometric screen ("Enable 2FA security" / "Enable now"). It appears only on
+  a device with biometrics; its button is tapped, which starts Android's own prompt that the tool
+  does not drive, so the run ends there as before.
+* A failed check is recorded and the run continues, unless the flow can no longer get back to the
+  page it needs (then the run stops with the reason). Build Tradion from the current sources: older
+  builds lack these identifiers, and the failure message says so.
+
 
 How it differs from Ashika, and why:
 
@@ -349,8 +387,38 @@ Package name `com.mobileautomation.tool`, minSdk 29 (Android 10), targetSdk 35.
 
 ## 6. Building the Automation Tool APK
 
+Use `build.sh` (modeled on `tradion_mobile/build.sh`, for this Android-only app):
+
 ```bash
 cd /Users/srivigneshbalaji/Projects/ClientView/test/mobile_automation_tool
+./build.sh                       # release APK; bumps the version, renames the file
+./build.sh apk split             # one APK per ABI (arm64-v8a, armeabi-v7a, x86_64)
+./build.sh appbundle             # Android App Bundle
+./build.sh apk debug             # debug APK
+./build.sh apk --no-bump         # build the current version; no bump, note or commit
+./build.sh apk gitc "what changed"   # also commit with a message (asks first)
+```
+
+What it does, in order: `flutter pub get`, then `flutter analyze` and `flutter test`
+(a failure stops here, before any file is touched; `--skip-checks` to bypass); bumps the
+patch and build number in `pubspec.yaml` (`1.0.0+1` → `1.0.1+2`) and writes
+`lib/build_info.dart` (the dashboard shows "Version … · built …", which tells you which
+build is installed); `flutter clean` + `pub get` (`--no-clean` to skip); builds with
+`--build-name` and `--build-number`; renames the result to
+`AutomationTool_v1.0.1+2_ddMMyyyy_HHmm.apk`, prints its size and SHA-256 and reveals it in
+Finder (`--no-rename`, `--no-reveal`); writes `release_notes/android_1.0.1_2_<date>.md`
+from what changed in `lib/`, `android/app/src/`, `test/`, `scripts/` including files not
+yet added to git (`--no-note`). If the build fails, `pubspec.yaml` and `build_info.dart`
+are put back. Anything after `--` goes to `flutter build`.
+
+Differences from Tradion's script, on purpose: the version lives in `pubspec.yaml` (no
+`version_config.json`); the commit stages only `pubspec.yaml`, `build_info.dart` and the
+release note unless `--commit-all` is given (Tradion's `git add .` would sweep in every
+other change); the push is a second question; there is no iOS or LIVE/UAT label.
+
+The same build without the script:
+
+```bash
 flutter build apk --release
 ```
 
@@ -394,6 +462,41 @@ adb shell pm grant com.codifi.dhanush android.permission.POST_NOTIFICATIONS
 Sideloading from the device (file manager, internal distribution link) works
 equally well. Emulators are not supported for a real pass: the login flow needs
 live UAT connectivity and real OTP delivery.
+
+---
+
+## 7a. First-launch setup (and install-time grants)
+
+The first time the tool opens, a **Set up the tool** screen collects everything it
+needs, so nothing asks for permission in the middle of a run:
+
+| Item | Needed | How |
+|---|---|---|
+| Accessibility service | Required | Android lets only you switch it on. The screen opens App info (Android 13+: menu > *Allow restricted settings*) and Accessibility settings, and notices when you come back. *Finish setup* unlocks once it is on. |
+| Notifications (the tool's own) | Recommended | A normal dialog; lets Android show the "recording" notice. |
+| Screen recording | Recommended | *Test screen recording* records 2.5 s and deletes it, proving the device can record. Android 14+ cannot remember the answer, so each run asks again at **Start** (before the test, never during it) and the tool taps *Share screen* for you. |
+| Apps to test | Info | Shows whether Ashika and Tradion are installed. |
+
+The screen reappears whenever the accessibility service is off (a reinstall turns it
+off), and is reachable from the dashboard (*Permissions setup*) and from the run form.
+
+**Nothing can run at install time** on Android; the first launch is the earliest.
+For true install-time grants, run `scripts/provision_device.sh [serial]` from a
+computer after `adb install`: it enables the accessibility service, allows restricted
+settings, grants the tool's notification permission, and grants the notification
+permission of Ashika and Tradion (so they never show it mid-run, with or without the
+`AUTOMATION_TEST` build flag). It cannot grant screen recording. The script has not
+been run on a device; do not point it at a phone someone is using.
+
+**Play Protect.** The tool is an accessibility service that records the screen and taps
+other apps' dialogs, and the release APK is signed with the debug key, so Play Protect
+may warn about or block it. It cannot be switched off from inside the app, and the app
+makes no attempt to hide from it. On a test phone, turn it off by hand: Play Store >
+profile picture > Play Protect > settings (gear) > turn off *Scan apps with Play Protect*
+(or choose *Install anyway* / *More details* on the warning). Adding `--relax-play-protect`
+to the script also turns off the package verification that adb installs go through; its
+effect on Android 16 has not been checked. A proper release signing key would reduce the
+"unknown developer" warning; that needs a keystore you own.
 
 ---
 
@@ -448,8 +551,11 @@ There is no reveal toggle on a secret. **Remember …** stores the user id and t
 secret *for the picked app* in Android's Keystore-backed
 `EncryptedSharedPreferences` (separate keys per app; Ashika's keep their original
 names, so credentials saved before Tradion was added are still found). The
-**OTP is never stored** — it is a one-time value, and it is cleared from the form
-the moment a run finishes. **Clear saved …** wipes what was kept for that app.
+**OTP is stored too, under the same switch** — meant for test accounts whose OTP is
+fixed. With **Remember** on it is kept and refilled next time; with it off, the OTP
+is cleared from the form the moment a run finishes. A genuinely one-time OTP is
+useless the second time, so leave **Remember** off for such an account.
+**Clear saved …** wipes the user id, secret and OTP kept for that app.
 
 Autofill, autocorrect and suggestions are switched off on every field so the
 values are not offered to the platform's autofill or dictionary services.
@@ -491,6 +597,34 @@ biometric_screen shown? → tap biometric_skip_button
   else mark "Biometric skipped" as SKIPPED
 Wait for home_screen | watchlist_screen | risk_disclosure_dialog   30 s
 ```
+
+### Choosing modules
+
+Under the target application package, the run form has a **Modules to test** field
+showing the choice ("All modules (8)", or "3 of 8: Login, Orders, Profile"). Tap it and
+the checklist opens in a bottom sheet, all ticked. Untick what a run should leave out;
+its steps are marked *skipped* (with "module not selected") and the report names the
+modules that ran and the ones left out. **All** and **None** are on the sheet's header,
+and changes apply as you tick them (**Done** just closes the sheet). Signing in and signing out always run, because every module
+needs the app signed in and a run ends logged out.
+
+| App | Modules |
+|---|---|
+| Tradion | Login (the login page checks: Guest User, Unblock, Join Now, Forgot Password, Switch Account, Confirm OTP button, Enable 2FA), Watchlist, Edit watchlist, Search and add, Orders, Dashboard, Portfolio, Profile |
+| Ashika | Watchlist and Search, Home, Research, Portfolio, Orders |
+
+Things that follow from what each module changes:
+
+* **Edit watchlist** and **Search and add** change the account's data. Search's INFY add
+  is what puts back the scrip the edit deletes, so with Edit on and Search off the edit
+  renames and reorders but **does not delete**.
+* With Edit off and Search on, the count check starts from the watchlist's current count.
+* The Watchlist tab is opened and its tabs counted whenever any of Watchlist, Edit or
+  Search is selected, since they all need it; with none selected it is not opened.
+* Ashika's profile step opens Orders first when Orders is off, because Logout is reached
+  from Profile.
+
+The module lists live in `AppModules.kt`, which is also what the run form shows.
 
 ### Locator strategy
 
@@ -566,6 +700,33 @@ Downloads/Automation Tool Reports/
 The download uses Android's scoped MediaStore and therefore needs no storage
 permission. Unlike the app-specific originals below, downloaded copies remain
 available after the Automation Tool is uninstalled.
+
+### The text report
+
+The `.txt` report (also in the zip) is laid out for a monospace font; in the app it
+scrolls sideways. Its sections:
+
+| Section | What it holds |
+|---|---|
+| Result | verdict, completed count, and how many steps passed, were skipped, failed or never ran |
+| RUN | package, app version, main activity, device, start / end, total duration and the time spent inside steps, run ID, recording file |
+| FAILURE | the first failed step, when it happened, its position in the video, the full reason, its screenshot |
+| API / DATA CHECKS | data loads, server changes and sign-ins counted by outcome, the verdict, the slowest loads |
+| SLOWEST STEPS | the five longest steps |
+| CHECKLIST | one table row per step: `#`, result, step, start, end, time, video position, type (read / write / auth) and the API / data check |
+| STEP DETAILS | every step's full note or failure reason, with its failure screenshot |
+| EVIDENCE | the screenshot files |
+
+**The API / data check is inferred from the screen; the tool does not see network
+traffic.** A **read** (a screen that loads data) is OK when the app's loading spinners
+clear in time with no "Something went wrong" screen, and is marked EMPTY (loaded, no
+data), SLOW (over 5 s), TIMEOUT (still loading when the budget ended), ERROR (the error
+screen showed) or NOT CHECKED (the step failed before the data could be checked). A
+**write** (add, delete, save) is CONFIRMED when the flow re-read the server's state
+afterwards and it matched, otherwise NOT CONFIRMED. A **sign-in / out** is OK when the next
+screen followed. Which steps are which is decided in `StepApi.kt`. The same fields are in
+the JSON (`apiSummary` and per-step `apiKind`, `apiStatus`, `apiDetail`, `apiMs`) and as a
+column in the HTML report.
 
 Each checklist item carries: step name, status
 (Pending / Running / Passed / Failed / Skipped), start time, end time, duration,
@@ -660,6 +821,44 @@ HTML, JSON and text files attached and a subject line of
 Sending a report to an external service publishes it. The files carry no
 credential, but they do carry the target package, the device identity and the
 UAT app version — send them somewhere appropriate for internal test evidence.
+
+---
+
+## 13a. Screen recording of the run
+
+**Record the screen** (on the run form, on by default) saves one MP4 of the whole
+run, from before the data reset to the final state, and the report ties each
+step to its place in it.
+
+* Android asks "Share your screen?" every time you press Start; the tool pins it
+  to the **entire screen** (Android 14+ otherwise offers a single app) and
+  taps **Share screen** itself (`RecordingPromptAccepter.kt`). That needs the
+  service to read System UI (`com.android.systemui` in the service's
+  `packageNames`), but only for ~20 s after you press Start and only the one
+  dialog that names this tool. If Android ignores the automated tap, press it
+  yourself; the run waits. Leave the phone alone afterwards. Declining offers to run without a video; the
+  report then says why there is none.
+* The HTML report embeds the player and gives every step a `▶ m:ss` link that
+  seeks to it. The video is named like the report (`<base>.mp4`); **keep the two
+  in the same folder** — opened from a phone's file manager the page cannot reach
+  a sibling file, so play the `.mp4` from Files/Gallery, or copy both to a
+  computer. **Download Reports** and **Share Report** include the video.
+* It is 720p-class H.264 at 15 fps and about 1.5 Mbit/s: roughly 11 MB per
+  minute. The run does not start recording with under 500 MB free.
+* It is a picture of the screen: whatever Tradion shows is in it, and a window
+  marked `FLAG_SECURE` is black. Use a test account, and treat the file like the
+  report (section 13).
+* A recording problem never changes a run's verdict; it is reported as a note.
+  Android shows its own "recording" indicator for the duration.
+* **Summary zip.** When a run finishes, the tool also writes
+  `<app>_<ddMMyyyy>_<HHmm>.zip` (for example `ashika_23102026_0810.zip`) with the text report, the video and the failed-step
+  screenshots (`screenshots/`) and copies it to
+  `Downloads/Automation Tool Reports/` on the phone, with no tap needed. The run
+  screen and report screen say where it went, or why not. A copy stays in the
+  app's `reports/` folder. Code: `SummaryZip.kt`.
+* Code: `ScreenRecorder.kt` (MediaProjection in a `mediaProjection` foreground
+  service), the `requestScreenRecording` method in `MainActivity.kt`, and
+  `beginRecording` / `endRecording` in `AutomationEngine.kt`.
 
 ---
 
@@ -853,7 +1052,18 @@ is the right fix.
   `automation_ids.dart` (Ashika's) and, for Tradion, between
   `AutomationConfig.TradionIds` and `tradion_mobile/docs/AUTOMATION_SEMANTICS.md`.
   They are kept in step by hand.
-* **The notification prompt after a data reset.** Clearing the target's data
+* **The notification prompt after a data reset (avoided in the current app
+  builds).** Why it kept coming back: every run starts with *Clear storage*, which
+  revokes the app's runtime permissions, so the app asks again at every launch (a
+  one-time `pm grant` is undone by that reset), and the tool's tap on the dialog is
+  unreliable on recent Android. So the apps no longer ask when the tool launches
+  them: the tool puts the extra `com.mobileautomation.tool.AUTOMATION_RUN` on every
+  launch, each app's `MainActivity` reports it (extra, or the launching package) to
+  Dart through the `com.codifi.automation/run` channel, and `AutomationRun.isActive()`
+  skips the request. No build flag is needed; `--dart-define=AUTOMATION_TEST=true`
+  still works as an override. Ashika's version of this change is a patch for branch
+  `improvement/automation_aug06`. An older app build, or one without the change,
+  still asks, and then: clearing the target's data
   resets its notification permission, so the app asks again on launch and the tool
   answers *Allow*: ACTION_CLICK first, then a tap gesture at the button, and while
   the prompt is up the run waits for it rather than treating it as the app being

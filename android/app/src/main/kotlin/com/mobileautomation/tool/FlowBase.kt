@@ -51,7 +51,11 @@ abstract class FlowBase(
 
     // ── Step bookkeeping ────────────────────────────────────────────────────
 
+    /** The step in progress; a load check is recorded against it. */
+    private var activeStep: AutomationStepResult? = null
+
     protected fun begin(step: AutomationStepResult) {
+        activeStep = step
         step.start()
         engine.emit(
             "step_started",
@@ -119,9 +123,8 @@ abstract class FlowBase(
                 append(
                     " A notification permission prompt was on screen and stayed there after the " +
                         "tool clicked and tapped Allow — Android can ignore automated input on " +
-                        "permission dialogs. Allow it by hand while the run waits, or grant it " +
-                        "first with: adb shell pm grant ${engine.targetPackage} " +
-                        "android.permission.POST_NOTIFICATIONS",
+                        "permission dialogs. Install the current build of the app, which skips " +
+                        "this prompt when the tool launches it, or allow it by hand while the run waits.",
                 )
             }
             if (outcome.visibleIdentifiers.isNotEmpty()) {
@@ -181,6 +184,7 @@ abstract class FlowBase(
     }
 
     private fun complete(): AutomationRunResult {
+        StepApi.finalize(steps)
         result.finishedAtMs = System.currentTimeMillis()
         return result
     }
@@ -254,6 +258,7 @@ abstract class FlowBase(
         var back = 0
         while (back < scrolled + 2 && engine.scrollPage(forward = false)) back++
         engine.sleep(AutomationConfig.Timeouts.SETTLE)
+        activeStep?.let { StepApi.recordLoad(it, settled, elapsed, pages, empty, errors, stillLoading) }
         return LoadCheck(settled, elapsed, pages, empty, errors, stillLoading)
     }
 

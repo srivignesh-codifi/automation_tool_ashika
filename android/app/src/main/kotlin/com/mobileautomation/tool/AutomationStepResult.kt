@@ -27,6 +27,15 @@ class AutomationStepResult(
     var failureReason: String? = null
     var note: String? = null
 
+    /** What kind of server interaction this step exercises; see [StepApi]. */
+    var apiKind: String? = null
+    var apiStatus: String? = null
+    var apiDetail: String? = null
+
+    /** The longest load time recorded for the step, and how many loads were checked. */
+    var apiMs: Long? = null
+    var apiChecks: Int = 0
+
     val durationMs: Long?
         get() {
             val start = startedAtMs ?: return null
@@ -67,6 +76,11 @@ class AutomationStepResult(
         "durationMs" to durationMs,
         "failureReason" to failureReason,
         "note" to note,
+        "apiKind" to apiKind,
+        "apiStatus" to apiStatus,
+        "apiDetail" to apiDetail,
+        "apiMs" to apiMs,
+        "apiChecks" to apiChecks,
     )
 }
 
@@ -95,6 +109,19 @@ class AutomationRunResult(
     /** Why a screenshot could not be captured, when that happened. */
     var screenshotUnavailableReason: String? = null
 
+    /** The modules this run covered and the ones the operator switched off. */
+    var modulesRun: List<String> = emptyList()
+    var modulesSkipped: List<String> = emptyList()
+
+    /** Absolute path of the run's screen recording, when one was made. */
+    var videoPath: String? = null
+
+    /** When the recording began, so a step's start maps to a position in it. */
+    var recordingStartedAtMs: Long? = null
+
+    /** Why there is no video, or what the video does not cover. */
+    var recordingNote: String? = null
+
     val durationMs: Long?
         get() = finishedAtMs?.let { it - startedAtMs }
 
@@ -122,5 +149,10 @@ class AutomationRunResult(
         "steps" to steps.map { it.toMap() },
         "screenshots" to screenshots.toMap(),
         "screenshotUnavailableReason" to screenshotUnavailableReason,
+        "modulesRun" to modulesRun,
+        "modulesSkipped" to modulesSkipped,
+        "videoPath" to videoPath,
+        "recordingStartedAtMs" to recordingStartedAtMs,
+        "recordingNote" to recordingNote,
     )
 }

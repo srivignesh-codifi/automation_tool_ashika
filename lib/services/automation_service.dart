@@ -71,6 +71,19 @@ enum TargetSecret {
       raw == 'password' ? TargetSecret.password : TargetSecret.mpin;
 }
 
+/// A part of an app's run the operator can switch off.
+class AutomationModule {
+  const AutomationModule({
+    required this.id,
+    required this.label,
+    this.description = '',
+  });
+
+  final String id;
+  final String label;
+  final String description;
+}
+
 /// One application the native driver has a test flow for. The native
 /// `TargetApp` enum is authoritative; this mirrors what it reports.
 class TargetAppInfo {
@@ -80,6 +93,7 @@ class TargetAppInfo {
     required this.packageName,
     required this.testName,
     required this.secret,
+    this.modules = const <AutomationModule>[],
   });
 
   final String id;
@@ -88,12 +102,17 @@ class TargetAppInfo {
   final String testName;
   final TargetSecret secret;
 
+  /// What a run can be limited to. The native driver is authoritative.
+  final List<AutomationModule> modules;
+
   /// What the first credential is called in this app's own login.
   String get userIdLabel => id == 'tradion' ? 'User ID' : 'Client ID';
 
   /// The one-line summary of what a run does, shown under the Start button.
   String get runSummary => id == 'tradion'
-      ? 'Logs in (User ID, Password, OTP), then exercises the watchlist: '
+      ? 'Checks the login page links (Guest User, Unblock Account, Join Now, '
+            'Forgot Password, Switch Account, Login with OTP, Confirm OTP, '
+            'Enable 2FA), logs in (User ID, Password, OTP), then exercises the watchlist: '
             'scrip details, edit and delete, and Search in every segment '
             '(add, then delete), and checks that a Predefined list takes no '
             'scrips. It then checks the load state of every Orders, '
@@ -131,6 +150,13 @@ class AutomationConfigInfo {
           packageName: 'com.codifi.dhanush',
           testName: 'Phase 1 - Login Automation',
           secret: TargetSecret.mpin,
+          modules: <AutomationModule>[
+            AutomationModule(id: 'watchlist', label: 'Watchlist and Search'),
+            AutomationModule(id: 'home', label: 'Home'),
+            AutomationModule(id: 'research', label: 'Research'),
+            AutomationModule(id: 'portfolio', label: 'Portfolio'),
+            AutomationModule(id: 'orders', label: 'Orders'),
+          ],
         ),
         TargetAppInfo(
           id: 'tradion',
@@ -138,6 +164,16 @@ class AutomationConfigInfo {
           packageName: 'com.codifi.rmoney',
           testName: 'Tradion - Regression Automation',
           secret: TargetSecret.password,
+          modules: <AutomationModule>[
+            AutomationModule(id: 'login', label: 'Login'),
+            AutomationModule(id: 'watchlist', label: 'Watchlist'),
+            AutomationModule(id: 'watchlist_edit', label: 'Edit watchlist'),
+            AutomationModule(id: 'watchlist_search', label: 'Search and add'),
+            AutomationModule(id: 'orders', label: 'Orders'),
+            AutomationModule(id: 'dashboard', label: 'Dashboard'),
+            AutomationModule(id: 'portfolio', label: 'Portfolio'),
+            AutomationModule(id: 'profile', label: 'Profile'),
+          ],
         ),
       ];
 
@@ -152,6 +188,9 @@ class AutomationConfigInfo {
   /// greyed out until "Allow restricted settings" is granted from App info.
   final bool requiresRestrictedSettingsGuidance;
 }
+
+/// The answer to the system "start recording" dialog.
+enum ScreenRecordingConsent { granted, declined, unsupported }
 
 /// An event streamed from the native driver during a run.
 class AutomationEvent {
@@ -302,6 +341,17 @@ class AutomationService {
             packageName: (t['packageName'] as String?) ?? '',
             testName: (t['testName'] as String?) ?? 'Login Automation',
             secret: TargetSecret.parse(t['secret']),
+            modules: (t['modules'] as List<Object?>? ?? const <Object?>[])
+                .whereType<Map<Object?, Object?>>()
+                .map(
+                  (m) => AutomationModule(
+                    id: (m['id'] as String?) ?? '',
+                    label: (m['label'] as String?) ?? '',
+                    description: (m['description'] as String?) ?? '',
+                  ),
+                )
+                .where((m) => m.id.isNotEmpty && m.label.isNotEmpty)
+                .toList(growable: false),
           ),
         )
         .where((t) => t.id.isNotEmpty && t.packageName.isNotEmpty)
@@ -329,6 +379,8 @@ class AutomationService {
     required String otp,
     String mpin = '',
     String password = '',
+    bool recordScreen = false,
+    List<String>? modules,
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
@@ -336,11 +388,61 @@ class AutomationService {
       'otp': otp,
       'mpin': mpin,
       'password': password,
+      'recordScreen': recordScreen,
+      'modules': modules,
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;
     return (raw['error'] as String?) ??
         'The automation run could not be started.';
+  }
+
+  /// Shows the system "start recording" dialog. True when the operator
+  /// accepted. The grant is single use: start the run straight afterwards with
+  /// `recordScreen: true`.
+  Future<ScreenRecordingConsent> requestScreenRecording() async {
+    try {
+      final granted = await _commands.invokeMethod<bool>(
+        'requestScreenRecording',
+      );
+      return granted == true
+          ? ScreenRecordingConsent.granted
+          : ScreenRecordingConsent.declined;
+    } on MissingPluginException {
+      // The Dart side is newer than the installed native code: typically a
+      // hot reload/restart, which never updates Kotlin or the manifest.
+      return ScreenRecordingConsent.unsupported;
+    } on PlatformException {
+      return ScreenRecordingConsent.declined;
+    }
+  }
+
+  /// Whether the tool may post notifications (always true before Android 13).
+  /// An install without the native part reports true, so setup never blocks on it.
+  Future<bool> notificationsGranted() async =>
+      (await _invoke<bool>('notificationPermission')) ?? true;
+
+  /// Shows the notification permission dialog (Android 13+). False when denied,
+  /// including when Android no longer shows the dialog at all.
+  Future<bool> requestNotifications() async =>
+      (await _invoke<bool>('requestNotificationPermission')) ?? false;
+
+  /// Records two and a half seconds of screen and discards it. Call after
+  /// [requestScreenRecording] returned granted: the grant is spent here.
+  Future<({bool ok, String detail})> testScreenRecording() async {
+    final raw = await _invokeMap('testScreenRecording');
+    if (raw == null) {
+      return (
+        ok: false,
+        detail:
+            'This install has no screen-recording support. Install the tool '
+            'again with a full build (a hot reload cannot add it).',
+      );
+    }
+    return (
+      ok: raw['ok'] == true,
+      detail: (raw['detail'] as String?) ?? 'no detail',
+    );
   }
 
   Future<bool> stopAutomation() async {

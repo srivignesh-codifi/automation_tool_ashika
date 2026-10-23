@@ -29,6 +29,14 @@ object AutomationConfig {
     val DEFAULT_TARGET_PACKAGE: String = TargetApp.ASHIKA.packageName
 
     /**
+     * Put on every launch of a target app. The apps read it (and the launching
+     * package) to know the tool is driving them, and skip their own
+     * notification permission request: the data reset at the start of each run
+     * revokes that permission, so they would otherwise ask again every run.
+     */
+    const val AUTOMATION_RUN_EXTRA = "com.mobileautomation.tool.AUTOMATION_RUN"
+
+    /**
      * System packages the service may also read, solely to reset the target
      * app before a run: App info / Storage live in Settings (MIUI moves App
      * info into Security), and the runtime permission prompt belongs to the
@@ -219,6 +227,26 @@ object AutomationConfig {
         const val OTP_SCREEN = "otp_screen"
         const val OTP_INPUT = "otp_input"
         const val OTP_SUBMIT_BUTTON = "otp_submit_button"
+
+        // Login side paths: links, the forms behind them, and their fields.
+        const val USER_ID_GUEST_LINK = "user_id_guest_link"
+        const val USER_ID_UNBLOCK_LINK = "user_id_unblock_link"
+        const val USER_ID_JOIN_NOW_BUTTON = "user_id_join_now_button"
+        const val GUEST_LOGIN_SCREEN = "guest_login_screen"
+        const val GUEST_MOBILE_INPUT = "guest_mobile_input"
+        const val UNBLOCK_SCREEN = "unblock_user_screen"
+        const val UNBLOCK_PAN_INPUT = "unblock_pan_input"
+        const val PASSWORD_FORGOT_LINK = "password_forgot_link"
+        const val PASSWORD_SWITCH_ACCOUNT_LINK = "password_switch_account_link"
+        const val FORGOT_PASSWORD_SCREEN = "forgot_password_screen"
+        const val FORGOT_PAN_INPUT = "forgot_pan_input"
+
+        /** The authenticator (TOTP) screen, shown instead of OTP for accounts that use one. */
+        const val TOTP_SCREEN = "totp_screen"
+        const val TOTP_LOGIN_WITH_OTP_LINK = "totp_login_with_otp_link"
+
+        /** The biometric screen's "Enable 2FA security" / "Enable now" button. */
+        const val BIOMETRIC_ENABLE_BUTTON = "biometric_enable_button"
 
         /** Offered only on a device with biometrics; has no Skip, so a run cannot pass it. */
         const val BIOMETRIC_SCREEN = "biometric_screen"
@@ -466,6 +494,9 @@ object AutomationConfig {
         const val USER_ID_SCREEN = 45_000L
         const val PASSWORD_SCREEN = 30_000L
 
+        /** After Join Now is tapped, how long Tradion may take to hand over to the browser. */
+        const val JOIN_NOW_LEAVES = 8_000L
+
         /** OTP verification, then the disclosure fetch, then the jump to Home. */
         const val OTP_SUBMIT = 30_000L
 
@@ -492,6 +523,9 @@ object AutomationConfig {
 
         /** Saving the edit screen sorts and deletes over the network before it closes. */
         const val EDIT_SAVE = 20_000L
+
+        /** How long the restore Save is given before it is tapped a second time. */
+        const val EDIT_SAVE_FIRST_TRY = 8_000L
 
         /** Tabs probed on the watchlist strips; stops at the first missing index. */
         const val MAX_WATCHLIST_TABS = 20

@@ -3,12 +3,20 @@ package com.mobileautomation.tool
 import com.mobileautomation.tool.AutomationConfig.Texts
 import com.mobileautomation.tool.AutomationConfig.Timeouts
 import com.mobileautomation.tool.AutomationConfig.TradionIds as T
+import android.os.SystemClock
 import com.mobileautomation.tool.AutomationEngine.WaitOutcome
 
 /**
  * Regression pass for the Tradion app (`com.codifi.rmoney`).
  *
  *   User ID -> Password -> OTP -> (risk disclosure, if raised) -> Watchlist
+ *
+ * The login pages also have their side paths checked on the way: the Guest User,
+ * Unblock Account and Join Now links on the User ID page, Forgot Password and
+ * Switch Account on the password page, Login with OTP (authenticator accounts
+ * only), the Confirm OTP button, and the Enable 2FA screen. The forms behind
+ * those links get a fixed fake value typed into their editable fields and are
+ * left with Back; no button on them is ever tapped, so nothing is sent.
  *
  * then, on Watchlist: count the user tabs, confirm Predefined refuses add, use
  * the basket toggle, Filter, scrip details, Edit (rename, reorder, delete,
@@ -32,9 +40,16 @@ import com.mobileautomation.tool.AutomationEngine.WaitOutcome
  * button ignores taps while that request is in flight), so the flow waits for
  * the next screen before it ever taps Confirm.
  */
-class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSteps()) {
+class TradionAutomationFlow(
+    engine: AutomationEngine,
+    private val modules: ModuleSelection = ModuleSelection(AppModules.TRADION, null),
+) : FlowBase(engine, buildSteps()) {
 
     private companion object {
+        /** Typed into side forms and never submitted. Obviously not a real number or PAN. */
+        const val FAKE_MOBILE = "9999999999"
+        const val FAKE_PAN = "ABCDE1234F"
+
         fun s(id: String, name: String) = AutomationStepResult(id, name)
 
         fun buildSteps(): List<AutomationStepResult> = listOf(
@@ -43,14 +58,22 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             s("target_app_data_cleared", "Target application data cleared"),
             s("target_app_launched", "Target application launched"),
             s("user_id_screen_displayed", "User ID screen displayed"),
+            s("guest_user_checked", "Guest User link opens its form and returns to login"),
+            s("unblock_account_checked", "Unblock Account link opens its form and returns to login"),
+            s("join_now_checked", "Join Now link opens registration and returns to login"),
             s("user_id_entered", "User ID entered"),
             s("login_tapped", "Login button tapped"),
             s("password_screen_displayed", "Password screen displayed"),
+            s("forgot_password_checked", "Forgot Password link opens its form and returns to the password page"),
+            s("switch_account_checked", "Switch Account returns to login and back to the password page"),
             s("password_entered", "Password entered"),
             s("password_submitted", "Password submitted"),
+            s("login_with_otp_checked", "Login with OTP link used (authenticator accounts)"),
             s("otp_screen_displayed", "OTP screen displayed"),
+            s("otp_confirm_button_checked", "Confirm OTP button visible and clickable"),
             s("otp_entered", "OTP entered"),
             s("otp_submitted", "OTP submitted"),
+            s("enable_2fa_checked", "Enable 2FA button visible and clickable"),
             s("disclosure_accepted", "Risk disclosure accepted"),
             s("home_displayed", "Home displayed"),
             s("watchlist_tab_opened", "Watchlist tab opened"),
@@ -147,6 +170,8 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
      */
     fun run(userId: String, password: String, otp: String): AutomationRunResult {
         val info = startRun(TargetApp.TRADION.testName)
+        result.modulesRun = modules.onLabels
+        result.modulesSkipped = modules.offLabels
 
         // 1 — Target application installed ------------------------------------
         val installed = step("target_app_installed")
@@ -221,7 +246,8 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 userIdScreenIds.contains(entry.identifier) -> pass(
                     userIdScreen,
                     "'${entry.identifier}' located" + if (engine.notificationPromptsAllowed > 0) {
-                        "; the notification permission prompt was answered with Allow first"
+                        "; the app still asked for the notification permission (answered with Allow). " +
+                            "Install the current Tradion build: it skips that prompt when the tool launches it"
                     } else {
                         ""
                     },
@@ -249,6 +275,42 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                     " The splash screen checks the network and the app version first; an update " +
                     "prompt or a no-internet screen would stop it here.",
             )
+        }
+
+        if (!moduleOn("login")) skipModule("login") else {
+        // 5a — Guest User, Unblock Account, Join Now ------------------------------
+        val guest = step("guest_user_checked")
+        begin(guest)
+        conclude(
+            guest,
+            checkSideForm(
+                linkId = T.USER_ID_GUEST_LINK,
+                formId = T.GUEST_LOGIN_SCREEN,
+                inputs = listOf(T.GUEST_MOBILE_INPUT to FAKE_MOBILE),
+                returnIds = userIdScreenIds,
+                what = "The Guest User form",
+            ),
+        )?.let { return it }
+
+        val unblock = step("unblock_account_checked")
+        begin(unblock)
+        // The User ID field on this form is read-only and prefilled, so only the
+        // PAN field takes typing.
+        conclude(
+            unblock,
+            checkSideForm(
+                linkId = T.USER_ID_UNBLOCK_LINK,
+                formId = T.UNBLOCK_SCREEN,
+                inputs = listOf(T.UNBLOCK_PAN_INPUT to FAKE_PAN),
+                returnIds = userIdScreenIds,
+                what = "The Unblock Account form",
+            ),
+        )?.let { return it }
+
+        val joinNow = step("join_now_checked")
+        begin(joinNow)
+        conclude(joinNow, checkJoinNow())?.let { return it }
+
         }
 
         // 6 — User ID entered ----------------------------------------------------
@@ -290,6 +352,28 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             )
         }
 
+        if (moduleOn("login")) {
+        // 8a — Forgot Password, Switch Account ---------------------------------------
+        val forgot = step("forgot_password_checked")
+        begin(forgot)
+        // Like Unblock, its User ID field is read-only; only PAN takes typing.
+        conclude(
+            forgot,
+            checkSideForm(
+                linkId = T.PASSWORD_FORGOT_LINK,
+                formId = T.FORGOT_PASSWORD_SCREEN,
+                inputs = listOf(T.FORGOT_PAN_INPUT to FAKE_PAN),
+                returnIds = passwordScreenIds,
+                what = "The Forgot Password form",
+            ),
+        )?.let { return it }
+
+        val switchAccount = step("switch_account_checked")
+        begin(switchAccount)
+        conclude(switchAccount, checkSwitchAccount(userId))?.let { return it }
+
+        }
+
         // 9 — Password entered ------------------------------------------------------------
         val passwordEntered = step("password_entered")
         begin(passwordEntered)
@@ -308,6 +392,34 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         }
         pass(passwordSubmitted, submitOutcome.detail)
 
+        // 10a — Login with OTP -------------------------------------------------------------------
+        // An account that uses an authenticator lands on the TOTP screen, which
+        // carries the Login with OTP link; any other goes straight to OTP.
+        val loginWithOtp = step("login_with_otp_checked")
+        begin(loginWithOtp)
+        when (val outcome = engine.waitForAny(listOf(T.TOTP_SCREEN) + otpScreenIds, Timeouts.OTP_SCREEN)) {
+            is WaitOutcome.Found -> if (outcome.identifier == T.TOTP_SCREEN) {
+                val link = engine.tapAndConfirm(T.TOTP_LOGIN_WITH_OTP_LINK, otpScreenIds, Timeouts.SCREEN_CHANGE)
+                if (engine.cancelled) return stopped(loginWithOtp)
+                if (!link.ok) return abort(loginWithOtp, "Login with OTP could not be used: ${link.detail}")
+                pass(loginWithOtp, "the authenticator screen offered Login with OTP, and tapping it opened the OTP screen")
+            } else {
+                skip(
+                    loginWithOtp,
+                    "this account goes straight to the OTP screen after the password; the Login with " +
+                        "OTP link only exists on the authenticator (TOTP) screen",
+                )
+            }
+            is WaitOutcome.Cancelled -> return stopped(loginWithOtp)
+            else -> return abort(
+                outcome,
+                loginWithOtp,
+                "The OTP screen",
+                Timeouts.OTP_SCREEN,
+                " The password may have been rejected.",
+            )
+        }
+
         // 11 — OTP screen displayed ------------------------------------------------------------------
         val otpScreen = step("otp_screen_displayed")
         begin(otpScreen)
@@ -320,6 +432,29 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                     " The password may have been rejected. An account with an authenticator (TOTP) " +
                     "shows a different screen that this tool does not drive.",
             )
+        }
+
+        if (moduleOn("login")) {
+        // 11a — Confirm OTP button ---------------------------------------------------------------
+        // Looked at, never tapped: the field submits itself on the sixth digit,
+        // and a second submit could spend the one-time code twice.
+        val confirmButton = step("otp_confirm_button_checked")
+        begin(confirmButton)
+        val confirmReady = engine.waitUntil(Timeouts.SCREEN_CHANGE / 2) { engine.isTappable(T.OTP_SUBMIT_BUTTON) }
+        if (engine.cancelled) return stopped(confirmButton)
+        if (confirmReady) {
+            pass(
+                confirmButton,
+                "'${T.OTP_SUBMIT_BUTTON}' is on screen, enabled and tappable; not tapped, because the OTP auto-submits",
+            )
+        } else {
+            failAndContinue(
+                confirmButton,
+                "The Confirm OTP button ('${T.OTP_SUBMIT_BUTTON}') is not on screen as an enabled, tappable " +
+                    "control. Identifiers visible: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.",
+            )
+        }
+
         }
 
         // 12 — OTP entered -----------------------------------------------------------------------------
@@ -363,6 +498,37 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 timeoutMs = Timeouts.OTP_SUBMIT,
                 extra = " The OTP may have been rejected or have expired.",
             )
+        }
+
+        if (moduleOn("login")) {
+        // 13a — Enable 2FA --------------------------------------------------------------------------------------
+        // Tradion's biometric screen is titled "Enable 2FA security". It appears
+        // only on a device with biometrics, and the run cannot go past it (no
+        // Skip), so the next step ends the run there after this one is recorded.
+        val enable2fa = step("enable_2fa_checked")
+        begin(enable2fa)
+        if (afterOtpId != T.BIOMETRIC_SCREEN) {
+            skip(enable2fa, "no Enable 2FA screen was offered; it appears only on a device with biometrics")
+        } else if (!engine.isTappable(T.BIOMETRIC_ENABLE_BUTTON)) {
+            failAndContinue(
+                enable2fa,
+                "The Enable 2FA screen is displayed but its Enable now button " +
+                    "('${T.BIOMETRIC_ENABLE_BUTTON}') is not on screen as an enabled, tappable control. " +
+                    "Identifiers visible: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.",
+            )
+        } else {
+            val tap = engine.tap(T.BIOMETRIC_ENABLE_BUTTON, listOf("Enable now"))
+            if (!tap.ok) {
+                failAndContinue(enable2fa, "Enable now could not be tapped: ${tap.detail}")
+            } else {
+                pass(
+                    enable2fa,
+                    "Enable now was visible and clickable and was tapped (${tap.detail}); it starts Android's " +
+                        "own authentication prompt, which this tool does not read or drive",
+                )
+            }
+        }
+
         }
 
         // 14 — Risk disclosure accepted -----------------------------------------------------------------------
@@ -442,6 +608,151 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         return finish()
     }
 
+    // ── Login side paths ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * What a side-path check found. [stranded] means the flow is no longer on
+     * the page it needs to continue from, so the run cannot go on.
+     */
+    private class SideCheck(val reason: String?, val stranded: Boolean = false, val note: String? = null)
+
+    /** Records [check] on [step]. Returns a result only when the run has to end here. */
+    private fun conclude(step: AutomationStepResult, check: SideCheck): AutomationRunResult? {
+        if (engine.cancelled) return stopped(step)
+        val reason = check.reason
+        return when {
+            reason == null -> {
+                pass(step, check.note)
+                null
+            }
+            check.stranded -> abort(step, reason)
+            else -> {
+                failAndContinue(step, reason)
+                null
+            }
+        }
+    }
+
+    private fun missingTagHint(): String =
+        " If no identifier for it is listed, the installed Tradion build predates these login " +
+            "identifiers; build it with the current tradion_mobile sources."
+
+    /**
+     * Opens the form behind [linkId], types a fixed fake value into each of
+     * [inputs], and leaves with Back, expecting one of [returnIds]. Nothing on
+     * the form is tapped, so nothing is submitted. A field that rejects the value
+     * fails the check but the form is still left, so the run carries on.
+     */
+    private fun checkSideForm(
+        linkId: String,
+        formId: String,
+        inputs: List<Pair<String, String>>,
+        returnIds: List<String>,
+        what: String,
+    ): SideCheck {
+        val open = engine.tapAndConfirm(linkId, listOf(formId), Timeouts.SCREEN_CHANGE)
+        if (!open.ok) return SideCheck("$what did not open: ${open.detail}${missingTagHint()}")
+
+        var failure: String? = null
+        for ((inputId, value) in inputs) {
+            if (!engine.sleep(Timeouts.SETTLE)) return SideCheck("cancelled", stranded = true)
+            val typed = engine.enterText(inputId, value)
+            if (!typed.ok) {
+                failure = "$what opened, but its field '$inputId' did not take input: ${typed.detail}"
+                break
+            }
+            if (engine.verifyLength(inputId, value.length) == false) {
+                failure = "$what opened, but its field '$inputId' did not keep the whole value typed into it."
+                break
+            }
+        }
+
+        val closed = closeWithBack(formId)
+        val back = if (closed) engine.waitForAny(returnIds, Timeouts.SCREEN_CHANGE) else null
+        if (back !is WaitOutcome.Found) {
+            return SideCheck(
+                (failure?.plus(" It also ") ?: "$what could not be left: it ") +
+                    "did not go back to the page it was opened from with Back.",
+                stranded = true,
+            )
+        }
+        return SideCheck(failure, note = "opened, field(s) took input, Back returned to '${back.identifier}'")
+    }
+
+    /**
+     * Join Now hands over to the browser (the registration page), which this
+     * tool cannot read, so what is verified is that Tradion left the foreground
+     * and could be brought back to the login page.
+     */
+    private fun checkJoinNow(): SideCheck {
+        val tap = engine.tap(T.USER_ID_JOIN_NOW_BUTTON)
+        if (!tap.ok) return SideCheck("Join Now could not be tapped: ${tap.detail}${missingTagHint()}")
+
+        var goneSince = 0L
+        val left = engine.waitUntil(Timeouts.JOIN_NOW_LEAVES) {
+            if (engine.isPresent(T.USER_ID_SCREEN)) {
+                goneSince = 0L
+                false
+            } else {
+                val now = SystemClock.elapsedRealtime()
+                if (goneSince == 0L) goneSince = now
+                now - goneSince >= 1_500L
+            }
+        }
+        if (engine.cancelled) return SideCheck("cancelled", stranded = true)
+        if (!left) {
+            return SideCheck(
+                "Join Now was tapped but Tradion stayed in front for ${Timeouts.JOIN_NOW_LEAVES / 1000} " +
+                    "seconds. The registration link opens in the browser; there may be no browser to " +
+                    "open it, or the link failed to launch.",
+            )
+        }
+
+        if (!engine.sleep(2_000L)) return SideCheck("cancelled", stranded = true)
+        engine.launcher.launch(engine.targetPackage)?.let {
+            return SideCheck("Tradion could not be brought back after Join Now: $it", stranded = true)
+        }
+        val back = engine.waitForAny(userIdScreenIds, Timeouts.APP_LAUNCH)
+        if (back !is WaitOutcome.Found) {
+            return SideCheck(
+                reasonFor(back, "The User ID screen after Join Now", Timeouts.APP_LAUNCH),
+                stranded = true,
+            )
+        }
+        return SideCheck(
+            null,
+            note = "Tradion handed over to the browser for registration (its page is outside what this " +
+                "tool can read), then was brought back to the login page",
+        )
+    }
+
+    /**
+     * Switch Account clears the app's saved user and returns to the User ID
+     * page; the User ID is then entered again to get back to the password page.
+     * [userId] is a credential: it goes only into the field.
+     */
+    private fun checkSwitchAccount(userId: String): SideCheck {
+        val open = engine.tapAndConfirm(T.PASSWORD_SWITCH_ACCOUNT_LINK, userIdScreenIds, Timeouts.SCREEN_CHANGE)
+        if (!open.ok) {
+            return SideCheck("Switch Account did not lead to the login page: ${open.detail}${missingTagHint()}")
+        }
+        val entered = engine.enterText(T.USER_ID_INPUT, userId)
+        if (!entered.ok) {
+            return SideCheck("Back on the login page, the User ID could not be entered: ${entered.detail}", stranded = true)
+        }
+        if (!engine.sleep(Timeouts.SETTLE)) return SideCheck("cancelled", stranded = true)
+        val login = engine.tap(T.USER_ID_LOGIN_BUTTON, Texts.LOGIN)
+        if (!login.ok) return SideCheck("Back on the login page, Login could not be tapped: ${login.detail}", stranded = true)
+        val back = engine.waitForAny(passwordScreenIds, Timeouts.PASSWORD_SCREEN)
+        if (back !is WaitOutcome.Found) {
+            return SideCheck(
+                reasonFor(back, "The password page after switching account", Timeouts.PASSWORD_SCREEN),
+                stranded = true,
+            )
+        }
+        return SideCheck(null, note = "Switch Account led to the login page, and signing in again returned to the password page")
+    }
+
     // ── Watchlist ───────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -509,6 +820,20 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         return engine.waitForGone(T.REORDER_SCREEN, Timeouts.SCREEN_CHANGE)
     }
 
+    /**
+     * What the edit screen is showing right now, for a failed Save: the app
+     * explains a refusal in a snackbar ("Market watch name already exists",
+     * "can't be empty", ...), which is otherwise lost.
+     */
+    private fun editScreenHint(): String {
+        val texts = engine.screenTexts()
+        val identifiers = engine.visibleIdentifiers()
+        return buildString {
+            if (texts.isNotEmpty()) append(" Texts on screen: ${texts.joinToString(" | ")}.")
+            if (identifiers.isNotEmpty()) append(" Identifiers on screen: ${identifiers.joinToString(", ")}.")
+        }
+    }
+
     /** The rows of the open edit screen, top to bottom, as the app labels them. */
     private fun editRows(): List<String> =
         engine.groupedLabelsOf(T.REORDER_ROW).map { it.trim() }.filter { it.isNotEmpty() }
@@ -527,7 +852,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
      * Returns the watchlist count afterwards (null if unreadable), or null with
      * the run cancelled — callers distinguish via [AutomationEngine.cancelled].
      */
-    private fun editSession(editIds: List<String>, countBefore: Int?): EditOutcome? {
+    private fun editSession(editIds: List<String>, countBefore: Int?, allowDelete: Boolean): EditOutcome? {
         val rename = step(editIds[1])
         val reorder = step(editIds[2])
         val delete = step(editIds[3])
@@ -583,21 +908,42 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         // Delete the (new) first scrip -----------------------------------------------------------------------
         begin(delete)
         val rowsNow = editRows()
-        val deleteTap = engine.tap(T.REORDER_DELETE_BUTTON)
         var deleted = 0
-        if (deleteTap.ok && rowsNow.isNotEmpty()) {
-            val landed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
-                val after = editRows()
-                if (rowsNow.size == 1) after.isEmpty() else after.firstOrNull() != rowsNow.first()
+        // A watchlist holding one scrip is never emptied. Deleting its only scrip
+        // leaves an empty watchlist, and in a recorded run the rename that puts the
+        // name back then never completed (Save left the screen open for the whole
+        // 20 s), stranding the temporary name. The run's own INFY add puts one scrip
+        // back each time, so such an account hit this every run. With two or more
+        // scrips the list is never empty, so the delete is still exercised.
+        val deleteSkipped = rowsNow.size == 1 || !allowDelete
+        if (deleteSkipped) {
+            skip(
+                delete,
+                if (!allowDelete) {
+                    "Search and add is not selected, and its INFY add is what puts a deleted scrip back, " +
+                        "so nothing is deleted"
+                } else {
+                    "the watchlist holds a single scrip; deleting it would leave the watchlist empty, and an " +
+                        "empty watchlist's name could not be saved back in an earlier run, so nothing is deleted " +
+                        "(add a second scrip to test deleting)"
+                },
+            )
+        } else {
+            val deleteTap = engine.tap(T.REORDER_DELETE_BUTTON)
+            if (deleteTap.ok && rowsNow.isNotEmpty()) {
+                val landed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
+                    val after = editRows()
+                    after.firstOrNull() != rowsNow.first()
+                }
+                if (landed) deleted = TRIM_COUNT
             }
-            if (landed) deleted = TRIM_COUNT
-        }
-        if (engine.cancelled) return null
-        when {
-            !deleteTap.ok -> failAndContinue(delete, "No delete icon could be tapped on the edit screen: ${deleteTap.detail}")
-            rowsNow.isEmpty() -> failAndContinue(delete, "The delete control was tapped, but no row label was readable beforehand, so the affected scrip cannot be verified.")
-            deleted == 0 -> failAndContinue(delete, "The delete control was tapped, but the first row did not disappear within ${Timeouts.SCREEN_CHANGE / 1000} seconds; Save was not credited with a deletion.")
-            else -> pass(delete, "the first edit row disappeared after its delete control was tapped")
+            if (engine.cancelled) return null
+            when {
+                !deleteTap.ok -> failAndContinue(delete, "No delete icon could be tapped on the edit screen: ${deleteTap.detail}")
+                rowsNow.isEmpty() -> failAndContinue(delete, "The delete control was tapped, but no row label was readable beforehand, so the affected scrip cannot be verified.")
+                deleted == 0 -> failAndContinue(delete, "The delete control was tapped, but the first row did not disappear within ${Timeouts.SCREEN_CHANGE / 1000} seconds; Save was not credited with a deletion.")
+                else -> pass(delete, "the first edit row disappeared after its delete control was tapped")
+            }
         }
         val expectedRows = if (deleted > 0) rowsNow.drop(deleted) else rowsNow
 
@@ -608,7 +954,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         var saveClosed = false
         var escapedAfterSaveFailure = true
         if (!renamed && !reordered && deleted == 0) {
-            failAndContinue(saved, "Rename, reorder and delete all failed, so Save had no valid change to persist.")
+            failAndContinue(saved, "Nothing was changed on the edit screen (rename, reorder and delete all failed or were skipped), so Save had no valid change to persist.")
             escapedAfterSaveFailure = escapeEditScreen()
         } else {
             val save = engine.tap(T.REORDER_SAVE_BUTTON)
@@ -617,7 +963,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 escapedAfterSaveFailure = escapeEditScreen()
             } else if (!engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE)) {
                 if (engine.cancelled) return null
-                failAndContinue(saved, "Tapped Save but the edit screen did not close within ${Timeouts.EDIT_SAVE / 1000} seconds (a duplicate name or rejected request can leave it open); attempted to leave it with Discard.")
+                failAndContinue(saved, "Tapped Save but the edit screen did not close within ${Timeouts.EDIT_SAVE / 1000} seconds (a duplicate name or rejected request can leave it open); attempted to leave it with Discard.${editScreenHint()}")
                 escapedAfterSaveFailure = escapeEditScreen()
             } else {
                 saveClosed = true
@@ -628,7 +974,11 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 if (deleted > 0 && expected != null && countAfter == expected) persistedDeletes = deleted
                 when {
                     back != null -> failAndContinue(saved, "Saved, but then $back")
-                    deleted == 0 -> failAndContinue(saved, "The edit screen closed, but no scrip deletion had been confirmed, so the required count drop was not tested.")
+                    deleteSkipped && (expected == null || countAfter == expected) -> pass(
+                        saved,
+                        "saved the new name; the watchlist kept its ${countAfter ?: "single"} scrip(s) because the delete was skipped",
+                    )
+                    deleted == 0 && !deleteSkipped -> failAndContinue(saved, "The edit screen closed, but no scrip deletion had been confirmed, so the required count drop was not tested.")
                     expected != null && countAfter != expected -> failAndContinue(saved, "Saved after deleting $deleted of $countBefore scrip(s), so the count should be $expected, but it shows ${countAfter ?: "nothing readable"}." + if (countAfter == null) countDiagnostics() else "")
                     else -> pass(saved, "saved; the watchlist went from ${countBefore ?: "an unreadable count"} to ${countAfter ?: "an unreadable count"} scrip(s)")
                 }
@@ -699,10 +1049,25 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 failAndContinue(restored, "Could not type the original name back: ${back.detail}")
                 escapeEditScreen()
             } else {
-                val save2 = engine.tap(T.REORDER_SAVE_BUTTON)
-                if (!save2.ok || !engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE)) {
+                // Let the app register the typed name before Save is pressed: Save only acts
+                // once the app has marked the name as changed. If the screen is still open
+                // after a first try, press Save once more; a rename is safe to repeat.
+                if (!engine.sleep(Timeouts.SETTLE)) return null
+                var save2 = engine.tap(T.REORDER_SAVE_BUTTON)
+                var closed2 = save2.ok && engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE_FIRST_TRY)
+                var retried = false
+                if (!closed2 && !engine.cancelled && engine.isPresent(T.REORDER_SCREEN)) {
+                    retried = true
+                    save2 = engine.tap(T.REORDER_SAVE_BUTTON)
+                    closed2 = save2.ok && engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE - Timeouts.EDIT_SAVE_FIRST_TRY)
+                }
+                if (!closed2) {
                     if (engine.cancelled) return null
-                    failAndContinue(restored, "The original name '$origName' could not be saved back; the watchlist is still called '$newName'.")
+                    failAndContinue(
+                        restored,
+                        "The original name '$origName' could not be saved back; the watchlist is still called '$newName'." +
+                            (if (retried) " Save was pressed twice." else "") + editScreenHint(),
+                    )
                     escapeEditScreen()
                 } else {
                     val reopened = backOnWatchlist() == null && openEditScreen() == null
@@ -723,6 +1088,11 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
         countAfter = readScripCount() ?: countAfter
         return EditOutcome(countAfter, persistedDeletes)
     }
+
+    private fun moduleOn(id: String): Boolean = modules.isOn(id)
+
+    /** Marks the steps of a module the operator switched off as skipped. */
+    private fun skipModule(id: String) = skipSteps(modules.stepIds(id), modules.skipNote(id))
 
     /** Marks every step in [ids] skipped, for work that cannot be done because of an earlier failure. */
     private fun skipSteps(ids: List<String>, reason: String) {
@@ -778,6 +1148,17 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
     }
 
     private fun runWatchlist(): AutomationRunResult? {
+        val viewOn = moduleOn("watchlist")
+        val editOn = moduleOn("watchlist_edit")
+        val searchOn = moduleOn("watchlist_search")
+        if (!viewOn && !editOn && !searchOn) {
+            // The Watchlist tab is only opened as a way into one of its modules.
+            skipSteps(listOf("watchlist_tab_opened", "watchlist_tabs_loaded"), "no Watchlist module selected")
+            skipModule("watchlist")
+            skipModule("watchlist_edit")
+            skipModule("watchlist_search")
+            return null
+        }
         // Watchlist tab opened ------------------------------------------------------------------
         val tabOpened = step("watchlist_tab_opened")
         begin(tabOpened)
@@ -798,6 +1179,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
 
         // Predefined list refuses Search / add -----------------------------------------------------
         val predefined = step("watchlist_predefined_no_add")
+        if (!viewOn) skip(predefined, modules.skipNote("watchlist")) else run {
         begin(predefined)
         val toPredefined = engine.tapAndConfirm(T.WATCHLIST_MODE_PREDEFINED, predefinedTabIds, Timeouts.SCREEN_CHANGE)
         if (!toPredefined.ok) {
@@ -823,9 +1205,11 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             backOnWatchlist()
             engine.tap(T.WATCHLIST_MODE_WATCHLIST)
         }
+        }
         val editableReady = selectEditableWatchlistTab()
         if (engine.cancelled) return stopped(predefined)
 
+        if (!viewOn) skipModule("watchlist") else run {
         // Basket mode toggled and restored -------------------------------------------------------------
         val basket = step("watchlist_basket_toggled")
         begin(basket)
@@ -977,15 +1361,25 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             }
         }
 
+        }
+
         // Edit watchlist: rename, move a scrip, delete a scrip, save, verify, restore -------------------------------
         val editIds = listOf(
             "watchlist_edit_opened", "watchlist_edit_rename", "watchlist_edit_reorder", "watchlist_edit_delete",
             "watchlist_edit_saved", "watchlist_edit_verified", "watchlist_edit_restored",
         )
-        val edit = step(editIds[0])
-        begin(edit)
         var countAfterTrim: Int? = null
         var persistedEditDeletes = 0
+        if (!editOn) {
+            skipModule("watchlist_edit")
+            if (searchOn) {
+                // Search checks the count against where it started.
+                backOnWatchlist()
+                countAfterTrim = readScripCount()
+            }
+        } else run {
+        val edit = step(editIds[0])
+        begin(edit)
         if (!onWatchlistOrFail(edit)) {
             skipSteps(editIds.drop(1), "the Watchlist tab was not showing")
         } else if (!editableReady && !selectEditableWatchlistTab()) {
@@ -1006,7 +1400,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                     skipSteps(editIds.drop(1), "the edit screen did not open")
                 } else {
                     pass(edit, "long-pressed the first row and the edit screen appeared" + countNote(countBeforeEdit))
-                    val outcome = editSession(editIds, countBeforeEdit)
+                    val outcome = editSession(editIds, countBeforeEdit, allowDelete = searchOn)
                     if (engine.cancelled) return stopped(edit)
                     countAfterTrim = outcome?.countAfter
                     persistedEditDeletes = outcome?.persistedDeletes ?: 0
@@ -1014,7 +1408,13 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             }
         }
 
+        }
+
         // Search ----------------------------------------------------------------------------------------------------
+        if (!searchOn) {
+            skipModule("watchlist_search")
+            return null
+        }
         val searchOpened = step("search_opened")
         begin(searchOpened)
         if (!onWatchlistOrFail(searchOpened)) {
@@ -1384,10 +1784,12 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             "orders_gtt_loaded" to T.ORDERS_TAB_GTT,
             "orders_sip_loaded" to T.ORDERS_TAB_SIP,
         ).map { (stepId, tab) -> TabStep(stepId, tab, strip = ordersTabIds) }
+        if (!moduleOn("orders")) skipModule("orders") else {
         withPage(Page("Orders", T.BOTTOMNAV_ORDER_TAB, T.ORDERBOOK_SCREEN), orderTabs.map { it.stepId }) {
             for (tab in orderTabs) checkTab(tab, budget)?.let { return@withPage it }
             null
         }?.let { return it }
+        }
 
         // Dashboard -----------------------------------------------------------------------------------------
         val dashboardStrip = listOf(T.DASHBOARD_TAB_TRADING, T.DASHBOARD_TAB_INVESTMENTS)
@@ -1409,6 +1811,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             "option_chain_cds_loaded", "option_chain_bfo_loaded", "research_calls_loaded",
             "scanners_view_all_loaded",
         )
+        if (!moduleOn("dashboard")) skipModule("dashboard") else {
         withPage(Page("Dashboard", T.BOTTOMNAV_DASHBOARD_TAB, T.DASHBOARD_SCREEN), dashboardStepIds) {
             checkTab(dashboardTabs[0], budget)?.let { return@withPage it }
             optionChainSteps()?.let { return@withPage it }
@@ -1416,6 +1819,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             checkTab(dashboardTabs[1], budget)?.let { return@withPage it }
             scannersViewAllStep()
         }?.let { return it }
+        }
 
         // Portfolio -------------------------------------------------------------------------------------------
         val portfolioStrip = listOf(T.PORTFOLIO_TAB_HOLDINGS, T.PORTFOLIO_TAB_POSITIONS)
@@ -1423,6 +1827,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             "holdings_loaded", "holdings_mode_toggled", "holdings_switch_toggled", "holdings_sort_opened",
             "positions_loaded", "positions_mode_toggled", "positions_sort_opened",
         )
+        if (!moduleOn("portfolio")) skipModule("portfolio") else {
         withPage(Page("Portfolio", T.BOTTOMNAV_PORTFOLIO_TAB, T.PORTFOLIO_SCREEN), portfolioSteps) {
             checkTab(TabStep("holdings_loaded", T.PORTFOLIO_TAB_HOLDINGS, portfolioStrip), budget)
                 ?.let { return@withPage it }
@@ -1450,6 +1855,7 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
                 "there are no open positions to sort",
             )
         }?.let { return it }
+        }
 
         // Profile ----------------------------------------------------------------------------------------------
         val profileStrip = listOf(T.PROFILE_TAB_ACCOUNT, T.PROFILE_TAB_TRADE_SETTINGS)
@@ -1457,10 +1863,12 @@ class TradionAutomationFlow(engine: AutomationEngine) : FlowBase(engine, buildSt
             TabStep("profile_account_loaded", T.PROFILE_TAB_ACCOUNT, profileStrip, maxPages = 3),
             TabStep("profile_trade_settings_loaded", T.PROFILE_TAB_TRADE_SETTINGS, profileStrip, maxPages = 3),
         )
+        if (!moduleOn("profile")) skipModule("profile") else {
         withPage(Page("Profile", T.BOTTOMNAV_PROFILE_TAB, T.PROFILE_SCREEN), profileTabs.map { it.stepId }) {
             for (tab in profileTabs) checkTab(tab, budget)?.let { return@withPage it }
             null
         }?.let { return it }
+        }
         return null
     }
 

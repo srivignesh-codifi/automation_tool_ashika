@@ -60,6 +60,11 @@ class AutomationStep {
     this.durationMs,
     this.failureReason,
     this.note,
+    this.apiKind,
+    this.apiStatus,
+    this.apiDetail,
+    this.apiMs,
+    this.apiChecks = 0,
   });
 
   final String id;
@@ -70,6 +75,37 @@ class AutomationStep {
   final int? durationMs;
   final String? failureReason;
   final String? note;
+
+  /// The step's "API / data check", inferred from the screen (the tool does not
+  /// see network traffic): `read`, `write` or `auth`, how it came out, a short
+  /// explanation, the longest load time recorded, and how many loads were checked.
+  final String? apiKind;
+  final String? apiStatus;
+  final String? apiDetail;
+  final int? apiMs;
+  final int apiChecks;
+
+  bool get hasApiCheck => apiKind != null && apiStatus != null;
+
+  String get apiKindLabel => switch (apiKind) {
+    'read' => 'read',
+    'write' => 'write',
+    'auth' => 'auth',
+    _ => '',
+  };
+
+  String get apiStatusLabel => switch (apiStatus) {
+    'ok' => 'OK',
+    'empty' => 'EMPTY',
+    'slow' => 'SLOW',
+    'timeout' => 'TIMEOUT',
+    'error' => 'ERROR',
+    'confirmed' => 'CONFIRMED',
+    'not_confirmed' => 'NOT CONFIRMED',
+    'not_checked' => 'NOT CHECKED',
+    'skipped' => 'SKIPPED',
+    _ => '',
+  };
 
   DateTime? get startedAt => startedAtMs == null
       ? null
@@ -91,6 +127,11 @@ class AutomationStep {
     String? note,
   }) {
     return AutomationStep(
+      apiKind: apiKind,
+      apiStatus: apiStatus,
+      apiDetail: apiDetail,
+      apiMs: apiMs,
+      apiChecks: apiChecks,
       id: id,
       name: name,
       status: status ?? this.status,
@@ -112,6 +153,11 @@ class AutomationStep {
       durationMs: (map['durationMs'] as num?)?.toInt(),
       failureReason: map['failureReason'] as String?,
       note: map['note'] as String?,
+      apiKind: map['apiKind'] as String?,
+      apiStatus: map['apiStatus'] as String?,
+      apiDetail: map['apiDetail'] as String?,
+      apiMs: (map['apiMs'] as num?)?.toInt(),
+      apiChecks: (map['apiChecks'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -124,5 +170,10 @@ class AutomationStep {
     'durationMs': durationMs,
     'failureReason': failureReason,
     'note': note,
+    'apiKind': apiKind,
+    'apiStatus': apiStatus,
+    'apiDetail': apiDetail,
+    'apiMs': apiMs,
+    'apiChecks': apiChecks,
   };
 }

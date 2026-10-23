@@ -187,6 +187,17 @@ class _ReportScreenState extends State<ReportScreen> {
                   ],
                   const SizedBox(height: 20),
                   _Screenshots(result: result),
+                  if (result.recordingNote != null) ...[
+                    const SizedBox(height: 12),
+                    Text('Screen recording', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    Text(
+                      result.recordingNote!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ] else
                   Text(
                     'The JSON report for this run could not be read. The plain '
@@ -241,6 +252,21 @@ class _ReportScreenState extends State<ReportScreen> {
                 _PathRow(label: 'JSON', path: widget.run.jsonPath),
                 _PathRow(label: 'HTML', path: widget.run.htmlPath),
                 _PathRow(label: 'Text', path: widget.run.textPath),
+                if (widget.run.videoPath.isNotEmpty)
+                  _PathRow(label: 'Video', path: widget.run.videoPath),
+                if (widget.run.zipPath.isNotEmpty)
+                  _PathRow(label: 'Summary zip', path: widget.run.zipPath),
+                if (widget.run.zipFolder.isNotEmpty)
+                  Text(
+                    'Copy in ${widget.run.zipFolder}: text report, video and '
+                    'failed-step screenshots.',
+                    style: theme.textTheme.bodySmall,
+                  )
+                else if (widget.run.zipError.isNotEmpty)
+                  Text(
+                    'Summary zip not saved: ${widget.run.zipError}',
+                    style: theme.textTheme.bodySmall,
+                  ),
 
                 const SizedBox(height: 20),
                 FilledButton.icon(

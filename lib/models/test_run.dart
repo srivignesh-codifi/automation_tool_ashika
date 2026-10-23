@@ -16,6 +16,10 @@ class TestRun {
     required this.htmlPath,
     required this.textPath,
     this.durationMs,
+    this.videoPath = '',
+    this.zipPath = '',
+    this.zipFolder = '',
+    this.zipError = '',
   });
 
   final String runId;
@@ -30,6 +34,15 @@ class TestRun {
   final String jsonPath;
   final String htmlPath;
   final String textPath;
+
+  /// The run's screen recording, or empty when it was not recorded.
+  final String videoPath;
+
+  /// The summary zip (text report, video, failed screenshots), the public
+  /// folder it was copied to, or why that did not work. Empty when not made.
+  final String zipPath;
+  final String zipFolder;
+  final String zipError;
 
   DateTime get startedAt => DateTime.fromMillisecondsSinceEpoch(startedAtMs);
 
@@ -47,6 +60,10 @@ class TestRun {
     required String jsonPath,
     required String htmlPath,
     required String textPath,
+    String videoPath = '',
+    String zipPath = '',
+    String zipFolder = '',
+    String zipError = '',
   }) {
     return TestRun(
       runId: result.runId,
@@ -61,6 +78,10 @@ class TestRun {
       jsonPath: jsonPath,
       htmlPath: htmlPath,
       textPath: textPath,
+      videoPath: videoPath,
+      zipPath: zipPath,
+      zipFolder: zipFolder,
+      zipError: zipError,
     );
   }
 
@@ -78,6 +99,10 @@ class TestRun {
       jsonPath: (map['jsonPath'] as String?) ?? '',
       htmlPath: (map['htmlPath'] as String?) ?? '',
       textPath: (map['textPath'] as String?) ?? '',
+      videoPath: (map['videoPath'] as String?) ?? '',
+      zipPath: (map['zipPath'] as String?) ?? '',
+      zipFolder: (map['zipFolder'] as String?) ?? '',
+      zipError: (map['zipError'] as String?) ?? '',
     );
   }
 
@@ -94,5 +119,9 @@ class TestRun {
     'jsonPath': jsonPath,
     'htmlPath': htmlPath,
     'textPath': textPath,
+    'videoPath': videoPath,
+    'zipPath': zipPath,
+    'zipFolder': zipFolder,
+    'zipError': zipError,
   };
 }

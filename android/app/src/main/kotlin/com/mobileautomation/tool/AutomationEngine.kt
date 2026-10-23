@@ -42,11 +42,17 @@ class AutomationEngine private constructor(
         val otp: String,
         val mpin: String,
         val password: String = "",
+        /** The operator accepted the system recording dialog for this run. */
+        val recordScreen: Boolean = false,
+        /** Ids of the modules to run; null runs all of them. See [AppModules]. */
+        val modules: List<String>? = null,
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
 
     companion object {
+        private const val RECORDING_TAIL_MS = 1_500L
+
         @Volatile
         private var worker: Thread? = null
 
@@ -101,17 +107,29 @@ class AutomationEngine private constructor(
 
             val thread = Thread({
                 try {
+                    if (request.recordScreen) engine.beginRecording()
                     val result = when (app) {
-                        TargetApp.ASHIKA -> LoginAutomationFlow(engine).run(
+                        TargetApp.ASHIKA -> LoginAutomationFlow(
+                            engine,
+                            ModuleSelection(AppModules.ASHIKA, request.modules?.toSet()),
+                        ).run(
                             clientId = request.clientId,
                             otp = request.otp,
                             mpin = request.mpin,
                         )
-                        TargetApp.TRADION -> TradionAutomationFlow(engine).run(
+                        TargetApp.TRADION -> TradionAutomationFlow(
+                            engine,
+                            ModuleSelection(AppModules.TRADION, request.modules?.toSet()),
+                        ).run(
                             userId = request.clientId,
                             password = request.password,
                             otp = request.otp,
                         )
+                    }
+                    engine.endRecording()?.let { recording ->
+                        result.videoPath = recording.file?.absolutePath
+                        result.recordingStartedAtMs = recording.startedAtMs
+                        result.recordingNote = recording.note
                     }
                     lastResult = result.toMap()
                     engine.emit(
@@ -120,6 +138,7 @@ class AutomationEngine private constructor(
                     )
                 } catch (t: Throwable) {
                     // A crash in the driver must still produce a report.
+                    val recording = engine.endRecording()
                     engine.emit(
                         "automation_completed",
                         mapOf(
@@ -130,10 +149,14 @@ class AutomationEngine private constructor(
                                     "The automation driver failed unexpectedly: " +
                                     "${t.javaClass.simpleName}: ${t.message ?: "no detail"}",
                                 "steps" to emptyList<Any>(),
+                                "videoPath" to recording?.file?.absolutePath,
+                                "recordingStartedAtMs" to recording?.startedAtMs,
+                                "recordingNote" to recording?.note,
                             ),
                         ),
                     )
                 } finally {
+                    engine.endRecording()
                     active = null
                     worker = null
                     // Whatever stage the run ended at — completed, aborted,
@@ -204,6 +227,43 @@ class AutomationEngine private constructor(
     val runId: String = UUID.randomUUID().toString()
 
     val launcher = TargetAppLauncher(appContext)
+
+    // ── Screen recording ────────────────────────────────────────────────────
+
+    /** True once [beginRecording] ran, so [endRecording] never reads an older run's result. */
+    private var recordingRequested = false
+    private var recordingResult: ScreenRecorder.Finished? = null
+
+    private val recordingFile: File
+        get() {
+            val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
+            return File(File(base, "reports"), "recording_${runId.take(8)}.mp4")
+        }
+
+    /**
+     * Starts the screen recording before anything else happens, so the video
+     * covers the data reset and launch too. A recording that cannot start is
+     * not a failed run: the reason travels in the result's `recordingNote`.
+     */
+    fun beginRecording() {
+        recordingRequested = true
+        val started = ScreenRecorder.start(appContext, recordingFile)
+        if (!started.ok) {
+            recordingResult = ScreenRecorder.Finished(null, null, "not recorded: ${started.detail}")
+        }
+    }
+
+    /**
+     * Stops the recording and returns what it produced, or null when this run
+     * was not recorded. Holds the last screen for a moment first so the video
+     * ends on the final state rather than mid-transition. Safe to call twice.
+     */
+    fun endRecording(): ScreenRecorder.Finished? {
+        if (!recordingRequested) return null
+        recordingResult?.let { return it }
+        if (!cancelled) sleep(RECORDING_TAIL_MS)
+        return ScreenRecorder.stop().also { recordingResult = it }
+    }
 
     // ── Events ──────────────────────────────────────────────────────────────
 
@@ -489,6 +549,12 @@ class AutomationEngine private constructor(
 
     fun isPresent(identifier: String): Boolean = findNow(identifier) != null
 
+    /** True when [identifier] is on screen and its tappable node is enabled. Taps nothing. */
+    fun isTappable(identifier: String): Boolean {
+        val anchor = findNow(identifier) ?: return false
+        return AccessibilityNodeFinder.resolveClickable(anchor)?.isEnabled == true
+    }
+
     /** The first of [identifiers] currently present, if any. */
     fun firstPresent(identifiers: List<String>): String? {
         val root = targetRoot() ?: return null
@@ -631,6 +697,9 @@ class AutomationEngine private constructor(
         return if (ok) ActionOutcome(true, "performed '${action.label}' on '$identifier'")
         else ActionOutcome(false, "'${action.label}' was rejected by '$identifier'")
     }
+
+    /** Short texts on screen now, for failure messages on screens with no secret. See [AccessibilityNodeFinder.visibleTexts]. */
+    fun screenTexts(): List<String> = AccessibilityNodeFinder.visibleTexts(targetRoot())
 
     /** Identifiers on screen right now, for failure messages. */
     fun visibleIdentifiers(): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot())

@@ -117,6 +117,33 @@ object AccessibilityNodeFinder {
         return null
     }
 
+    /**
+     * The short, non-editable texts on screen, top to bottom, without
+     * duplicates. For failure messages on screens that hold no secret (the
+     * watchlist edit screen): it is how a snackbar such as "Market watch name
+     * already exists" reaches the report. Editable and password nodes are skipped.
+     */
+    fun visibleTexts(root: AccessibilityNodeInfo?, limit: Int = 12): List<String> {
+        if (root == null) return emptyList()
+        val out = LinkedHashSet<String>()
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 25 || out.size >= limit) return
+            if (!node.isEditable && !node.isPassword) {
+                node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 90 }?.let(out::add)
+            }
+            for (i in 0 until node.childCount) {
+                val child = try {
+                    node.getChild(i)
+                } catch (_: Throwable) {
+                    null
+                } ?: continue
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return out.toList()
+    }
+
     /** Priority 5: node class name. */
     fun byClassName(root: AccessibilityNodeInfo?, className: String): AccessibilityNodeInfo? =
         search(root) { it.className?.toString() == className }

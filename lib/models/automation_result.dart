@@ -25,6 +25,11 @@ class AutomationResult {
     this.failureMessage,
     this.screenshots = const <String, String>{},
     this.screenshotUnavailableReason,
+    this.videoPath,
+    this.recordingStartedAtMs,
+    this.recordingNote,
+    this.modulesRun = const <String>[],
+    this.modulesSkipped = const <String>[],
   });
 
   final String runId;
@@ -51,6 +56,60 @@ class AutomationResult {
   /// screenshot never changes the verdict of a run.
   final String? screenshotUnavailableReason;
 
+  /// Absolute path of the screen recording of the whole run, when one exists.
+  final String? videoPath;
+
+  /// When the recording began; a step's start minus this is its position in
+  /// the video.
+  final int? recordingStartedAtMs;
+
+  /// Why there is no video, or what the video does not cover.
+  final String? recordingNote;
+
+  /// The modules the operator left selected, and the ones switched off.
+  final List<String> modulesRun;
+  final List<String> modulesSkipped;
+
+  bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
+
+  /// Seconds into the video at which [step] began, or null when it is not
+  /// covered (no video, or the step never started).
+  double? videoOffsetOf(AutomationStep step) {
+    final origin = recordingStartedAtMs;
+    final at = step.startedAtMs;
+    if (!hasVideo || origin == null || at == null) return null;
+    final seconds = (at - origin) / 1000.0;
+    return seconds < 0 ? 0 : seconds;
+  }
+
+  /// The same result pointing at [path], used once the report moves the video
+  /// next to its report files.
+  AutomationResult withVideoPath(String? path) => AutomationResult(
+    runId: runId,
+    testName: testName,
+    targetPackage: targetPackage,
+    steps: steps,
+    targetMainActivity: targetMainActivity,
+    targetVersionName: targetVersionName,
+    deviceModel: deviceModel,
+    deviceManufacturer: deviceManufacturer,
+    androidVersion: androidVersion,
+    sdkInt: sdkInt,
+    startedAtMs: startedAtMs,
+    finishedAtMs: finishedAtMs,
+    durationMs: durationMs,
+    passed: passed,
+    stopped: stopped,
+    failureMessage: failureMessage,
+    screenshots: screenshots,
+    screenshotUnavailableReason: screenshotUnavailableReason,
+    videoPath: path,
+    recordingStartedAtMs: recordingStartedAtMs,
+    recordingNote: recordingNote,
+    modulesRun: modulesRun,
+    modulesSkipped: modulesSkipped,
+  );
+
   DateTime? get startedAt => startedAtMs == null
       ? null
       : DateTime.fromMillisecondsSinceEpoch(startedAtMs!);
@@ -63,6 +122,22 @@ class AutomationResult {
       durationMs == null ? null : Duration(milliseconds: durationMs!);
 
   int get totalSteps => steps.length;
+
+  /// Steps that never ran, or were still running when the run ended.
+  int get notRunSteps => steps
+      .where(
+        (s) => s.status == StepStatus.pending || s.status == StepStatus.running,
+      )
+      .length;
+
+  int get skippedSteps =>
+      steps.where((s) => s.status == StepStatus.skipped).length;
+
+  int get passedSteps =>
+      steps.where((s) => s.status == StepStatus.passed).length;
+
+  /// How the run's server-facing steps came out; see [ApiSummary].
+  ApiSummary get apiSummary => ApiSummary.of(steps);
 
   int get completedSteps => steps
       .where(
@@ -120,6 +195,11 @@ class AutomationResult {
       steps: rawSteps,
       screenshots: shots,
       screenshotUnavailableReason: map['screenshotUnavailableReason'] as String?,
+      videoPath: map['videoPath'] as String?,
+      recordingStartedAtMs: (map['recordingStartedAtMs'] as num?)?.toInt(),
+      recordingNote: map['recordingNote'] as String?,
+      modulesRun: _strings(map['modulesRun']),
+      modulesSkipped: _strings(map['modulesSkipped']),
     );
   }
 
@@ -142,8 +222,155 @@ class AutomationResult {
     'failureMessage': failureMessage,
     'totalSteps': totalSteps,
     'completedSteps': completedSteps,
+    'apiSummary': apiSummary.toJson(),
     'steps': steps.map((s) => s.toJson()).toList(growable: false),
     'screenshots': screenshots,
     'screenshotUnavailableReason': screenshotUnavailableReason,
+    'videoPath': videoPath,
+    'videoFile': hasVideo ? videoPath!.split('/').last : null,
+    'recordingStartedAtMs': recordingStartedAtMs,
+    'recordingNote': recordingNote,
+    'modulesRun': modulesRun,
+    'modulesSkipped': modulesSkipped,
+  };
+
+  static List<String> _strings(Object? raw) => raw is List
+      ? raw.whereType<String>().toList(growable: false)
+      : const <String>[];
+}
+
+/// Roll-up of the per-step "API / data checks". Inferred from the screen, not
+/// from network traffic: see [AutomationStep.apiKind].
+class ApiSummary {
+  const ApiSummary({
+    this.reads = 0,
+    this.readsOk = 0,
+    this.readsEmpty = 0,
+    this.readsSlow = 0,
+    this.readsTimeout = 0,
+    this.readsError = 0,
+    this.readsNotChecked = 0,
+    this.changes = 0,
+    this.changesConfirmed = 0,
+    this.changesNotConfirmed = 0,
+    this.signIns = 0,
+    this.signInsOk = 0,
+    this.signInsFailed = 0,
+  });
+
+  factory ApiSummary.of(List<AutomationStep> steps) {
+    var reads = 0, readsOk = 0, readsEmpty = 0, readsSlow = 0;
+    var readsTimeout = 0, readsError = 0, readsNotChecked = 0;
+    var changes = 0, confirmed = 0, notConfirmed = 0;
+    var signIns = 0, signInsOk = 0, signInsFailed = 0;
+    for (final step in steps) {
+      final status = step.apiStatus;
+      if (!step.hasApiCheck || status == 'skipped') continue;
+      switch (step.apiKind) {
+        case 'read':
+          reads++;
+          switch (status) {
+            case 'ok':
+              readsOk++;
+            case 'empty':
+              readsEmpty++;
+            case 'slow':
+              readsSlow++;
+            case 'timeout':
+              readsTimeout++;
+            case 'error':
+              readsError++;
+            default:
+              readsNotChecked++;
+          }
+        case 'write':
+          changes++;
+          if (status == 'confirmed') {
+            confirmed++;
+          } else {
+            notConfirmed++;
+          }
+        case 'auth':
+          signIns++;
+          if (status == 'ok') {
+            signInsOk++;
+          } else {
+            signInsFailed++;
+          }
+      }
+    }
+    return ApiSummary(
+      reads: reads,
+      readsOk: readsOk,
+      readsEmpty: readsEmpty,
+      readsSlow: readsSlow,
+      readsTimeout: readsTimeout,
+      readsError: readsError,
+      readsNotChecked: readsNotChecked,
+      changes: changes,
+      changesConfirmed: confirmed,
+      changesNotConfirmed: notConfirmed,
+      signIns: signIns,
+      signInsOk: signInsOk,
+      signInsFailed: signInsFailed,
+    );
+  }
+
+  final int reads;
+  final int readsOk;
+  final int readsEmpty;
+  final int readsSlow;
+  final int readsTimeout;
+  final int readsError;
+  final int readsNotChecked;
+  final int changes;
+  final int changesConfirmed;
+  final int changesNotConfirmed;
+  final int signIns;
+  final int signInsOk;
+  final int signInsFailed;
+
+  bool get isEmpty => reads + changes + signIns == 0;
+
+  /// Anything that points at a server or data problem.
+  int get problems =>
+      readsTimeout +
+      readsError +
+      readsNotChecked +
+      changesNotConfirmed +
+      signInsFailed;
+
+  String get readsLine =>
+      '$reads checked: $readsOk OK, $readsEmpty empty, $readsSlow slow, '
+      '$readsTimeout timed out, $readsError error'
+      '${readsNotChecked > 0 ? ', $readsNotChecked not checked' : ''}';
+
+  String get changesLine =>
+      '$changes checked: $changesConfirmed confirmed, $changesNotConfirmed not confirmed';
+
+  String get signInsLine =>
+      '$signIns checked: $signInsOk OK, $signInsFailed failed';
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'reads': <String, int>{
+      'total': reads,
+      'ok': readsOk,
+      'empty': readsEmpty,
+      'slow': readsSlow,
+      'timeout': readsTimeout,
+      'error': readsError,
+      'notChecked': readsNotChecked,
+    },
+    'changes': <String, int>{
+      'total': changes,
+      'confirmed': changesConfirmed,
+      'notConfirmed': changesNotConfirmed,
+    },
+    'signIns': <String, int>{
+      'total': signIns,
+      'ok': signInsOk,
+      'failed': signInsFailed,
+    },
+    'problems': problems,
   };
 }

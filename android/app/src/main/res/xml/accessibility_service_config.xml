@@ -9,7 +9,11 @@
                           (App info > Storage > Clear storage; MIUI puts App
                           info in com.miui.securitycenter) and the permission
                           controller (the notification prompt that returns
-                          after every reset). It is blind to every other app,
+                          after every reset) and System UI, which draws the
+                          screen-recording prompt (RecordingPromptAccepter.kt
+                          reads it only for a few seconds after the operator
+                          presses Start, and touches only the dialog that names
+                          this tool). It is blind to every other app,
                           including the keyboard and the launcher. Keep in step
                           with SETTINGS_PACKAGES / PERMISSION_CONTROLLER_PACKAGES
                           in AutomationConfig.kt.
@@ -46,5 +50,5 @@
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
-    android:packageNames="com.codifi.dhanush,com.codifi.rmoney,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller"
+    android:packageNames="com.codifi.dhanush,com.codifi.rmoney,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller,com.android.systemui"
     android:summary="@string/accessibility_service_summary" />

@@ -192,6 +192,14 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
     }
   }
 
+  String? _zipLine(TestRun run) {
+    if (run.zipFolder.isNotEmpty) {
+      return 'Summary zip saved to ${run.zipFolder}: '
+          '${run.zipPath.split('/').last}';
+    }
+    return run.zipError.isEmpty ? null : 'Summary zip not saved: ${run.zipError}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -308,6 +316,14 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
                     ? Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (_savedRun != null && _zipLine(_savedRun!) != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                _zipLine(_savedRun!)!,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
                           Row(
                             children: [
                               Expanded(

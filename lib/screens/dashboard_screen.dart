@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../build_info.dart';
 import '../models/test_run.dart';
 import '../services/automation_service.dart';
 import '../services/report_service.dart';
@@ -9,6 +10,7 @@ import '../services/secure_storage_service.dart';
 import '../widgets/status_indicator.dart';
 import 'login_automation_screen.dart';
 import 'report_screen.dart';
+import 'setup_screen.dart';
 
 /// Landing screen: readiness of the two prerequisites, the entry point into the
 /// automation (for whichever target app is picked there), and the history of
@@ -84,6 +86,18 @@ class _DashboardScreenState extends State<DashboardScreen>
         builder: (_) => LoginAutomationScreen(
           automation: widget.automation,
           reports: widget.reports,
+          storage: widget.storage,
+        ),
+      ),
+    );
+    await _refresh();
+  }
+
+  Future<void> _openSetup() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => SetupScreen(
+          automation: widget.automation,
           storage: widget.storage,
         ),
       ),
@@ -180,7 +194,15 @@ class _DashboardScreenState extends State<DashboardScreen>
               ok: _target.installed && _target.allowlisted,
               busy: _loading,
             ),
-            const SizedBox(height: 20),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _openSetup,
+                icon: const Icon(Icons.verified_user_outlined, size: 18),
+                label: const Text('Permissions setup'),
+              ),
+            ),
+            const SizedBox(height: 12),
 
             FilledButton.icon(
               onPressed: _openLoginAutomation,
@@ -270,6 +292,15 @@ class _DashboardScreenState extends State<DashboardScreen>
 
             const SizedBox(height: 24),
             _SafetyCard(allowedPackages: _config.allowedPackages),
+            const SizedBox(height: 12),
+            Center(
+              child: Text(
+                'Version ${BuildInfo.fullVersion} · built ${BuildInfo.buildDateTime}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
             const SizedBox(height: 24),
           ],
         ),
@@ -302,7 +333,7 @@ class _SetupCard extends StatelessWidget {
     final theme = Theme.of(context);
     final steps = <String>[
       if (!targetInstalled)
-        'Install the UAT build of $targetPackage on this device.',
+        'Install $targetPackage on this device.',
       if (!accessibilityReady)
         'Enable Automation Tool under Settings > Accessibility > '
             'Installed apps.',
@@ -370,8 +401,8 @@ class _SafetyCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Internal UAT tool. It automates one thing: a successful login on '
-              'the allowlisted test build, using dedicated test credentials.\n\n'
+              'Internal test tool. It logs in to the allowlisted apps and checks '
+              'their screens, using dedicated test credentials.\n\n'
               'Allowlist: ${allowedPackages.join(", ")}\n\n'
               'It cannot place orders, buy, sell or move funds. It does not read '
               'SMS or notifications, so the OTP must be typed in by hand. It does '

@@ -26,7 +26,10 @@ import com.mobileautomation.tool.AutomationEngine.WaitOutcome
  * to tapping a submit button. Submitting an OTP twice would burn the operator's
  * one-time code.
  */
-class LoginAutomationFlow(private val engine: AutomationEngine) {
+class LoginAutomationFlow(
+    private val engine: AutomationEngine,
+    private val modules: ModuleSelection = ModuleSelection(AppModules.ASHIKA, null),
+) {
 
     private val steps = listOf(
         AutomationStepResult("target_app_installed", "Target application installed"),
@@ -125,6 +128,8 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             startedAtMs = System.currentTimeMillis(),
             steps = steps,
         )
+        result.modulesRun = modules.onLabels
+        result.modulesSkipped = modules.offLabels
 
         engine.emit(
             "automation_started",
@@ -253,13 +258,13 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
                 mpinScreenIds.contains(entry.identifier) -> return abort(
                     clientIdScreen,
                     "The app opened straight onto the MPIN screen, so it still has a stored " +
-                        "session for a previous login. Force stop the UAT app (or switch account) " +
+                        "session for a previous login. Force stop the app (or switch account) " +
                         "and start the run again.",
                 )
                 else -> return abort(
                     clientIdScreen,
                     "The app opened already logged in ('${entry.identifier}' is displayed). " +
-                        "Log out or force stop the UAT app and start the run again.",
+                        "Log out or force stop the app and start the run again.",
                 )
             }
             is WaitOutcome.Cancelled -> return stopped(clientIdScreen)
@@ -538,6 +543,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             pass(disclosureAccepted, "confirmed across $disclosureTaps page(s)")
         }
 
+        if (!moduleOn("watchlist")) skipModule("watchlist") else {
         // 21 — Watchlist tab opened ---------------------------------------------
         val watchlistTabOpened = step("watchlist_tab_opened")
         begin(watchlistTabOpened)
@@ -850,6 +856,8 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         }
         pass(detailsOpened, "opened '$openedScreen' from the first row and returned to the watchlist")
 
+        }
+
         // 41–58 — Every bottom tab and inner tab finishes loading ------------------------
         // Read-only: only bottom tabs, inner tab headers and scrolling are
         // touched — never a row, nor a buy, sell, exit or order button. A tab
@@ -895,11 +903,24 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
             ),
         )
         for (section in sections) {
+            if (!moduleOn(section.name.lowercase())) {
+                section.tabs.forEach { skipTab(it, modules.skipNote(section.name.lowercase())) }
+                continue
+            }
             checkSection(section)?.let { return it }
         }
 
         // 59 — Profile opened ---------------------------------------------------------------
         // Orders is on screen now, and its header carries the profile icon.
+        // Profile and Logout are not modules: Logout is reached from Profile. With
+        // Orders switched off its header is not on screen yet, so open it first.
+        if (!moduleOn("orders")) {
+            engine.tapAndConfirm(
+                Ids.BOTTOMNAV_ORDER_TAB,
+                listOf(Ids.ORDERBOOK_SCREEN),
+                AutomationConfig.Timeouts.SCREEN_CHANGE,
+            )
+        }
         val profileOpened = step("profile_opened")
         begin(profileOpened)
         val profileOutcome = engine.tapAndConfirm(
@@ -1104,6 +1125,19 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
         return null
     }
 
+    private fun moduleOn(id: String): Boolean = modules.isOn(id)
+
+    /** Marks the steps of a module the operator switched off as skipped. */
+    private fun skipModule(id: String) {
+        for (stepId in modules.stepIds(id)) {
+            val pending = step(stepId)
+            if (pending.status == StepStatus.PENDING) {
+                pending.skip(modules.skipNote(id))
+                emitStep(pending)
+            }
+        }
+    }
+
     private fun skipTab(tab: TabCheck, reason: String) {
         val step = step(tab.stepId)
         step.skip(reason)
@@ -1144,6 +1178,9 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
 
         val check = checkPageLoads(tab.budgetMs)
         if (engine.cancelled) return stopped(step)
+        StepApi.recordLoad(
+            step, check.settled, check.elapsedMs, check.pages, check.empty, check.errors, check.stillLoading,
+        )
         val seconds = "%.1f".format(check.elapsedMs / 1000.0)
         val where = if (check.pages > 1) " across ${check.pages} screenfuls" else ""
         val empties = if (check.empty > 0) "; ${check.empty} section(s) show no data" else ""
@@ -1339,6 +1376,7 @@ class LoginAutomationFlow(private val engine: AutomationEngine) {
     }
 
     private fun complete(): AutomationRunResult {
+        StepApi.finalize(steps)
         result.finishedAtMs = System.currentTimeMillis()
         return result
     }
