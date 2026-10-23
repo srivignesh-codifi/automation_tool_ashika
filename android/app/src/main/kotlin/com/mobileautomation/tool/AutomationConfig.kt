@@ -370,25 +370,6 @@ object AutomationConfig {
         const val PERMISSION_ALLOW_BUTTON = "permission_allow_button"
     }
 
-    /**
-     * System Settings labels for clearing the target app's data. Settings has
-     * no stable ids across OEMs, so these are matched by visible text, in
-     * order. Add a device's label here if its Settings words it differently.
-     */
-    object SettingsTexts {
-        /** App info entry that opens the storage page (Pixel/AOSP, Samsung, others). */
-        val STORAGE_ENTRY = listOf("Storage & cache", "Storage and cache", "Storage", "Storage usage")
-
-        /** Wipes all app data. MIUI shows "Clear data" directly on App info. */
-        val CLEAR_STORAGE = listOf("Clear storage", "Clear data", "Clear all data", "CLEAR STORAGE", "CLEAR DATA")
-
-        /**
-         * Confirmation dialog buttons. MIUI first asks which data to clear
-         * ("Clear all data") and then confirms with "OK".
-         */
-        val CONFIRM_CLEAR = listOf("Delete", "Clear all data", "OK", "Clear", "Yes", "DELETE")
-    }
-
     /** Fallback visible-text labels, used only when an identifier is missing. */
     object Texts {
         val LOGIN = listOf("Login", "LOGIN", "Log In", "LOG IN")

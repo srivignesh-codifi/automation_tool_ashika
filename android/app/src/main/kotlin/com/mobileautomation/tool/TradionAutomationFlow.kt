@@ -211,12 +211,24 @@ class TradionAutomationFlow(
         // notification permission; the engine answers that prompt with Allow.
         val dataCleared = step("target_app_data_cleared")
         begin(dataCleared)
-        val clearOutcome = engine.clearTargetAppData()
-        if (!clearOutcome.ok) {
-            if (engine.cancelled) return stopped(dataCleared)
-            return abort(dataCleared, "Could not clear the target app's data: ${clearOutcome.detail}")
+        if (!engine.clearAppData) {
+            skip(
+                dataCleared,
+                "\"Clear the app's data first\" was turned off, so the app starts from whatever state it is in",
+            )
+        } else {
+            val clearOutcome = engine.clearTargetAppData()
+            if (!clearOutcome.ok) {
+                if (engine.cancelled) return stopped(dataCleared)
+                return abort(
+                    dataCleared,
+                    "Could not clear the target app's data: ${clearOutcome.detail} If this phone's Settings " +
+                        "cannot be driven, turn off \"Clear the app's data first\" on the run form, clear the " +
+                        "app's data and log out by hand, and run again.",
+                )
+            }
+            pass(dataCleared, clearOutcome.detail)
         }
-        pass(dataCleared, clearOutcome.detail)
 
         // 4 — Target application launched -------------------------------------
         val launched = step("target_app_launched")

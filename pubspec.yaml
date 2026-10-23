@@ -5,7 +5,7 @@ description: >
   checklist report. Runs entirely on the device: no Appium, no ADB, no host
   machine, no automation server.
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.8.0

@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
-import com.mobileautomation.tool.AutomationConfig.SettingsTexts
 import com.mobileautomation.tool.AutomationConfig.SystemIds
 import java.io.File
 import java.util.UUID
@@ -46,6 +45,8 @@ class AutomationEngine private constructor(
         val recordScreen: Boolean = false,
         /** Ids of the modules to run; null runs all of them. See [AppModules]. */
         val modules: List<String>? = null,
+        /** Clear the target app's data first. Off for a phone whose Settings cannot be driven. */
+        val clearData: Boolean = true,
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
@@ -103,6 +104,7 @@ class AutomationEngine private constructor(
                 targetPackage = request.targetPackage,
                 sink = sink,
             )
+            engine.clearAppData = request.clearData
             active = engine
 
             val thread = Thread({
@@ -225,6 +227,10 @@ class AutomationEngine private constructor(
     private var everSawTarget: Boolean = false
 
     val runId: String = UUID.randomUUID().toString()
+
+    /** False when the operator turned off "Clear the app's data first". */
+    @Volatile
+    var clearAppData: Boolean = true
 
     val launcher = TargetAppLauncher(appContext)
 
@@ -372,46 +378,67 @@ class AutomationEngine private constructor(
             return ActionOutcome(false, "could not open the target app's App info: ${t.javaClass.simpleName}")
         }
 
-        // MIUI shows the clear button on App info itself; everyone else nests it
-        // one level down under a Storage entry.
-        var clear = waitForSettingsText(SettingsTexts.STORAGE_ENTRY + SettingsTexts.CLEAR_STORAGE, scroll = true)
-            ?: return ActionOutcome(false, settingsMiss("the Storage entry on App info"))
-        if (clear.text?.toString() !in SettingsTexts.CLEAR_STORAGE) {
+        // Some phones (MIUI, for one) put the clear button on App info itself; others
+        // nest it one level down under a Storage entry. Whichever is there is used,
+        // the button first. What was found is remembered, not re-read from its text:
+        // a button spelled "Clear Data", or exposed only as a content description,
+        // must not be mistaken for the Storage row and tapped as one.
+        val first = waitForSettings(scroll = true) { root ->
+            clearButton(root)?.let { Found(it, isClear = true) }
+                ?: storageEntry(root)?.let { Found(it, isClear = false) }
+        } ?: return ActionOutcome(false, settingsMiss("a Clear data button or a Storage entry on App info"))
+
+        var clear = first.node
+        if (!first.isClear) {
             if (!clickResolved(clear)) return ActionOutcome(false, "could not tap the Storage entry on App info")
             if (!sleep(AutomationConfig.Timeouts.SETTLE)) return ActionOutcome(false, "cancelled")
-            clear = waitForSettingsText(SettingsTexts.CLEAR_STORAGE, scroll = true)
-                ?: return ActionOutcome(false, settingsMiss("the Clear storage button"))
+            clear = waitForSettings(scroll = true) { root -> clearButton(root) }
+                ?: return ActionOutcome(false, settingsMiss("the Clear data button on the Storage page"))
         }
         if (isDisabled(clear)) {
             return ActionOutcome(true, "Clear storage is disabled in Settings: the app already holds no data")
         }
-        if (!clickResolved(clear)) return ActionOutcome(false, "could not tap Clear storage")
+        if (!clickResolved(clear)) return ActionOutcome(false, "could not tap Clear data")
 
         // Usually one confirmation dialog; MIUI asks which data first, then OK.
         var confirmations = 0
         while (confirmations < 2) {
             val budget = if (confirmations == 0) AutomationConfig.Timeouts.SETTINGS_SCREEN else 1_500L
-            val confirm = waitForSettingsText(SettingsTexts.CONFIRM_CLEAR, scroll = false, timeoutMs = budget) ?: break
+            val confirm = waitForSettings(scroll = false, timeoutMs = budget) { root -> confirmButton(root) } ?: break
             if (!clickResolved(confirm)) break
             confirmations++
             if (!sleep(AutomationConfig.Timeouts.SETTLE)) return ActionOutcome(false, "cancelled")
         }
         if (cancelled) return ActionOutcome(false, "cancelled")
         if (confirmations == 0) return ActionOutcome(false, settingsMiss("the clear-data confirmation button"))
-        return ActionOutcome(true, "cleared via App info > Storage > Clear storage and confirmed")
+        return ActionOutcome(true, "cleared via App info > Storage > Clear data and confirmed")
     }
 
+    private class Found(val node: AccessibilityNodeInfo, val isClear: Boolean)
+
+    private fun labelled(node: AccessibilityNodeInfo, matches: (CharSequence?) -> Boolean): Boolean =
+        matches(node.text) || matches(node.contentDescription)
+
+    private fun clearButton(root: AccessibilityNodeInfo) =
+        AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isClearData) }
+
+    private fun storageEntry(root: AccessibilityNodeInfo) =
+        AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isStorageEntry) }
+
+    private fun confirmButton(root: AccessibilityNodeInfo) =
+        AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isConfirm) }
+
     /**
-     * Polls the Settings window for the first of [candidates]. With [scroll],
-     * scrolls the page forward after a few misses in case the entry sits below
-     * the fold — not straight away, so a page still loading is not scrolled
-     * past its top.
+     * Polls the Settings window with [find] until it returns something. With
+     * [scroll], scrolls the page forward after a few misses in case the entry
+     * sits below the fold; not straight away, so a page still loading is not
+     * scrolled past its top.
      */
-    private fun waitForSettingsText(
-        candidates: List<String>,
+    private fun <T : Any> waitForSettings(
         scroll: Boolean,
         timeoutMs: Long = AutomationConfig.Timeouts.SETTINGS_SCREEN,
-    ): AccessibilityNodeInfo? {
+        find: (AccessibilityNodeInfo) -> T?,
+    ): T? {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         var misses = 0
         var scrolls = 0
@@ -419,7 +446,7 @@ class AutomationEngine private constructor(
             if (cancelled) return null
             val root = service.rootNode()
             if (root != null && root.packageName?.toString() in AutomationConfig.SETTINGS_PACKAGES) {
-                AccessibilityNodeFinder.byText(root, candidates)?.let { return it }
+                find(root)?.let { return it }
                 if (scroll && ++misses % 4 == 0 && scrolls < 3) {
                     val scrolled = try {
                         AccessibilityNodeFinder.firstScrollable(root)
@@ -435,16 +462,26 @@ class AutomationEngine private constructor(
         }
     }
 
+    /**
+     * Why a Settings control was not found, with what the screen did show: the
+     * package in front and its labels (Settings pages hold no secret), so the
+     * next report says which wording to teach [SettingsMatch].
+     */
     private fun settingsMiss(what: String): String {
-        val front = service.rootNode()?.packageName?.toString()
+        val root = service.rootNode()
+        val front = root?.packageName?.toString()
         return if (front !in AutomationConfig.SETTINGS_PACKAGES) {
             "Settings did not come to the front (the foreground window belongs to ${front ?: "nothing readable"}). " +
                 "If Settings opened, reinstall the tool or toggle its accessibility service off and on so " +
-                "it picks up access to Settings."
+                "it picks up access to Settings, and check that this phone's Settings package is listed in " +
+                "accessibility_service_config.xml."
         } else {
-            "$what was not found in Settings within ${AutomationConfig.Timeouts.SETTINGS_SCREEN / 1000} " +
-                "seconds. Settings labels differ by phone make; add this device's wording to " +
-                "AutomationConfig.SettingsTexts."
+            val texts = AccessibilityNodeFinder.visibleTexts(root, 30)
+            "$what was not found in Settings within ${AutomationConfig.Timeouts.SETTINGS_SCREEN / 1000} seconds. " +
+                "Settings package: $front. " +
+                (if (texts.isEmpty()) "No text was readable on that screen. " else "It showed: ${texts.joinToString(" | ")}. ") +
+                "If the wording is not recognised, add it to SettingsMatch; or turn off " +
+                "\"Clear the app's data first\" on the run form and clear the app by hand."
         }
     }
 

@@ -930,9 +930,14 @@ This is an internal UAT tool for a financial trading application.
   package in code (`AutomationEngine.targetRoot`).
 * **Pre-run reset.** Each run first opens the target's App info and taps
   Storage > Clear storage > Delete, so every run starts from a fresh install
-  state. Settings labels are matched by text (`AutomationConfig.SettingsTexts`);
-  add a device's wording there if its Settings phrases them differently. After
-  launch, the "Allow … to send you notifications?" prompt is answered with
+  state. The Settings controls are recognised by meaning (`SettingsMatch.kt`): a
+  Clear button is any short label with "clear" and "data" or "storage" but not
+  "cache" ("Clear data", "Clear Data", "CLEAR ALL DATA", "Clear storage"), a Storage
+  entry any short label with "storage" but not "clear"; on App info the Clear button
+  is used if it is there (MIUI), otherwise the Storage entry is opened first. If a
+  phone still defeats it, the failure lists the Settings package and the labels it
+  showed, and **Clear the app's data first** on the run form can be turned off (clear
+  the app and log out by hand, then run). After launch, the "Allow … to send you notifications?" prompt is answered with
   Allow; other permission prompts are left alone.
 * **No order, trade or funds capability.** On Portfolio and Orders the tool
   only selects tabs and scrolls; it never taps a row or an action button. There

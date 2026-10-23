@@ -381,6 +381,7 @@ class AutomationService {
     String password = '',
     bool recordScreen = false,
     List<String>? modules,
+    bool clearData = true,
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
@@ -390,6 +391,7 @@ class AutomationService {
       'password': password,
       'recordScreen': recordScreen,
       'modules': modules,
+      'clearData': clearData,
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;

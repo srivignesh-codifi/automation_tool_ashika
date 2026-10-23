@@ -50,6 +50,10 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   /// Record the screen for the whole run (asks Android for permission first).
   bool _recordScreen = true;
 
+  /// Clear the app's data before the run (the default). Off for a phone whose
+  /// Settings cannot be driven.
+  bool _clearData = true;
+
   /// The modules this run covers. Every module starts selected.
   Set<String> _modules = <String>{};
   bool _busy = true;
@@ -275,6 +279,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             mpin: app.secret == TargetSecret.mpin ? secret : '',
             password: app.secret == TargetSecret.password ? secret : '',
             recordScreen: recordScreen,
+            clearData: _clearData,
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules
@@ -511,6 +516,19 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               subtitle: const Text(
                 'Stored in the Android Keystore. Only useful for the OTP if '
                 'your test account accepts the same one each time.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _clearData,
+              onChanged: _running
+                  ? null
+                  : (value) => setState(() => _clearData = value),
+              title: const Text("Clear the app's data first"),
+              subtitle: const Text(
+                'Gives every run a fresh start through Settings. Turn it off only '
+                "if this phone's Settings cannot be driven; then clear the app's "
+                'data and log out by hand before you start.',
               ),
             ),
             SwitchListTile(

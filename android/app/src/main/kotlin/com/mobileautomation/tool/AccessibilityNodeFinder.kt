@@ -57,6 +57,12 @@ object AccessibilityNodeFinder {
         return null
     }
 
+    /** The first node, breadth first, for which [predicate] holds. */
+    fun firstWhere(
+        root: AccessibilityNodeInfo?,
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? = search(root, predicate)
+
     private fun matchesIdentifier(node: AccessibilityNodeInfo, identifier: String): Boolean {
         val actual = node.viewIdResourceName ?: return false
         if (actual.isEmpty()) return false
