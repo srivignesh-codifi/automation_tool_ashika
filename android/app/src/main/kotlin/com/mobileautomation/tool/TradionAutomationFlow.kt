@@ -147,6 +147,12 @@ class TradionAutomationFlow(
     /** "Login already finished": Home, Watchlist, or the disclosure that covers them. */
     private val postLoginIds = listOf(T.HOME_SCREEN, T.WATCHLIST_SCREEN, T.RISK_DISCLOSURE_DIALOG)
 
+    /** The bottom bar: on screen means signed in, whichever tab is showing. */
+    private val bottomNavIds = listOf(
+        T.BOTTOMNAV_WATCHLIST_TAB, T.BOTTOMNAV_ORDER_TAB, T.BOTTOMNAV_DASHBOARD_TAB,
+        T.BOTTOMNAV_PORTFOLIO_TAB, T.BOTTOMNAV_PROFILE_TAB,
+    )
+
     /**
      * Every possible header tab index of each strip. A tab scrolled out of view
      * is not in the accessibility tree at all, so "a tab of this strip is
@@ -212,28 +218,35 @@ class TradionAutomationFlow(
         val dataCleared = step("target_app_data_cleared")
         begin(dataCleared)
         if (!engine.clearAppData) {
+            resetFromInside = true
             skip(
                 dataCleared,
-                "\"Clear the app's data first\" was turned off, so the app starts from whatever state it is in",
+                "\"Clear the app's data first\" was turned off; if the app opens signed in or on a remembered " +
+                    "user, it is reset from inside (log out, Switch Account)",
             )
         } else {
             val clearOutcome = engine.clearTargetAppData()
             if (!clearOutcome.ok) {
                 if (engine.cancelled) return stopped(dataCleared)
-                return abort(
+                // Newer Android can keep Settings' action buttons from a service that is not an
+                // accessibility tool, so the Clear button may never be reachable. The run goes on
+                // and resets the app from inside instead, rather than ending here.
+                resetFromInside = true
+                skip(
                     dataCleared,
-                    "Could not clear the target app's data: ${clearOutcome.detail} If this phone's Settings " +
-                        "cannot be driven, turn off \"Clear the app's data first\" on the run form, clear the " +
-                        "app's data and log out by hand, and run again.",
+                    "Settings could not be driven on this phone, so the data was not cleared; if the app opens " +
+                        "signed in or on a remembered user it is reset from inside (log out, Switch Account). " +
+                        "Reason: ${clearOutcome.detail}",
                 )
+            } else {
+                pass(dataCleared, clearOutcome.detail)
             }
-            pass(dataCleared, clearOutcome.detail)
         }
 
         // 4 — Target application launched -------------------------------------
         val launched = step("target_app_launched")
         begin(launched)
-        engine.launcher.launch(engine.targetPackage)?.let { return abort(launched, it) }
+        engine.launcher.launch(engine.targetPackage, freshTask = true)?.let { return abort(launched, it) }
         if (!engine.waitForTargetWindow(Timeouts.APP_LAUNCH)) {
             if (engine.cancelled) return stopped(launched)
             return abort(
@@ -250,7 +263,7 @@ class TradionAutomationFlow(
         val userIdScreen = step("user_id_screen_displayed")
         begin(userIdScreen)
         val entry = engine.waitForAny(
-            userIdScreenIds + passwordScreenIds + otpScreenIds + postLoginIds,
+            userIdScreenIds + passwordScreenIds + otpScreenIds + postLoginIds + bottomNavIds,
             Timeouts.USER_ID_SCREEN,
         )
         when (entry) {
@@ -264,21 +277,35 @@ class TradionAutomationFlow(
                         ""
                     },
                 )
-                passwordScreenIds.contains(entry.identifier) -> return abort(
-                    userIdScreen,
-                    "The app opened straight onto the password screen, so it still remembers a " +
-                        "previous user even though its data was cleared. Use Switch account in the " +
-                        "app (or clear its storage by hand) and start the run again.",
-                )
+                passwordScreenIds.contains(entry.identifier) -> if (resetFromInside) {
+                    val problem = switchAccountFromInside()
+                    if (engine.cancelled) return stopped(userIdScreen)
+                    if (problem != null) return abort(userIdScreen, problem)
+                    pass(userIdScreen, "the app remembered a user; Switch Account took it back to the User ID screen")
+                } else {
+                    return abort(
+                        userIdScreen,
+                        "The app opened straight onto the password screen, so it still remembers a " +
+                            "previous user even though its data was cleared. Use Switch account in the " +
+                            "app (or clear its storage by hand) and start the run again.",
+                    )
+                }
                 otpScreenIds.contains(entry.identifier) -> return abort(
                     userIdScreen,
                     "The app opened straight onto the OTP screen, so a login was already under way.",
                 )
-                else -> return abort(
-                    userIdScreen,
-                    "The app opened already logged in ('${entry.identifier}' is displayed). " +
-                        "Log out or clear the app's storage and start the run again.",
-                )
+                else -> if (resetFromInside) {
+                    val problem = logOutFromInside()
+                    if (engine.cancelled) return stopped(userIdScreen)
+                    if (problem != null) return abort(userIdScreen, problem)
+                    pass(userIdScreen, "the app opened signed in; it was logged out from inside, then reached the User ID screen")
+                } else {
+                    return abort(
+                        userIdScreen,
+                        "The app opened already logged in ('${entry.identifier}' is displayed). " +
+                            "Log out or clear the app's storage and start the run again.",
+                    )
+                }
             }
             is WaitOutcome.Cancelled -> return stopped(userIdScreen)
             else -> return abort(
@@ -1099,6 +1126,46 @@ class TradionAutomationFlow(
         backOnWatchlist()
         countAfter = readScripCount() ?: countAfter
         return EditOutcome(countAfter, persistedDeletes)
+    }
+
+    /**
+     * True when the app's data was not cleared (switched off, or Settings could not be driven), so a
+     * remembered user or a signed-in session is undone from inside the app instead.
+     */
+    private var resetFromInside = false
+
+    /** On the password screen of a remembered user: Switch Account, back to the User ID screen. */
+    private fun switchAccountFromInside(): String? {
+        val switch = engine.tapAndConfirm(T.PASSWORD_SWITCH_ACCOUNT_LINK, userIdScreenIds, Timeouts.SCREEN_CHANGE)
+        return if (switch.ok) null else "Switch Account could not be used to reset the app: ${switch.detail}"
+    }
+
+    /** Signed in: Profile > Account > Logout > confirm, then Switch Account if a user is remembered. */
+    private fun logOutFromInside(): String? {
+        // A risk disclosure can sit over Home first.
+        if (engine.isPresent(T.RISK_DISCLOSURE_DIALOG)) {
+            engine.tapUpTo(T.DISCLOSURE_UNDERSTAND_BUTTON, Texts.DISCLOSURE_UNDERSTAND, maxTimes = 6, settleMs = 700L)
+            engine.waitForGone(T.RISK_DISCLOSURE_DIALOG, Timeouts.SCREEN_CHANGE)
+        }
+        val profile = engine.tapAndConfirm(T.BOTTOMNAV_PROFILE_TAB, listOf(T.PROFILE_SCREEN), Timeouts.SCREEN_CHANGE)
+        if (!profile.ok) return "The app opened signed in and Profile could not be opened to log out: ${profile.detail}"
+        engine.tap(T.PROFILE_TAB_ACCOUNT)
+        if (!engine.sleep(Timeouts.SETTLE)) return "cancelled"
+        var scrolls = 0
+        while (!engine.isPresent(T.PROFILE_LOGOUT_BUTTON) && scrolls < 10 && engine.scrollPage(forward = true)) {
+            scrolls++
+            if (!engine.sleep(Timeouts.SETTLE)) return "cancelled"
+        }
+        val ask = engine.tapAndConfirm(T.PROFILE_LOGOUT_BUTTON, listOf(T.LOGOUT_CONFIRM_BUTTON), Timeouts.SCREEN_CHANGE)
+        if (!ask.ok) return "The app opened signed in and the logout could not be started: ${ask.detail}"
+        val confirm = engine.tapAndConfirm(
+            T.LOGOUT_CONFIRM_BUTTON,
+            userIdScreenIds + passwordScreenIds,
+            Timeouts.LOGOUT,
+            retryAfterMs = Timeouts.LOGOUT,
+        )
+        if (!confirm.ok) return "Logout was confirmed but the login screen never appeared: ${confirm.detail}"
+        return if (engine.isPresent(T.PASSWORD_SCREEN)) switchAccountFromInside() else null
     }
 
     private fun moduleOn(id: String): Boolean = modules.isOn(id)

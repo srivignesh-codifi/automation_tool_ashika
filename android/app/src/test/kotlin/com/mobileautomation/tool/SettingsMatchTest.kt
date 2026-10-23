@@ -57,4 +57,12 @@ class SettingsMatchTest {
         assertEquals("clear data", SettingsMatch.normalise("  Clear\n\tDATA  "))
         assertEquals("", SettingsMatch.normalise(null))
     }
+
+    @Test
+    fun overflowButtonIsRecognised() {
+        listOf("More options", "more options", "More", "Overflow menu", "Menu", "More actions")
+            .forEach { assertTrue("'$it' is an overflow button", SettingsMatch.isMoreOptions(it)) }
+        listOf("Clear data", "Storage", "", "Moreover the app is large")
+            .forEach { assertFalse("'$it' is not an overflow button", SettingsMatch.isMoreOptions(it)) }
+    }
 }

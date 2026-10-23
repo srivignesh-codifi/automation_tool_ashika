@@ -66,7 +66,7 @@ class TargetAppLauncher(private val context: Context) {
      * Brings the target app to the foreground using its declared launcher
      * activity. Returns null on success or a human readable reason on failure.
      */
-    fun launch(packageName: String): String? {
+    fun launch(packageName: String, freshTask: Boolean = false): String? {
         if (!AutomationConfig.ALLOWED_PACKAGES.contains(packageName)) {
             return "Package $packageName is not in the automation allowlist."
         }
@@ -80,6 +80,10 @@ class TargetAppLauncher(private val context: Context) {
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
         )
+        // Without this, launching an app that is already running only brings it forward on
+        // whatever screen it was left on, however deep. With it the app starts again from its
+        // launcher screen, which is what a run needs when its data could not be cleared.
+        if (freshTask) intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
         intent.putExtra(AutomationConfig.AUTOMATION_RUN_EXTRA, true)
         return try {
             context.startActivity(intent)

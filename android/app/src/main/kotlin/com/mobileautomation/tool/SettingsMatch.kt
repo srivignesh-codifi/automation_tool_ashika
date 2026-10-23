@@ -39,6 +39,16 @@ object SettingsMatch {
             t.contains("storage") && !t.contains("clear")
     }
 
+    /**
+     * The overflow ("three dots") button of a screen, for phones that keep Clear
+     * data in a menu. Its only label is usually a content description.
+     */
+    fun isMoreOptions(raw: CharSequence?): Boolean {
+        val t = normalise(raw)
+        return t in setOf("more", "more options", "more actions", "more menu", "overflow menu", "menu", "options") ||
+            t.startsWith("more option")
+    }
+
     private val CONFIRM = setOf(
         "delete", "delete all", "delete data", "delete all data", "ok", "clear", "clear data",
         "clear all data", "clear storage", "yes", "confirm",

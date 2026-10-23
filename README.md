@@ -935,9 +935,16 @@ This is an internal UAT tool for a financial trading application.
   "cache" ("Clear data", "Clear Data", "CLEAR ALL DATA", "Clear storage"), a Storage
   entry any short label with "storage" but not "clear"; on App info the Clear button
   is used if it is there (MIUI), otherwise the Storage entry is opened first. If a
-  phone still defeats it, the failure lists the Settings package and the labels it
-  showed, and **Clear the app's data first** on the run form can be turned off (clear
-  the app and log out by hand, then run). After launch, the "Allow … to send you notifications?" prompt is answered with
+  phone still defeats it, the failure lists the Settings package and every Settings
+  window's labels. **Tradion then carries on instead of stopping**: step 3 is marked
+  skipped with the reason, and if the app opens on a remembered user the tool presses
+  Switch Account, and if it opens signed in it logs out from inside (Profile > Account >
+  Logout), so the run still starts at the User ID screen. (Ashika has no such fallback
+  yet; there, turn off **Clear the app's data first** and clear the app by hand.) Why
+  Settings can fail on newer phones: since Android 14 an app can hide views from a
+  service not declared an accessibility tool (`android:isAccessibilityTool`), and
+  Android 15+ Settings keeps its Uninstall / Force stop / Clear storage buttons from
+  such services; this tool does not declare itself one (see HANDOFF 4e). After launch, the "Allow … to send you notifications?" prompt is answered with
   Allow; other permission prompts are left alone.
 * **No order, trade or funds capability.** On Portfolio and Orders the tool
   only selects tabs and scrolls; it never taps a row or an action button. There

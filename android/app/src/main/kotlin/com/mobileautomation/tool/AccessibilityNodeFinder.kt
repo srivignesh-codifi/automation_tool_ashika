@@ -57,6 +57,41 @@ object AccessibilityNodeFinder {
         return null
     }
 
+    /**
+     * Every label on a screen, for a failure message: a node's text, or its
+     * content description as `desc:...`, with `*` after anything tappable. A
+     * button that has only an icon shows up as a bare `desc:...*`, or as `?*`
+     * when it has no label at all. Editable and password nodes are skipped.
+     * For Settings pages, which hold no secret; never call it on a login screen.
+     */
+    fun describeLabels(root: AccessibilityNodeInfo?, limit: Int = 40): List<String> {
+        if (root == null) return emptyList()
+        val out = ArrayList<String>()
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 25 || out.size >= limit) return
+            if (!node.isEditable && !node.isPassword) {
+                val text = node.text?.toString()?.trim().orEmpty()
+                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                val mark = if (node.isClickable) "*" else ""
+                when {
+                    text.isNotEmpty() && text.length <= 60 -> out.add(text + mark)
+                    desc.isNotEmpty() && desc.length <= 60 -> out.add("desc:$desc$mark")
+                    node.isClickable && node.childCount == 0 -> out.add("?*")
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = try {
+                    node.getChild(i)
+                } catch (_: Throwable) {
+                    null
+                } ?: continue
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return out
+    }
+
     /** The first node, breadth first, for which [predicate] holds. */
     fun firstWhere(
         root: AccessibilityNodeInfo?,

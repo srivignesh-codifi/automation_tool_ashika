@@ -204,7 +204,7 @@ class LoginAutomationFlow(
         // 4 — Target application launched -------------------------------------
         val launched = step("target_app_launched")
         begin(launched)
-        engine.launcher.launch(engine.targetPackage)?.let { return abort(launched, it) }
+        engine.launcher.launch(engine.targetPackage, freshTask = true)?.let { return abort(launched, it) }
         if (!engine.waitForTargetWindow(AutomationConfig.Timeouts.APP_LAUNCH)) {
             if (engine.cancelled) return stopped(launched)
             return abort(

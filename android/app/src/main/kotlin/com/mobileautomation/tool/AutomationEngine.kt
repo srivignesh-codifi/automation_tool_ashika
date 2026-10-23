@@ -392,7 +392,9 @@ class AutomationEngine private constructor(
         if (!first.isClear) {
             if (!clickResolved(clear)) return ActionOutcome(false, "could not tap the Storage entry on App info")
             if (!sleep(AutomationConfig.Timeouts.SETTLE)) return ActionOutcome(false, "cancelled")
-            clear = waitForSettings(scroll = true) { root -> clearButton(root) }
+            // The page can keep its actions in a menu instead of on the page itself.
+            clear = waitForSettings(scroll = true, timeoutMs = 6_000L) { root -> clearButton(root) }
+                ?: openMenuForClear()
                 ?: return ActionOutcome(false, settingsMiss("the Clear data button on the Storage page"))
         }
         if (isDisabled(clear)) {
@@ -425,6 +427,17 @@ class AutomationEngine private constructor(
     private fun storageEntry(root: AccessibilityNodeInfo) =
         AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isStorageEntry) }
 
+    private fun moreOptions(root: AccessibilityNodeInfo) =
+        AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isMoreOptions) }
+
+    /** Taps the page's overflow button, if it has one, and looks for Clear data in the menu. */
+    private fun openMenuForClear(): AccessibilityNodeInfo? {
+        val more = waitForSettings(scroll = false, timeoutMs = 1_500L) { root -> moreOptions(root) } ?: return null
+        if (!clickResolved(more)) return null
+        if (!sleep(AutomationConfig.Timeouts.SETTLE)) return null
+        return waitForSettings(scroll = false, timeoutMs = 4_000L) { root -> clearButton(root) }
+    }
+
     private fun confirmButton(root: AccessibilityNodeInfo) =
         AccessibilityNodeFinder.firstWhere(root) { labelled(it, SettingsMatch::isConfirm) }
 
@@ -444,12 +457,13 @@ class AutomationEngine private constructor(
         var scrolls = 0
         while (true) {
             if (cancelled) return null
-            val root = service.rootNode()
-            if (root != null && root.packageName?.toString() in AutomationConfig.SETTINGS_PACKAGES) {
-                find(root)?.let { return it }
+            val active = service.rootNode()
+            val roots = settingsRoots(active)
+            if (roots.isNotEmpty()) {
+                for (root in roots) find(root)?.let { return it }
                 if (scroll && ++misses % 4 == 0 && scrolls < 3) {
                     val scrolled = try {
-                        AccessibilityNodeFinder.firstScrollable(root)
+                        AccessibilityNodeFinder.firstScrollable(active ?: roots.first())
                             ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) == true
                     } catch (_: Throwable) {
                         false
@@ -460,6 +474,14 @@ class AutomationEngine private constructor(
             if (SystemClock.elapsedRealtime() >= deadline) return null
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return null
         }
+    }
+
+    /** Every on-screen Settings window: the active one first, then any popup or bar of its own. */
+    private fun settingsRoots(active: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
+        val inSettings = AutomationConfig.SETTINGS_PACKAGES
+        val all = service.windowRootsOf(inSettings)
+        val first = active?.takeIf { it.packageName?.toString() in inSettings }
+        return if (first == null) all else listOf(first) + all.filter { it != first }
     }
 
     /**
@@ -476,12 +498,22 @@ class AutomationEngine private constructor(
                 "it picks up access to Settings, and check that this phone's Settings package is listed in " +
                 "accessibility_service_config.xml."
         } else {
-            val texts = AccessibilityNodeFinder.visibleTexts(root, 30)
+            // Every Settings window, labels first: a `*` is tappable, `desc:` is an unlabelled
+            // button's description and `?*` a tappable thing with no label at all.
+            val windows = settingsRoots(root).map { AccessibilityNodeFinder.describeLabels(it, 40) }
+            val shown = windows.withIndex().joinToString(" || ") { (i, labels) ->
+                "window ${i + 1}: " + labels.joinToString(" | ").ifEmpty { "nothing readable" }
+            }
             "$what was not found in Settings within ${AutomationConfig.Timeouts.SETTINGS_SCREEN / 1000} seconds. " +
-                "Settings package: $front. " +
-                (if (texts.isEmpty()) "No text was readable on that screen. " else "It showed: ${texts.joinToString(" | ")}. ") +
-                "If the wording is not recognised, add it to SettingsMatch; or turn off " +
-                "\"Clear the app's data first\" on the run form and clear the app by hand."
+                "Settings package: $front. It showed (* = tappable): $shown. " +
+                (if (Build.VERSION.SDK_INT >= 34) {
+                    "On Android 14 and newer an app, Settings included, can hide views from a service that is not " +
+                        "declared an accessibility tool (android:isAccessibilityTool), which would explain action " +
+                        "buttons that are on screen but missing here. "
+                } else {
+                    ""
+                }) +
+                "If the wording is not recognised, add it to SettingsMatch."
         }
     }
 

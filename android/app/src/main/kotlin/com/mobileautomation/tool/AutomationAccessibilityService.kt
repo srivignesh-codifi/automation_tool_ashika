@@ -120,6 +120,17 @@ class AutomationAccessibilityService : AccessibilityService() {
      * not it is the active window. Needed for the permission prompt: it sits on
      * top of the target app while [rootNode] still returns the app.
      */
+    /**
+     * Every on-screen window owned by one of [packages], not only the active
+     * one. A phone may draw a bottom action bar or a popup menu as a window of
+     * its own, which [rootNode] never returns.
+     */
+    fun windowRootsOf(packages: Set<String>): List<AccessibilityNodeInfo> = try {
+        windows.mapNotNull { window -> window.root?.takeIf { it.packageName?.toString() in packages } }
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
     fun windowRootOf(packages: Set<String>): AccessibilityNodeInfo? = try {
         windows.firstNotNullOfOrNull { window ->
             window.root?.takeIf { it.packageName?.toString() in packages }
