@@ -140,6 +140,90 @@ object AccessibilityNodeFinder {
             ?: search(root) { it.contentDescription?.toString().equals(description, true) }
     }
 
+    private val WHITESPACE = Regex("\\s+")
+
+    /** A node's label with every run of whitespace (a line break inside "Strategy\nFinder") as one space. */
+    fun labelOf(node: AccessibilityNodeInfo): String? =
+        (node.text ?: node.contentDescription)?.toString()?.replace(WHITESPACE, " ")?.trim()
+
+    /**
+     * A control whose label contains [part] (case-insensitive), for screens whose controls carry no identifier. A node
+     * that can be clicked is preferred over a plain label; editable nodes are never returned.
+     */
+    fun byTextContaining(root: AccessibilityNodeInfo?, part: String): AccessibilityNodeInfo? {
+        val wanted = part.lowercase().replace(WHITESPACE, " ")
+        fun matches(node: AccessibilityNodeInfo) =
+            !node.isEditable && labelOf(node)?.lowercase()?.contains(wanted) == true
+        return search(root) { matches(it) && resolveClickable(it) != null } ?: search(root) { matches(it) }
+    }
+
+    /**
+     * The nodes that are *the heading itself*: a label that contains [part] and is not much longer than it. A merged
+     * container (a whole page column, a card row) carries a label that contains every heading inside it and covers the
+     * screen, which made the heading's position, and the scroll that was driven by it, wrong (the page went up and down
+     * looking for a "heading" that was the whole page). When no short label matches, every match is returned.
+     */
+    fun headingNodes(root: AccessibilityNodeInfo?, part: String, slack: Int = 30): List<AccessibilityNodeInfo> {
+        val all = allByTextContaining(root, part)
+        val short = all.filter { (labelOf(it)?.length ?: Int.MAX_VALUE) <= part.length + slack }
+        return short.ifEmpty { all }
+    }
+
+    /** Every non-editable node whose label contains [part], in tree order. */
+    fun allByTextContaining(root: AccessibilityNodeInfo?, part: String): List<AccessibilityNodeInfo> {
+        val wanted = part.lowercase().replace(WHITESPACE, " ")
+        val found = mutableListOf<AccessibilityNodeInfo>()
+        search(root) { node ->
+            if (!node.isEditable && labelOf(node)?.lowercase()?.contains(wanted) == true) found += node
+            false
+        }
+        return found
+    }
+
+    /**
+     * The label lines of every node whose vertical centre lies in [top] until [bottom] (screen pixels), in tree order and
+     * without repeats. The tree lists a page's headings apart from the cards under them, so what lies *between* two
+     * headings has to be found by position, not by order. Editable fields are skipped.
+     */
+    fun labelsInBand(
+        root: AccessibilityNodeInfo?,
+        top: Int,
+        bottom: Int,
+        limit: Int = 120,
+        distinct: Boolean = true,
+        maxHeight: Int = Int.MAX_VALUE,
+    ): List<String> {
+        val out = ArrayList<String>()
+        val seen = HashSet<String>()
+        search(root) { node ->
+            if (out.size >= limit) return@search true
+            if (!node.isEditable && !node.isPassword) {
+                val b = android.graphics.Rect()
+                node.getBoundsInScreen(b)
+                // A node taller than [maxHeight] is a page container: its lines have no position of their own.
+                if (b.centerY() in top until bottom && b.height() <= maxHeight) {
+                    (node.text ?: node.contentDescription)?.toString()?.lineSequence()
+                        ?.map { it.trim() }?.filter { it.isNotEmpty() && it.length <= 90 }
+                        // [distinct] false keeps repeats: three "INR 0.00" amounts are three amounts, three "NSE" are three cards.
+                        ?.forEach { if (!distinct || seen.add(it)) out.add(it) }
+                }
+            }
+            false
+        }
+        return out
+    }
+
+    /** An editable field whose hint, label or text contains [part] (case-insensitive). */
+    fun editableLabelled(root: AccessibilityNodeInfo?, part: String): AccessibilityNodeInfo? {
+        val wanted = part.lowercase()
+        return search(root) { node ->
+            isEditableLike(node) && listOfNotNull(
+                node.text?.toString(), node.contentDescription?.toString(),
+                if (android.os.Build.VERSION.SDK_INT >= 26) node.hintText?.toString() else null,
+            ).any { it.lowercase().contains(wanted) }
+        }
+    }
+
     /** Priority 4: visible text, exact match first, then case insensitive equality. */
     fun byText(root: AccessibilityNodeInfo?, candidates: List<String>): AccessibilityNodeInfo? {
         for (candidate in candidates) {

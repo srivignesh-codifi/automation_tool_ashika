@@ -756,8 +756,9 @@ void main() {
     final names = (received!.arguments['entries'] as List)
         .map((e) => (e as Map)['name'])
         .toList();
-    expect(names, hasLength(3));
+    expect(names, hasLength(4));
     expect(names, contains(endsWith('.txt')));
+    expect(names, contains(endsWith('.html')));
     expect(names, contains(endsWith('.mp4')));
     expect(names, contains('screenshots/abcdef12_failed_login.png'));
     expect(run.zipFolder, 'Downloads/Automation Tool Reports');

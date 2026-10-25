@@ -18,26 +18,6 @@ class AppModule(
 
 object AppModules {
 
-    /** Every Tradion Dashboard step except the two tab loads, in run order. */
-    val DASHBOARD_SCENARIO_STEPS = listOf(
-        "dashboard_index_dropdown_checked", "dashboard_trading_tab_selected",
-        "option_chain_opened", "option_chain_nfo_loaded", "option_chain_mcx_loaded",
-        "option_chain_cds_loaded", "option_chain_bfo_loaded", "research_calls_loaded",
-        "trading_ideas_tabs_clickable", "trading_ideas_subtabs_search", "trading_ideas_menu_opened",
-        "trading_ideas_filter_checked", "futures_view_all_checked", "futures_scrip_buy_sell_checked",
-        "fii_dii_view_all_checked", "dashboard_customize_checked", "scanners_view_all_loaded",
-        "screener_tabs_checked", "screener_dropdown_checked", "screener_search_checked",
-        "screener_sort_checked", "screener_scrip_checked",
-        "investment_tab_selected", "alerts_page_opened", "alert_created", "alerts_search_checked",
-        "alert_deleted", "ipo_page_checked", "ipo_details_checked", "reports_page_opened",
-        "etf_page_opened", "etf_tabs_options", "etf_tabs_buy_sell", "etf_search_settings",
-        "pledge_page_opened", "back_office_opened", "other_request_opened", "top_sectors_view_all_checked",
-        "scanners_equity_tab_options", "scanners_equity_tab_buy_sell", "scanners_equity_search_settings",
-        "scanners_futures_tab_options", "scanners_futures_tab_buy_sell", "scanners_options_tab_options",
-        "scanners_options_tab_buy_sell", "scanners_commodity_tab_options",
-        "scanners_commodity_tab_buy_sell", "investment_customize_checked",
-    )
-
     val TRADION: List<AppModule> = listOf(
         AppModule(
             "login", "Login",
@@ -95,12 +75,12 @@ object AppModules {
         ),
         AppModule(
             "dashboard", "Dashboard",
-            "Index dropdown, Trading tab, Option Chain per segment, Trading Ideas (tabs, search, menu, " +
-                "filters), Futures View All, FII / DII, Customize, Investments and Scanners (tabs, segments, " +
-                "search, sort, a scrip's Chart / Op.Chain / More Details and its Buy / Sell). Opens the " +
-                "order pad but never places an order.",
-            listOf("dashboard_trading_loaded", "dashboard_investments_loaded") +
-                DASHBOARD_SCENARIO_STEPS,
+            "Trading tab: the ticker and indices panel, Option Chain, Research Calls, the Scalper and Options Trading Tools " +
+                "(their landing pages), Positions, Futures, FII / DII and Customize. Investments tab: Indian Indices, Alerts " +
+                "(a test alert is created and deleted), IPO, Mutual Funds, Reports, ETF, Pledge, Back Office, Other Request, " +
+                "Funds, Add Funds, Withdraw Funds, Holdings, Scanners, Top Sectors and Customize. Opens order pads, payment and " +
+                "withdrawal screens and the IPO page but never places an order, pays, withdraws, applies or pledges.",
+            DashboardSuite.ALL_IDS,
         ),
         AppModule(
             "portfolio", "Portfolio",

@@ -66,6 +66,24 @@ class _ReportScreenState extends State<ReportScreen> {
     });
   }
 
+  /// Puts the whole text report on the clipboard (the same text as the .txt file).
+  Future<void> _copy() async {
+    final text =
+        _text ?? await widget.reports.readReportFile(widget.run.textPath);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (text == null || text.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('The report text could not be read.')),
+      );
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Full report copied to the clipboard.')),
+    );
+  }
+
   Future<void> _share() async {
     await widget.reports.share(widget.run);
   }
@@ -96,9 +114,9 @@ class _ReportScreenState extends State<ReportScreen> {
     if (text == null) return;
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Checklist copied.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Checklist copied.')));
   }
 
   @override
@@ -110,6 +128,11 @@ class _ReportScreenState extends State<ReportScreen> {
       appBar: AppBar(
         title: const Text('Report'),
         actions: [
+          IconButton(
+            onPressed: _copy,
+            icon: const Icon(Icons.copy_all_outlined),
+            tooltip: 'Copy full report',
+          ),
           IconButton(
             onPressed: _downloading ? null : _download,
             icon: _downloading
@@ -283,6 +306,12 @@ class _ReportScreenState extends State<ReportScreen> {
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
+                  onPressed: _copy,
+                  icon: const Icon(Icons.copy_all_outlined),
+                  label: const Text('Copy full report (text)'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
                   onPressed: _share,
                   icon: const Icon(Icons.share_outlined),
                   label: const Text('Share Report'),
@@ -338,9 +367,7 @@ class _MetaTable extends StatelessWidget {
                     ),
                   ),
                 ),
-                Expanded(
-                  child: Text(value, style: theme.textTheme.bodySmall),
-                ),
+                Expanded(child: Text(value, style: theme.textTheme.bodySmall)),
               ],
             ),
           ),
@@ -358,7 +385,9 @@ class _MetaTable extends StatelessWidget {
   static String _duration(Duration? d) {
     if (d == null) return '—';
     if (d.inSeconds < 1) return '${d.inMilliseconds} ms';
-    if (d.inMinutes < 1) return '${(d.inMilliseconds / 1000).toStringAsFixed(1)} s';
+    if (d.inMinutes < 1) {
+      return '${(d.inMilliseconds / 1000).toStringAsFixed(1)} s';
+    }
     return '${d.inMinutes}m ${d.inSeconds % 60}s';
   }
 }

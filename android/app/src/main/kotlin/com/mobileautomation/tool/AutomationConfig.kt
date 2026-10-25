@@ -429,6 +429,9 @@ object AutomationConfig {
         const val TRADE_SELL_BUTTON = "trade_sell_button"
 
         // Investments tab: Quick Tools tiles, Alerts, IPO, ETF, Top Sectors, Customize, vendor pages
+        /** The Scalper banner of the Trading tab, and the Mutual Fund tile of Quick Tools (an SDK). */
+        const val DASHBOARD_OPEN_SCALPER = "dashboard_open_scalper"
+        const val INVEST_TILE_MUTUAL = "invest_tile_2"
         const val INVEST_TILE_ALERTS = "invest_tile_0"
         const val INVEST_TILE_IPO = "invest_tile_1"
         const val INVEST_TILE_REPORTS = "invest_tile_3"

@@ -28,7 +28,7 @@ class ReportService {
 
   static const String _historyFile = 'history.json';
   static const int _historyLimit = 50;
-  static final RegExp _caseShotKey = RegExp(r'^[A-Z]{2,}-\d+_');
+  static final RegExp _caseShotKey = RegExp(r'^[A-Z]{2,}-[A-Z]?\d+[a-z]?_');
 
   static final DateFormat _stamp = DateFormat('yyyy-MM-dd HH:mm:ss');
   static final DateFormat _fileStamp = DateFormat('yyyyMMdd_HHmmss');
@@ -95,7 +95,7 @@ class ReportService {
     await htmlFile.writeAsString(buildHtml(saved));
     await textFile.writeAsString(buildChecklistText(saved));
 
-    final zip = await _buildSummaryZip(saved, dir, base, textFile);
+    final zip = await _buildSummaryZip(saved, dir, base, textFile, htmlFile);
 
     final run = TestRun.fromResult(
       saved,
@@ -111,7 +111,7 @@ class ReportService {
     return run;
   }
 
-  /// Packs the text report, the recording, the failed-step screenshots and the test cases' checkpoint screenshots into
+  /// Packs the text and HTML reports, the recording, the failed-step screenshots and the test cases' checkpoint screenshots into
   /// `<app>_<ddMMyyyy>_<HHmm>.zip` (see [zipNameFor]) and has Android copy it to public Downloads. Best
   /// effort: a failure is returned as text and never fails the save.
   Future<({String path, String folder, String error})> _buildSummaryZip(
@@ -119,9 +119,12 @@ class ReportService {
     Directory dir,
     String base,
     File textFile,
+    File htmlFile,
   ) async {
     final entries = <Map<String, String>>[
       <String, String>{'path': textFile.path, 'name': '$base.txt'},
+      if (await htmlFile.exists())
+        <String, String>{'path': htmlFile.path, 'name': '$base.html'},
     ];
     final video = result.videoPath;
     if (video != null && video.isNotEmpty && await File(video).exists()) {
@@ -129,7 +132,9 @@ class ReportService {
     }
     for (final shot in result.screenshots.entries) {
       // Failure shots, and the checkpoint shots of test cases (`WL-06_chart_loaded`) that the report's table names.
-      if (!shot.key.startsWith('failed') && !_caseShotKey.hasMatch(shot.key)) continue;
+      if (!shot.key.startsWith('failed') && !_caseShotKey.hasMatch(shot.key)) {
+        continue;
+      }
       if (!await File(shot.value).exists()) continue;
       entries.add(<String, String>{
         'path': shot.value,
@@ -450,7 +455,9 @@ class ReportService {
         ..writeln(
           '  a change is CONFIRMED when it was re-read afterwards and matched; sign-in when',
         )
-        ..writeln('  the next screen followed. A load over $_slowSeconds s is marked SLOW.')
+        ..writeln(
+          '  the next screen followed. A load over $_slowSeconds s is marked SLOW.',
+        )
         ..writeln();
     }
 
@@ -494,7 +501,9 @@ class ReportService {
         step.finishedAt == null ? '-' : _clock24.format(step.finishedAt!),
         step.duration == null ? '-' : _formatDuration(step.duration!),
         if (hasVideo) (offset == null ? '-' : '▶ ${_clock(offset)}'),
-        step.apiKindLabel.isEmpty || !step.hasApiCheck ? '-' : step.apiKindLabel,
+        step.apiKindLabel.isEmpty || !step.hasApiCheck
+            ? '-'
+            : step.apiKindLabel,
         _clip(_apiCell(step), 64),
       ]);
     }
@@ -504,7 +513,9 @@ class ReportService {
     // ── Step details ──────────────────────────────────────────────────────
     final detailed = <int>[
       for (var i = 0; i < result.steps.length; i++)
-        if (result.steps[i].note != null || result.steps[i].failureReason != null) i,
+        if (result.steps[i].note != null ||
+            result.steps[i].failureReason != null)
+          i,
     ];
     if (detailed.isNotEmpty) {
       _heading(out, 'STEP DETAILS');
@@ -575,19 +586,27 @@ class ReportService {
   static String? _caseShot(AutomationResult result, AutomationStep step) {
     final code = step.code;
     if (code != null) {
-      for (final prefix in <String>['${code}_failure', '${code}_unreadable', '${code}_save_stuck', '${code}_all_empty']) {
-        final key = result.screenshots.keys.where((k) => k.startsWith(prefix)).toList();
+      for (final prefix in <String>[
+        '${code}_failure',
+        '${code}_unreadable',
+        '${code}_save_stuck',
+        '${code}_all_empty',
+      ]) {
+        final key = result.screenshots.keys
+            .where((k) => k.startsWith(prefix))
+            .toList();
         if (key.isNotEmpty) return _fileName(result.screenshots[key.first]!);
       }
     }
     final keys = code == null
         ? <String>[]
-        : result.screenshots.keys.where((k) => k.startsWith('${code}_')).toList();
+        : result.screenshots.keys
+              .where((k) => k.startsWith('${code}_'))
+              .toList();
     if (keys.isNotEmpty) return _fileName(result.screenshots[keys.first]!);
     final failed = result.screenshots['failed_${step.id}'];
     return failed == null ? null : _fileName(failed);
   }
-
 
   /// Login and Watchlist (and every other area) as separate results.
   static void _areaSection(StringBuffer out, AutomationResult result) {
@@ -606,11 +625,21 @@ class ReportService {
     _heading(out, 'RESULTS BY AREA');
     _table(
       out,
-      <String>['Area', 'Steps', 'Pass', 'Fail', 'Blocked', 'Not tested / N/A', 'Skipped', 'Time'],
+      <String>[
+        'Area',
+        'Steps',
+        'Pass',
+        'Fail',
+        'Blocked',
+        'Not tested / N/A',
+        'Skipped',
+        'Time',
+      ],
       <List<String>>[
         for (final e in groups.entries)
           () {
-            int n(bool Function(AutomationStep) test) => e.value.where(test).length;
+            int n(bool Function(AutomationStep) test) =>
+                e.value.where(test).length;
             final ms = e.value.fold<int>(0, (a, s) => a + (s.durationMs ?? 0));
             return <String>[
               e.key,
@@ -629,7 +658,8 @@ class ReportService {
     out.writeln();
   }
 
-  static String _classShort(AutomationStep s) => s.causeTag.isEmpty ? '-' : s.causeTag;
+  static String _classShort(AutomationStep s) =>
+      s.causeTag.isEmpty ? '-' : s.causeTag;
 
   /// One finding: expected, observed, probable cause, UI hierarchy, screenshot, recommendation, cleanup.
   static void _finding(
@@ -662,10 +692,11 @@ class ReportService {
   static void _caseSections(StringBuffer out, AutomationResult result) {
     final cases = result.steps.where((s) => s.isCase).toList();
     if (cases.isEmpty) return;
-    int count(String label) => cases.where((s) => s.outcomeLabel == label).length;
+    int count(String label) =>
+        cases.where((s) => s.outcomeLabel == label).length;
     final pass = count('PASS');
     final fail = count('FAIL');
-    _heading(out, 'WATCHLIST TEST CASES');
+    _heading(out, 'TEST CASES');
     _kv(out, 'Cases', '${cases.length}');
     _kv(
       out,
@@ -676,7 +707,15 @@ class ReportService {
     out.writeln();
     _table(
       out,
-      <String>['ID', 'Scenario', 'Expected result', 'Actual result', 'Status', 'Class', 'Screenshot'],
+      <String>[
+        'ID',
+        'Scenario',
+        'Expected result',
+        'Actual result',
+        'Status',
+        'Class',
+        'Screenshot',
+      ],
       <List<String>>[
         for (final s in cases)
           <String>[
@@ -699,16 +738,25 @@ class ReportService {
 
     // Findings, by what they turned out to be. A blank accessibility tree is never a product defect.
     final findings = cases
-        .where((s) => s.status == StepStatus.failed || s.outcomeLabel == 'BLOCKED')
+        .where(
+          (s) => s.status == StepStatus.failed || s.outcomeLabel == 'BLOCKED',
+        )
         .toList();
-    List<AutomationStep> of(String cause) => findings
-        .where((s) => (s.cause ?? 'unconfirmed') == cause)
-        .toList();
+    List<AutomationStep> of(String cause) =>
+        findings.where((s) => (s.cause ?? 'unconfirmed') == cause).toList();
     final groups = <(String, String, String)>[
       ('app_defect', 'CONFIRMED APPLICATION DEFECTS', 'D'),
-      ('unconfirmed', 'NEEDS REVIEW: EXPECTED CONTENT NOT FOUND IN READABLE TEXT', 'R'),
+      (
+        'unconfirmed',
+        'NEEDS REVIEW: EXPECTED CONTENT NOT FOUND IN READABLE TEXT',
+        'R',
+      ),
       ('automation', 'AUTOMATION / LOCATOR FAILURES', 'A'),
-      ('accessibility', 'ACCESSIBILITY LIMITATIONS (content could not be read, not a defect)', 'X'),
+      (
+        'accessibility',
+        'ACCESSIBILITY LIMITATIONS (content could not be read, not a defect)',
+        'X',
+      ),
       ('api_data', 'API / DATA DEPENDENCY FAILURES', 'P'),
       ('test_data', 'TEST-DATA / STATE FAILURES', 'T'),
     ];
@@ -724,12 +772,18 @@ class ReportService {
       out.writeln();
     }
     final untested = cases
-        .where((s) => s.outcomeLabel == 'NOT TESTED' || s.outcomeLabel == 'NOT APPLICABLE')
+        .where(
+          (s) =>
+              s.outcomeLabel == 'NOT TESTED' ||
+              s.outcomeLabel == 'NOT APPLICABLE',
+        )
         .toList();
     _heading(out, 'INTENTIONALLY NOT TESTED / NOT APPLICABLE');
     if (untested.isEmpty) out.writeln('  none');
     for (final s in untested) {
-      out.writeln('  ${s.code}  ${s.outcomeLabel.padRight(14)} ${_clip(s.note ?? s.name, 120)}');
+      out.writeln(
+        '  ${s.code}  ${s.outcomeLabel.padRight(14)} ${_clip(s.note ?? s.name, 120)}',
+      );
     }
     out.writeln();
 
@@ -741,14 +795,14 @@ class ReportService {
     }
     out.writeln();
 
-    final slow = cases
-        .where((s) => s.apiMs != null && s.apiMs! > 0)
-        .toList()
+    final slow = cases.where((s) => s.apiMs != null && s.apiMs! > 0).toList()
       ..sort((a, b) => b.apiMs!.compareTo(a.apiMs!));
     if (slow.isNotEmpty) {
       _heading(out, 'PERFORMANCE');
       for (final s in slow.take(5)) {
-        out.writeln('  ${_ms(s.apiMs!).padRight(8)} ${s.code}  ${s.apiDetail ?? s.name}');
+        out.writeln(
+          '  ${_ms(s.apiMs!).padRight(8)} ${s.code}  ${s.apiDetail ?? s.name}',
+        );
       }
       out.writeln();
     }
@@ -757,14 +811,17 @@ class ReportService {
     final defects = of('app_defect');
     final critical = defects.where((s) => s.severity == 'Critical').length;
     final unresolved = findings.length - defects.length;
-    final cleanupFailed = cleaned.where((s) => s.cleanup!.startsWith('FAILED')).length;
+    final cleanupFailed = cleaned
+        .where((s) => s.cleanup!.startsWith('FAILED'))
+        .length;
     final String verdict;
     if (cases.every((s) => s.status == StepStatus.pending)) {
-      verdict = 'Not assessed: no Watchlist case ran.';
+      verdict = 'Not assessed: no test case ran.';
     } else if (critical > 0) {
       verdict = 'Not ready: $critical critical application defect(s).';
     } else if (defects.isNotEmpty) {
-      verdict = 'Needs fixes: ${defects.length} confirmed application defect(s), none critical.';
+      verdict =
+          'Needs fixes: ${defects.length} confirmed application defect(s), none critical.';
     } else if (unresolved > 0 || count('NOT TESTED') > 0) {
       verdict =
           'No application defect confirmed. $unresolved case(s) could not be verified or need review, and '
@@ -800,9 +857,8 @@ class ReportService {
   static String _clip(String text, int max) =>
       text.length <= max ? text : '${text.substring(0, max - 1)}…';
 
-  static String _ms(int millis) => millis < 1000
-      ? '$millis ms'
-      : '${(millis / 1000).toStringAsFixed(1)} s';
+  static String _ms(int millis) =>
+      millis < 1000 ? '$millis ms' : '${(millis / 1000).toStringAsFixed(1)} s';
 
   /// Greedy word wrap at [width] columns.
   static List<String> _wrap(String text, int width) {
@@ -833,9 +889,10 @@ class ReportService {
   }) {
     final widths = <int>[
       for (var c = 0; c < header.length; c++)
-        [header[c], ...rows.map((r) => r[c])]
-            .map((cell) => cell.length)
-            .reduce((a, b) => a > b ? a : b),
+        [
+          header[c],
+          ...rows.map((r) => r[c]),
+        ].map((cell) => cell.length).reduce((a, b) => a > b ? a : b),
     ];
     String line(List<String> cells) {
       final parts = <String>[

@@ -180,6 +180,117 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * A vertical drag from ([x], [fromY]) to ([x], [toY]) over [durationMs], for moving a page by a controlled amount
+     * (a page scroll action jumps a whole viewport and can overshoot a target). Points come from the screen size the
+     * caller read, never fixed coordinates.
+     */
+    fun swipe(x: Float, fromY: Float, toY: Float, durationMs: Long = 250L): Boolean {
+        if (x < 0 || fromY < 0 || toY < 0) return false
+        val path = Path().apply {
+            moveTo(x, fromY)
+            lineTo(x, toY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        val latch = CountDownLatch(1)
+        var completed = false
+        val dispatched = try {
+            dispatchGesture(
+                gesture,
+                object : GestureResultCallback() {
+                    override fun onCompleted(description: GestureDescription?) {
+                        completed = true
+                        latch.countDown()
+                    }
+
+                    override fun onCancelled(description: GestureDescription?) {
+                        latch.countDown()
+                    }
+                },
+                null,
+            )
+        } catch (_: Throwable) {
+            false
+        }
+        if (!dispatched) return false
+        return try {
+            latch.await(3, TimeUnit.SECONDS) && completed
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
+    /**
+     * A vertical drag that ends with the finger held still, so the page stops where the finger stops instead of flinging
+     * on (a drag released at speed flings and overshoots, which made the page bob). The first stroke moves, the second
+     * holds the end point.
+     */
+    fun dragNoFling(x: Float, fromY: Float, toY: Float): Boolean {
+        if (x < 0 || fromY < 0 || toY < 0) return false
+        fun run(gesture: GestureDescription): Boolean {
+            val latch = CountDownLatch(1)
+            var completed = false
+            val dispatched = try {
+                dispatchGesture(
+                    gesture,
+                    object : GestureResultCallback() {
+                        override fun onCompleted(description: GestureDescription?) {
+                            completed = true
+                            latch.countDown()
+                        }
+
+                        override fun onCancelled(description: GestureDescription?) {
+                            latch.countDown()
+                        }
+                    },
+                    null,
+                )
+            } catch (_: Throwable) {
+                false
+            }
+            if (!dispatched) return false
+            return try {
+                latch.await(3, TimeUnit.SECONDS) && completed
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+        }
+        val move = GestureDescription.StrokeDescription(
+            Path().apply {
+                moveTo(x, fromY)
+                lineTo(x, toY)
+            },
+            0L, 700L, true,
+        )
+        if (!run(GestureDescription.Builder().addStroke(move).build())) return false
+        val hold = move.continueStroke(Path().apply { moveTo(x, toY) }, 0L, 250L, false)
+        return run(GestureDescription.Builder().addStroke(hold).build())
+    }
+
+    /**
+     * Keeps the soft keyboard from showing at all ([hidden]), or lets it show as usual again. The mode is the service's
+     * own and ends when the service is unbound. A form that raises the keyboard by itself would otherwise cover and
+     * resize the page, and Back cannot be used to close it (it can close the page instead).
+     */
+    fun setKeyboardHidden(hidden: Boolean): Boolean = try {
+        softKeyboardController.setShowMode(
+            if (hidden) AccessibilityService.SHOW_MODE_HIDDEN else AccessibilityService.SHOW_MODE_AUTO,
+        )
+    } catch (_: Throwable) {
+        false
+    }
+
+    /** Whether the on-screen keyboard is showing (its window is an input-method window). */
+    fun imeVisible(): Boolean = try {
+        windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
      * Dispatches the system "back" action. Used to close a screen (Search) or
      * back out of one (an already-empty watchlist's Edit screen) without
      * needing a dedicated in-app close button.

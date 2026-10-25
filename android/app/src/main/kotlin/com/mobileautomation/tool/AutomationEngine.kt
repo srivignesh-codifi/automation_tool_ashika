@@ -910,13 +910,16 @@ class AutomationEngine private constructor(
     }
 
     /** Polls [condition] until it holds. False on timeout or cancel. */
-    fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
+    fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean = waitUntil(timeoutMs, AutomationConfig.POLL_INTERVAL_MS, condition)
+
+    /** [waitUntil] with its own poll interval: a short one for a change that arrives within a fraction of a second. */
+    fun waitUntil(timeoutMs: Long, pollMs: Long, condition: () -> Boolean): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (true) {
             if (cancelled) return false
             if (condition()) return true
             if (SystemClock.elapsedRealtime() >= deadline) return false
-            if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return false
+            if (!sleep(pollMs)) return false
         }
     }
 
@@ -1062,6 +1065,376 @@ class AutomationEngine private constructor(
         val editable = AccessibilityNodeFinder.resolveEditable(anchor) ?: return null
         val length = AccessibilityNodeFinder.textLength(editable) ?: return null
         return length == expected
+    }
+
+    fun imeVisible(): Boolean = service.imeVisible()
+
+    @Volatile
+    private var keyboardSuppressed = false
+
+    /** Hides the soft keyboard for the flow (see the service); false when the system refused. Always undone with `false`. */
+    fun suppressKeyboard(on: Boolean): Boolean {
+        val ok = service.setKeyboardHidden(on)
+        keyboardSuppressed = on && ok
+        return ok
+    }
+
+    /** The package of the window in front right now (null when none is readable). */
+    fun foregroundPackage(): String? = service.rootNode()?.packageName?.toString()
+
+    /** Whether the target app is the one in front (a browser or another app opened from it is not). */
+    fun targetInForeground(): Boolean = foregroundPackage() == targetPackage
+
+    /**
+     * Brings the target app back when something it opened (a browser, a viewer) is in front: Back once, then, if the app
+     * is still not in front, the launcher intent without clearing the task (which resumes the app where it was).
+     * True when the target is in front at the end. Bounded by the UI time per step.
+     */
+    fun returnToTarget(): Boolean {
+        if (targetInForeground()) return true
+        // The launcher intent first (it resumes the app's task where it was; a browser stays behind it): a Back inside a
+        // browser only walks its page history and cost the flow its time in the recording.
+        launcher.launch(targetPackage)
+        if (waitUntil(AutomationConfig.Timeouts.UI_RESPONSE * 2) { targetInForeground() }) return true
+        service.pressBack()
+        return waitUntil(AutomationConfig.Timeouts.UI_RESPONSE) { targetInForeground() }
+    }
+
+    /** Whether the field whose hint or label contains [part] is on screen. */
+    fun hasFieldLabelled(part: String): Boolean =
+        AccessibilityNodeFinder.editableLabelled(targetRoot(), part) != null
+
+    private val readableFieldIds = setOf(
+        AutomationConfig.TradionIds.ALERT_NAME_INPUT, AutomationConfig.TradionIds.ALERT_VALUE_INPUT,
+    )
+
+    /** The text held by one of the few non-secret form fields the flows read back (an alert's name and value). */
+    fun fieldText(identifier: String): String? {
+        if (identifier !in readableFieldIds) return null
+        val anchor = findNow(identifier) ?: return null
+        return AccessibilityNodeFinder.editableText(anchor)
+    }
+
+    /**
+     * What lies between the heading containing [fromPart] and the next heading containing [untilPart] below it, by
+     * position on screen (the tree does not list a section's cards next to its heading). Empty when [fromPart] is not
+     * on screen.
+     */
+    fun textsBetween(fromPart: String, untilPart: String?): List<String> {
+        val root = targetRoot() ?: return emptyList()
+        fun top(n: AccessibilityNodeInfo) = Rect().also { n.getBoundsInScreen(it) }.top
+        val sh = screenBounds()?.height() ?: return emptyList()
+        val from = AccessibilityNodeFinder.headingNodes(root, fromPart)
+            .filter { Rect().also { r -> it.getBoundsInScreen(r) }.height() <= sh * 0.45f }
+            .minByOrNull(::top) ?: return emptyList()
+        val fromTop = top(from)
+        val untilTop = untilPart?.let { u ->
+            AccessibilityNodeFinder.headingNodes(root, u).map(::top).filter { it > fromTop }.minOrNull()
+        } ?: Int.MAX_VALUE
+        return AccessibilityNodeFinder.labelsInBand(root, fromTop - 2, untilTop)
+    }
+
+    /**
+     * The label lines on screen from the top of the control [identifier] down [share] of the screen height: a section
+     * located by a control that has its own identifier (a "View All" link sits on the heading row) instead of by heading
+     * text. Empty when the control is not on screen.
+     */
+    fun textsBelow(identifier: String, share: Float): List<String> {
+        val root = targetRoot() ?: return emptyList()
+        val h = screenBounds()?.height() ?: return emptyList()
+        val b = boundsOfId(identifier) ?: return onScreenLines()
+        return AccessibilityNodeFinder.labelsInBand(root, b.top - 2, (b.top + h * share).toInt(), 300, distinct = false, maxHeight = (h * 0.6f).toInt())
+    }
+
+    /**
+     * Every label line whose node sits on the screen now, repeats kept, in tree order. Not the first N lines of the tree:
+     * a Dashboard keeps the other tab's long lists in the tree, which pushed the visible cards past a fixed limit.
+     */
+    fun onScreenLines(limit: Int = 400): List<String> {
+        val root = targetRoot() ?: return emptyList()
+        val h = screenBounds()?.height() ?: return emptyList()
+        return AccessibilityNodeFinder.labelsInBand(root, 0, h, limit, distinct = false, maxHeight = (h * 0.6f).toInt())
+    }
+
+    /**
+     * Pages until the control [identifier] sits in the upper part of the screen (about 30 % down), so the section it
+     * belongs to is on screen below it. Same monotonic paging and single slow no-fling drag as [scrollTextIntoView], but
+     * located by an identifier, whose bounds are always its own.
+     */
+    fun scrollIdIntoPlace(identifier: String, target: Float = 0.30f, maxPages: Int = 8): Boolean {
+        val h = screenBounds()?.height()?.toFloat() ?: return false
+        if (boundsOfId(identifier) == null) toTop()
+        if (!scrollUntil(maxPages) { placeOf(boundsOfId(identifier), 0.12f, 0.80f, h) }) {
+            placementLog = "$identifier not paged into view"
+            return false
+        }
+        val b = boundsOfId(identifier) ?: return false
+        val before = b.top / h
+        var moved = false
+        if (b.height() < 16 || kotlin.math.abs(b.top - h * target) > h * 0.10f) {
+            val screen = screenBounds() ?: return true
+            val x = screen.width() * 0.5f
+            val delta = b.top - h * target
+            moved = if (delta > 0) {
+                service.dragNoFling(x, h * 0.80f, h * 0.80f - delta.coerceAtMost(h * 0.5f))
+            } else {
+                service.dragNoFling(x, h * 0.30f, h * 0.30f + (-delta).coerceAtMost(h * 0.4f))
+            }
+            if (moved) sleep(AutomationConfig.Timeouts.SETTLE * 2)
+        }
+        val after = boundsOfId(identifier)?.let { it.top / h }
+        placementLog = "$identifier at ${"%.2f".format(before)} of the screen" +
+            (if (moved) ", after the drag ${after?.let { "%.2f".format(it) } ?: "off screen"}" else ", no drag needed")
+        // On screen is enough for the caller: a drag that did not move the page must not turn into a failure.
+        return after != null && after >= 0.12f && after <= 0.88f
+    }
+
+    /** What the last [scrollIdIntoPlace] did, for the report. */
+    var placementLog: String = ""
+        private set
+
+    /**
+     * Pages the screen, one page scroll at a time, until [place] says the target is where it should be. [place] returns
+     * 0 when it is in place, -1 when it is above, +1 when it is below and +2 when it is not on screen at all (the
+     * sections run top to bottom, so that means below). A page scroll moves 80 % of the viewport, so a target
+     * accepted anywhere in a band wider than that cannot be stepped over, and the loop is monotonic: it reverses at
+     * most once (when the end of the page is reached with the target still missing) and never oscillates. True when
+     * [place] reports 0.
+     */
+    fun scrollUntil(maxSteps: Int = 8, place: () -> Int): Boolean {
+        var reversals = 0
+        var last = 0
+        var sweepBack = false
+        for (step in 0..maxSteps) {
+            if (cancelled) return false
+            val p = place()
+            if (p == 0) return true
+            if (step == maxSteps) return false
+            var direction = if (sweepBack) -1 else if (p > 0) 1 else -1
+            if (p != 2 && sweepBack) {
+                sweepBack = false
+                direction = if (p > 0) 1 else -1
+            }
+            if (last != 0 && direction != last) {
+                reversals++
+                if (reversals > 1) return false
+            }
+            if (!scrollPage(forward = direction > 0)) {
+                // The end of the page in this direction. A target that is missing may lie the other way; one flip only.
+                if (direction > 0 && p == 2 && !sweepBack) {
+                    sweepBack = true
+                    last = -1
+                    reversals++
+                    if (!scrollPage(forward = false)) return false
+                } else {
+                    return false
+                }
+            } else {
+                last = direction
+            }
+            if (!sleep(AutomationConfig.Timeouts.SETTLE)) return false
+        }
+        return false
+    }
+
+    private fun placeOf(b: Rect?, top0: Float, top1: Float, h: Float): Int {
+        if (b == null) return 2
+        // A node clipped by the viewport edge keeps a thin rectangle at that edge: only its side tells where it is.
+        if (b.height() < 16) return if (b.top > h * 0.5f) 1 else -1
+        return when {
+            b.top < h * top0 -> -1
+            b.top > h * top1 -> 1
+            else -> 0
+        }
+    }
+
+    /**
+     * Brings the heading containing [part] on screen by paging (monotonic, see [scrollUntil]) and then, if it is not already
+     * in the upper half, one slow drag that ends with the finger held (no fling) puts it at about a third of the screen
+     * height, so the section below it is on screen. One adjustment only: a page that cannot move is left as it is.
+     */
+    fun scrollTextIntoView(part: String, maxPages: Int = 8): Boolean {
+        val h = screenBounds()?.height()?.toFloat() ?: return false
+        if (boundsOfText(part) == null) toTop()
+        val onScreen = scrollUntil(maxPages) { placeOf(boundsOfText(part), 0.12f, 0.92f, h) }
+        if (!onScreen) return false
+        val b = boundsOfText(part) ?: return false
+        if (b.height() < 16) return false
+        if (b.top >= h * 0.17f && b.top <= h * 0.50f) return true
+        val screen = screenBounds() ?: return true
+        val x = screen.width() * 0.5f
+        val delta = b.top - h * 0.30f
+        val moved = if (delta > 0) {
+            val d = delta.coerceAtMost(h * 0.5f)
+            service.dragNoFling(x, h * 0.80f, h * 0.80f - d)
+        } else {
+            val d = (-delta).coerceAtMost(h * 0.4f)
+            service.dragNoFling(x, h * 0.30f, h * 0.30f + d)
+        }
+        if (moved) sleep(AutomationConfig.Timeouts.SETTLE * 2)
+        return boundsOfText(part)?.let { it.height() >= 16 && it.top >= h * 0.10f && it.top <= h * 0.88f } == true
+    }
+
+    /**
+     * Back to the top of the page, quickly, and only when a target is not on screen: the sections run top to bottom, so
+     * searching downwards from the top is one direction only. Searching both ways from wherever the last case stopped is
+     * what showed as the page moving up and down for a while between cases.
+     */
+    fun toTop(maxPages: Int = 10) {
+        repeat(maxPages) {
+            if (cancelled || !scrollPage(forward = false)) return
+            sleep(220L)
+        }
+    }
+
+    /** Pages until the control [identifier] is on screen and not under the header or the bottom bar. */
+    fun scrollIdIntoView(identifier: String, maxPages: Int = 8): Boolean {
+        val h = screenBounds()?.height()?.toFloat() ?: return false
+        if (boundsOfId(identifier) == null) toTop()
+        val ok = scrollUntil(maxPages) { placeOf(boundsOfId(identifier), 0.12f, 0.78f, h) }
+        return ok || findNow(identifier) != null
+    }
+
+    /**
+     * Dismisses the keyboard if it is up (Back only closes the keyboard while it shows, it does not leave the screen).
+     * True when a keyboard was closed. A text field keeps its focus, so a keyboard left up covers the lower half of
+     * the page and makes the controls under it unreachable.
+     */
+    fun hideKeyboard(): Boolean {
+        // With the keyboard suppressed there is nothing to close, and Back must not be pressed: it can pop the page.
+        if (keyboardSuppressed || !imeVisible()) return false
+        service.pressBack()
+        waitUntil(AutomationConfig.Timeouts.UI_RESPONSE) { !imeVisible() }
+        return true
+    }
+
+    private fun screenBounds(): Rect? = targetRoot()?.let { r -> Rect().also { r.getBoundsInScreen(it) } }?.takeIf { it.height() > 0 }
+
+    /** Screen bounds of the first node whose label contains [part], or null. Normalised for line breaks. */
+    fun boundsOfText(part: String): Rect? {
+        // The smallest node that carries the label, never a page-sized container (Flutter merges several headings into one
+        // such node, whose bounds say nothing about where a heading is; the scroll then goes one way and ends). A card that
+        // holds the label is fine: it is a fraction of the screen.
+        val h = screenBounds()?.height() ?: return null
+        val wanted = part.lowercase().replace(Regex("\\s+"), " ")
+        val nodes = AccessibilityNodeFinder.allByTextContaining(targetRoot(), part)
+            .map { n -> n to Rect().also { n.getBoundsInScreen(it) } }
+            .filter { it.second.height() <= h * 0.45f }
+        val exact = nodes.filter { (n, _) ->
+            AccessibilityNodeFinder.labelOf(n)?.lowercase()?.lines()?.any { it.trim() == wanted } == true
+        }
+        return (exact.ifEmpty { nodes }).minWithOrNull(compareBy({ it.second.height() }, { it.second.top }))?.second
+    }
+
+    /** Screen bounds of the node with [identifier], or null. */
+    fun boundsOfId(identifier: String): Rect? {
+        val node = findNow(identifier) ?: return null
+        return Rect().also { node.getBoundsInScreen(it) }
+    }
+
+    /** Whether a control or label containing [part] is on screen right now. */
+    fun hasTextContaining(part: String): Boolean =
+        targetRoot()?.let { AccessibilityNodeFinder.byTextContaining(it, part) } != null
+
+    /**
+     * Taps the control whose label contains [part], for screens that carry no identifier. A tap made while the page is
+     * still settling can be lost, so the caller confirms the result by what appears, never by this return value alone.
+     */
+    fun tapText(part: String, topmost: Boolean = false): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        // Several controls can share a label ("View All"): the topmost one is the first section on the page.
+        val anchor = (if (topmost) {
+            AccessibilityNodeFinder.headingNodes(root, part).minByOrNull {
+                val b = Rect()
+                it.getBoundsInScreen(b)
+                b.top
+            }
+        } else {
+            AccessibilityNodeFinder.byTextContaining(root, part)
+        }) ?: return ActionOutcome(false, "no control labelled '$part' is on screen")
+        val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
+        if (clickable != null && performClick(clickable)) return ActionOutcome(true, "tapped '$part' via ACTION_CLICK")
+        return if (tapNode(clickable ?: anchor)) ActionOutcome(true, "tapped '$part' at its bounds")
+        else ActionOutcome(false, "found '$part' but could not tap it")
+    }
+
+    /**
+     * Taps the control whose whole label is [label] (case-insensitive, whitespace folded): the app bar's "Back" arrow, not
+     * every control that merely contains the word (a web page's "Back to ...", a tile called "Back Office"). The topmost
+     * match wins, which is the app bar.
+     */
+    fun tapExactText(label: String): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        val wanted = label.trim().lowercase()
+        val anchor = AccessibilityNodeFinder.allByTextContaining(root, label)
+            .filter { n -> ((n.text ?: n.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim()?.lowercase()) == wanted }
+            .minByOrNull { n -> Rect().also { n.getBoundsInScreen(it) }.top }
+            ?: return ActionOutcome(false, "no control labelled exactly '$label' is on screen")
+        val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
+        if (clickable != null && performClick(clickable)) return ActionOutcome(true, "tapped '$label' via ACTION_CLICK")
+        return if (tapNode(clickable ?: anchor)) ActionOutcome(true, "tapped '$label' at its bounds") else ActionOutcome(false, "found '$label' but could not tap it")
+    }
+
+    /**
+     * Taps the right-hand end of the row that holds the label [part]: for an icon at the end of a row that has no label
+     * of its own (the settings gear beside a search box, a remove sign beside a widget name). The row is the nearest
+     * ancestor of the label that spans most of the screen's width; the point comes from that node's own bounds.
+     */
+    fun tapRightEdgeOf(part: String): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        // The field itself: a text search can land on a container that holds the whole page.
+        val label = AccessibilityNodeFinder.editableLabelled(root, part)
+            ?: AccessibilityNodeFinder.headingNodes(root, part).firstOrNull()
+            ?: return ActionOutcome(false, "no row labelled '$part' is on screen")
+        val screen = Rect()
+        root.getBoundsInScreen(screen)
+        val own = Rect().also { label.getBoundsInScreen(it) }
+        // The icon sits at the right end of the field's own line. Its position comes from the field (its height is a line,
+        // its middle is the line's middle) and the screen's width; no ancestor has to span the screen, which a Flutter
+        // search box need not (the field and the icon are separate widgets).
+        if (own.height() <= 0 || own.height() > screen.height() * 0.15f) {
+            return ActionOutcome(false, "the '$part' field is not a single line (${own.height()} px tall), so its end cannot be located")
+        }
+        val ok = service.tapAt(screen.right - screen.width() * 0.07f, own.exactCenterY())
+        return if (ok) ActionOutcome(true, "tapped the right end of the '$part' line") else ActionOutcome(false, "the tap at the end of the '$part' line failed")
+    }
+
+    /**
+     * Types [value] into the field whose hint or label contains [label] (a search box without an identifier): focused by
+     * a tap (at most three, each waiting for the field to advertise ACTION_SET_TEXT), then ACTION_SET_TEXT. Only
+     * for the fixed search terms of the flows, never credentials.
+     */
+    fun enterTextLabelled(label: String, value: String): ActionOutcome {
+        fun field(): AccessibilityNodeInfo? = AccessibilityNodeFinder.editableLabelled(targetRoot(), label)
+        var node = field() ?: return ActionOutcome(false, "no field labelled '$label' is on screen")
+        var taps = 0
+        while (!AccessibilityNodeFinder.supportsAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT) && taps < 3) {
+            val clickable = AccessibilityNodeFinder.resolveClickable(node) ?: node
+            val tapped = try {
+                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            } catch (_: Throwable) {
+                false
+            } || tapNode(clickable)
+            if (!tapped) return ActionOutcome(false, "could not tap the '$label' field to focus it")
+            taps++
+            waitUntil(AutomationConfig.Timeouts.FIELD_FOCUS) {
+                node = field() ?: node
+                AccessibilityNodeFinder.supportsAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)
+            }
+            if (cancelled) return ActionOutcome(false, "cancelled")
+        }
+        if (!AccessibilityNodeFinder.supportsAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)) {
+            return ActionOutcome(false, "tapped the '$label' field $taps time(s) but it never took focus")
+        }
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+        }
+        val accepted = try {
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        } catch (t: Throwable) {
+            return ActionOutcome(false, "ACTION_SET_TEXT threw ${t.javaClass.simpleName}")
+        }
+        return if (accepted) ActionOutcome(true, "entered into the '$label' field") else ActionOutcome(false, "the '$label' field rejected the text")
     }
 
     /**
