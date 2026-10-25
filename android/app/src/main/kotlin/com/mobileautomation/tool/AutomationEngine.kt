@@ -47,12 +47,15 @@ class AutomationEngine private constructor(
         val modules: List<String>? = null,
         /** Clear the target app's data first. Off for a phone whose Settings cannot be driven. */
         val clearData: Boolean = true,
+        /** Login module option: sign in straight through and skip the detour checks (Guest, Unblock, Join Now, Forgot, Switch Account). */
+        val loginDirectOnly: Boolean = false,
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
 
     companion object {
         private const val RECORDING_TAIL_MS = 1_500L
+        private const val SCREENSHOT_GAP_MS = 1_100L
 
         @Volatile
         private var worker: Thread? = null
@@ -121,7 +124,7 @@ class AutomationEngine private constructor(
                         )
                         TargetApp.TRADION -> TradionAutomationFlow(
                             engine,
-                            ModuleSelection(AppModules.TRADION, request.modules?.toSet()),
+                            ModuleSelection(AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly),
                         ).run(
                             userId = request.clientId,
                             password = request.password,
@@ -149,7 +152,10 @@ class AutomationEngine private constructor(
                                 "passed" to false,
                                 "failureMessage" to
                                     "The automation driver failed unexpectedly: " +
-                                    "${t.javaClass.simpleName}: ${t.message ?: "no detail"}",
+                                    "${t.javaClass.simpleName}: ${t.message ?: "no detail"}" +
+                                    (t.stackTrace.firstOrNull { it.className.startsWith("com.mobileautomation") }
+                                        ?.let { " (at ${it.className.substringAfterLast('.')}.${it.methodName}, line ${it.lineNumber})" }
+                                        ?: ""),
                                 "steps" to emptyList<Any>(),
                                 "videoPath" to recording?.file?.absolutePath,
                                 "recordingStartedAtMs" to recording?.startedAtMs,
@@ -624,6 +630,15 @@ class AutomationEngine private constructor(
         return AccessibilityNodeFinder.resolveClickable(anchor)?.isEnabled == true
     }
 
+    /**
+     * True when [identifier] is on screen and reports itself selected: the tag node
+     * itself, or the control it resolves to. Used for tabs, whose tag carries the flag.
+     */
+    fun isSelected(identifier: String): Boolean {
+        val anchor = findNow(identifier) ?: return false
+        return anchor.isSelected || AccessibilityNodeFinder.resolveClickable(anchor)?.isSelected == true
+    }
+
     /** The first of [identifiers] currently present, if any. */
     fun firstPresent(identifiers: List<String>): String? {
         val root = targetRoot() ?: return null
@@ -767,8 +782,27 @@ class AutomationEngine private constructor(
         else ActionOutcome(false, "'${action.label}' was rejected by '$identifier'")
     }
 
+    /**
+     * Performs the custom accessibility action whose label contains [labelPart] on the [index]-th node carrying
+     * [identifier] (e.g. "Move up" on one chosen edit row). No coordinate fallback: a drag is never guessed at.
+     */
+    fun customActionAt(identifier: String, index: Int, labelPart: String): ActionOutcome {
+        val anchor = AccessibilityNodeFinder.allByIdentifier(targetRoot(), identifier).getOrNull(index)
+            ?: return ActionOutcome(false, "'$identifier' row $index is not built")
+        val available = mutableListOf<String>()
+        val (node, action) = AccessibilityNodeFinder.findCustomAction(anchor, labelPart, available)
+            ?: return ActionOutcome(
+                false,
+                "'$identifier' row $index offers no '$labelPart' action; custom actions seen: " +
+                    "${available.distinct().ifEmpty { listOf("none") }.joinToString()}",
+            )
+        val ok = try { node.performAction(action.id) } catch (_: Throwable) { false }
+        return if (ok) ActionOutcome(true, "performed '${action.label}' on '$identifier' row $index")
+        else ActionOutcome(false, "'${action.label}' was rejected by '$identifier' row $index")
+    }
+
     /** Short texts on screen now, for failure messages on screens with no secret. See [AccessibilityNodeFinder.visibleTexts]. */
-    fun screenTexts(): List<String> = AccessibilityNodeFinder.visibleTexts(targetRoot())
+    fun screenTexts(limit: Int = 12): List<String> = AccessibilityNodeFinder.visibleTexts(targetRoot(), limit)
 
     /** Identifiers on screen right now, for failure messages. */
     fun visibleIdentifiers(): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot())
@@ -957,23 +991,35 @@ class AutomationEngine private constructor(
         // enough on Flutter — and wait until it advertises SET_TEXT.
         var focusedByTap = false
         if (!AccessibilityNodeFinder.supportsAction(editable, AccessibilityNodeInfo.ACTION_SET_TEXT)) {
-            val clickable = AccessibilityNodeFinder.resolveClickable(editable) ?: editable
-            val tapped = try {
-                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            } catch (_: Throwable) {
-                false
-            } || tapNode(clickable)
-            if (!tapped) return ActionOutcome(false, "could not tap '$identifier' to focus it")
-            focusedByTap = true
+            // A tap made while the page is still sliding in is swallowed by the Navigator (the field is on screen and
+            // readable but cannot be focused yet), so a tap that did not focus the field is repeated, at most three
+            // times, each waiting on the field's own state. Nothing is typed until it advertises SET_TEXT.
             var ready: AccessibilityNodeInfo? = null
-            waitUntil(AutomationConfig.Timeouts.FIELD_FOCUS) {
-                ready = findNow(identifier)?.let { AccessibilityNodeFinder.resolveEditable(it) }
-                    ?.takeIf { AccessibilityNodeFinder.supportsAction(it, AccessibilityNodeInfo.ACTION_SET_TEXT) }
-                ready != null
+            var taps = 0
+            while (ready == null && taps < 3) {
+                val current = findNow(identifier)?.let { AccessibilityNodeFinder.resolveEditable(it) } ?: editable
+                val clickable = AccessibilityNodeFinder.resolveClickable(current) ?: current
+                val tapped = try {
+                    clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } catch (_: Throwable) {
+                    false
+                } || tapNode(clickable)
+                if (!tapped) {
+                    if (taps == 0) return ActionOutcome(false, "could not tap '$identifier' to focus it")
+                    break
+                }
+                taps++
+                focusedByTap = true
+                waitUntil(AutomationConfig.Timeouts.FIELD_FOCUS) {
+                    ready = findNow(identifier)?.let { AccessibilityNodeFinder.resolveEditable(it) }
+                        ?.takeIf { AccessibilityNodeFinder.supportsAction(it, AccessibilityNodeInfo.ACTION_SET_TEXT) }
+                    ready != null
+                }
+                if (cancelled) return ActionOutcome(false, "cancelled")
             }
             editable = ready ?: return ActionOutcome(
                 false,
-                "tapped '$identifier' but it never took focus (it still offers no ACTION_SET_TEXT)",
+                "tapped '$identifier' $taps time(s) but it never took focus (it still offers no ACTION_SET_TEXT)",
             )
         }
 
@@ -1054,6 +1100,21 @@ class AutomationEngine private constructor(
             )
         } else {
             ActionOutcome(false, "found by $how but neither ACTION_CLICK nor a bounds tap worked")
+        }
+    }
+
+    /** Taps the [index]th (top to bottom, as built) node carrying [identifier], e.g. one row of a list. */
+    fun tapAt(identifier: String, index: Int): ActionOutcome {
+        val anchor = AccessibilityNodeFinder.allByIdentifier(targetRoot(), identifier).getOrNull(index)
+            ?: return ActionOutcome(false, "'$identifier' row $index is not built")
+        val clickable = AccessibilityNodeFinder.resolveClickable(anchor)
+        if (clickable != null && performClick(clickable)) {
+            return ActionOutcome(true, "tapped '$identifier' row $index via ACTION_CLICK")
+        }
+        return if (tapNode(clickable ?: anchor)) {
+            ActionOutcome(true, "tapped '$identifier' row $index at its bounds centre")
+        } else {
+            ActionOutcome(false, "'$identifier' row $index could not be tapped")
         }
     }
 
@@ -1221,7 +1282,14 @@ class AutomationEngine private constructor(
         }
 
     /** Best effort. Returns the saved path, or null with a reason in [onUnavailable]. */
+    private var lastShotAtMs = 0L
+
     fun screenshot(label: String, onUnavailable: (String) -> Unit): String? {
+        // Android refuses a screenshot taken too soon after the last one, which is what made the second of two
+        // quick captures "unavailable". Keep a gap between them.
+        val wait = SCREENSHOT_GAP_MS - (SystemClock.elapsedRealtime() - lastShotAtMs)
+        if (wait > 0) sleep(wait)
+        lastShotAtMs = SystemClock.elapsedRealtime()
         val safeLabel = "${runId.take(8)}_$label".replace(Regex("[^A-Za-z0-9_\\-]"), "_")
         return when (val result = service.captureScreenshot(screenshotDir, safeLabel)) {
             is AutomationAccessibilityService.ShotResult.Saved -> result.path

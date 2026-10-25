@@ -6,7 +6,7 @@ supported, picked on the tool's **Run Automation** screen:
 | App | Package | Login | Regression pass |
 | --- | --- | --- | --- |
 | **Ashika** | `com.codifi.dhanush` | Client ID → OTP → MPIN → Skip Biometric | 60 steps: watchlist and search, load check of every tab of Home, Research, Portfolio and Orders, logout |
-| **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 75 steps: login side paths (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, Login with OTP, Confirm OTP button, Enable 2FA), watchlist (tabs, Predefined refuses add, basket, filter, details, edit (rename, rearrange, delete, save, verify, restore), search add and delete in every segment, chart with screenshot, More Details tabs), Dashboard (Option Chain per segment, Research calls, scanners View All), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
+| **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 116 steps: login side paths (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, Login with OTP, Confirm OTP button, Enable 2FA), watchlist (27 independent test cases WL-01..WL-41: landing, switching, Predefined, indices / funds panel, instrument sheet with Chart / Alert / Op.Chain / BUY-SELL order pad, More Details, search by category, green-tick add / remove, Edit rename / reorder / delete of a test instrument, Manage Watchlist view / sort / filter / Clear), Dashboard (index dropdown, Trading tab selected, Option Chain per segment, Research calls, Trading Ideas tabs / search / menu / filters, Futures View All with sort and Buy / Sell, FII / DII, Customize, Scanners tabs / segments / search / sort / scrip sheet with Buy / Sell, then the Investment tab: Alerts (a test alert is created, searched and deleted), IPO, Reports, ETF (every tab), Pledge, Back Office, Other request, Top Sectors, every Scanners tab of Equity / Futures / Options / Commodity, Customize), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
 
 Sections 2–18 describe the shared tool and, unless a section says otherwise,
 Ashika's flow; Tradion's is in section 1a. Everything runs on a single Android
@@ -60,39 +60,18 @@ User ID → Login → Password page   Forgot Password · Switch Account (back to
 Password → Proceed → (authenticator accounts: Login with OTP) → OTP: Confirm OTP button checked,
 OTP typed (auto-submits) → Enable 2FA (biometric devices only) → Risk Disclosure (if shown) → Home
 
-Watchlist   tabs counted (no load test) · a Predefined list refuses Search / add · basket mode toggled
-            and restored · Filter screen opened and closed · scrip details opened and closed ·
-            Edit watchlist: long-press opens it, the watchlist is renamed, the first scrip moved
-            down ("Move down" action), the new first scrip deleted, Save; the count must drop by
-            one; then it is reopened to confirm the name and order persisted and the name is put
-            back · Search opened · its 4 segments listed · Stocks (TCS), F&O (NIFTY), Commodity
-            (CRUDEOIL): add, confirm it stays added, delete that exact result, confirm it stays
-            deleted · All (INFY): add and keep only when it replaces the verified edit deletion
-            (otherwise add then remove it) · a result's details sheet · Search closed · count =
-            net of the changes
-Scrip       details sheet → Chart loads (screenshot) · More Details tabs (Market Depth, Technicals,
-            Fundamentals, Info — equity has all four, other segments no Fundamentals) each load
-Orders      Pending · Order Book · Trade Book · Basket · GTT · SIP      (each must finish loading)
-Dashboard   Trading (+ Short/Long Buildup chips) · Option Chain: for NFO, MCX, CDS and BFO open the
-            search, pick the segment, choose the first script, its chain must load in 7 s ·
-            Research calls: every tab and sub tab loads · Investments (+ scanner chips) ·
-            Scanners › View All: every tab loads
-Portfolio   Holdings loads · Net P&L / Day P&L toggled · Stock / MTF switched and restored · sort
-            sheet opened and closed · Positions loads · Net / Day P&L toggled · sort sheet opened
-Profile     Account loads · Trade Settings loads
+Watchlist   27 independent cases (WL-01..WL-41), one representative instrument each, 3 s per
+            normal click, 10 s for server data, 15 s for the chart WebView · landing · switch ·
+            Predefined · indices panel · instrument sheet · Chart · Alert page (never submitted) ·
+            Option Chain · BUY / SELL open the order pad (left with Back) · More Details ·
+            search All / F&O / Commodity / Stocks · green-tick remove and re-add · Edit rename
+            (restored) / reorder / delete a test instrument the run added · Manage Watchlist
+            view, sort, filter, Clear (restored). Results: PASS / FAIL / BLOCKED / NOT APPLICABLE /
+            NOT TESTED, with a defect list and QA assessment in the report (HANDOFF 4g)
 Logout      Profile → Logout → Yes → back on the login screens
 ```
 
-**Edit watchlist never empties a watchlist.** The edit session renames the first
-watchlist, moves a scrip, deletes the first scrip, saves, reopens to check, and renames
-it back. If the watchlist holds **one** scrip the delete is skipped (with a note), because
-deleting it leaves an empty watchlist and, in a recorded run, the rename back then never
-completed: Save left the screen open for the full 20 s and the temporary name (`…Q`)
-stayed. The run's own INFY add put one scrip back each time, so an account at one scrip
-failed step 38 on every run, while one with two or more passed, which looked random. The
-restore Save is also pressed once more if the screen is still open after 8 s, and a Save
-that still does not close reports what the app showed (for example a "Market watch name
-already exists" snackbar).
+**The Edit cases never delete the account's own instruments.** They add a test instrument themselves (TCS, else RELIANCE), reorder and delete only that one, and remove it again even when an earlier case failed; a full watchlist makes them BLOCKED.
 
 **Login side paths** (steps `guest_user_checked` … `enable_2fa_checked`). A link's form is opened,
 a fixed fake value (`9999999999`, `ABCDE1234F`) is typed into each field that accepts typing, and
@@ -112,7 +91,7 @@ Facts that shape them:
   OTP auto-submits and a second submit could spend the one-time code twice.
 * "Enable 2FA" is the biometric screen ("Enable 2FA security" / "Enable now"). It appears only on
   a device with biometrics; its button is tapped, which starts Android's own prompt that the tool
-  does not drive, so the run ends there as before.
+  does not drive. A person answers it (see the Tradion-specific limits below).
 * A failed check is recorded and the run continues, unless the flow can no longer get back to the
   page it needs (then the run stops with the reason). Build Tradion from the current sources: older
   builds lack these identifiers, and the failure message says so.
@@ -139,13 +118,12 @@ How it differs from Ashika, and why:
   `logout_confirm_button`.
 * **Inner tab labels carry live counts** ("Pending (3)", "holdings (12)") and are
   localised, so tabs are found by position-based identifiers, never by label.
-* **The watchlist is mutated, on purpose.** Like Ashika's run, the edit step
-  deletes **1** scrip from a selected editable watchlist (and briefly renames it,
-  restoring and re-verifying the name). When that deletion is verified, the
-  All-segment search adds 1 back; if the edit deletion did not persist, the All
-  add is removed again. The other segments add and delete the exact same result,
-  even if the search already shows other added scrips. A clean run therefore ends
-  with the list at its original size. Use a dedicated test account.
+* **The watchlist is touched only by test instruments and settings.** The Watchlist
+  cases add one instrument (INFY via the green tick, TCS / RELIANCE for the Edit
+  cases) and remove it again, rename a watchlist and restore the name, and change
+  Manage Watchlist preferences and restore them. A clean run ends with the account
+  as it started; a failure in the middle is cleaned up by the suite's own final
+  step. Use a dedicated test account anyway.
 
 Soft failures: any step after login that fails is recorded and the run moves on
 (steps that depend on it are marked skipped), so the report shows every tab and
@@ -154,10 +132,16 @@ abort the run.
 
 Tradion-specific limits:
 
-* **A device with biometrics enrolled** gets Tradion's *Enable biometric login*
-  screen after the OTP. It has no Skip and the tool never drives fingerprint or
-  face authentication, so the run stops there with an explanation. Use a device or
-  emulator with no biometrics enrolled.
+* **A device with biometrics enrolled** gets Tradion's mandatory *Enable 2FA security*
+  screen after the OTP. It has no Skip, and the tool never drives fingerprint, face or
+  PIN authentication. So the tool taps **Enable now** (once, from the Login module's
+  check or from the disclosure step if that check is off) and then **waits up to 90 s
+  for you** to touch the sensor or use the phone's PIN, and the run carries on to Home
+  the moment the app does. If the prompt is dismissed, Enable now is tapped again (twice
+  at most). Nobody answering in time stops the run with that explanation. This means
+  a run on such a phone is not hands-off at that one moment; a device or emulator with no
+  biometrics enrolled is. Tradion asks again after every data reset, and after a reset
+  from inside the app, so expect it on each run.
 * **TOTP accounts** (an authenticator code instead of an SMS OTP) get a different
   screen, which this tool does not drive.
 * **A user who still has to set a password**, or a blocked account, is routed to

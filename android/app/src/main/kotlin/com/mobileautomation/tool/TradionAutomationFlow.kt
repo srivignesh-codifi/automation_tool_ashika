@@ -26,11 +26,14 @@ import com.mobileautomation.tool.AutomationEngine.WaitOutcome
  * Positions, with their view switches) and Profile, and finally Logout.
  *
  * Deliberately absent: invalid credential cases, and anything that places,
- * modifies or cancels an order or moves funds. On Orders, Dashboard and
- * Portfolio the tool only selects tabs, flips view switches, opens a sort sheet
- * and scrolls — it never taps a row, a buy / sell / exit button, or a basket
- * action. It types only the three credential values plus the fixed search
- * terms baked into this flow.
+ * modifies or cancels an order or moves funds. On Orders and Portfolio the
+ * tool only selects tabs, flips view switches, opens a sort sheet and scrolls
+ * — it never taps a row, a buy / sell / exit button, or a basket action. On
+ * the Dashboard it also opens a scrip's sheet and taps the plain Buy and Sell
+ * buttons, only to see the order pad open; the pad is left with Back and
+ * nothing on it is touched. It types only the three credential values plus the
+ * fixed search terms baked into this flow and, for the Dashboard's search
+ * checks, the first letters of a scrip that is already listed.
  *
  * Tradion's own Back behaviour shapes the flow: pressing Back on the home screen
  * exits the app, so Back is only ever pressed to close an overlay the flow has
@@ -45,10 +48,21 @@ class TradionAutomationFlow(
     private val modules: ModuleSelection = ModuleSelection(AppModules.TRADION, null),
 ) : FlowBase(engine, buildSteps()) {
 
-    private companion object {
+    init {
+        // Lets the report show Login and Watchlist (and the rest) as separate results.
+        for (module in AppModules.TRADION) for (id in module.stepIds) step(id).module = module.id
+    }
+
+    internal companion object {
         /** Typed into side forms and never submitted. Obviously not a real number or PAN. */
         const val FAKE_MOBILE = "9999999999"
         const val FAKE_PAN = "ABCDE1234F"
+
+        /** The Login module's detours: steps that leave the sign-in path and come back. Skipped by "direct login only". */
+        val LOGIN_DETOUR_STEPS = listOf(
+            "guest_user_checked", "unblock_account_checked", "join_now_checked",
+            "forgot_password_checked", "switch_account_checked",
+        )
 
         fun s(id: String, name: String) = AutomationStepResult(id, name)
 
@@ -76,33 +90,7 @@ class TradionAutomationFlow(
             s("enable_2fa_checked", "Enable 2FA button visible and clickable"),
             s("disclosure_accepted", "Risk disclosure accepted"),
             s("home_displayed", "Home displayed"),
-            s("watchlist_tab_opened", "Watchlist tab opened"),
-            s("watchlist_tabs_loaded", "Watchlist tabs found"),
-            s("watchlist_predefined_no_add", "Predefined list refuses Search / add"),
-            s("watchlist_basket_toggled", "Basket mode toggled and restored"),
-            s("watchlist_filter_opened", "Filter screen opened and closed"),
-            s("scrip_details_opened", "Scrip details opened and closed"),
-            s("scrip_chart_loaded", "Scrip details › Chart loaded (screenshot)"),
-            s("scrip_more_details_tabs", "Scrip details › More Details tabs load"),
-            s("watchlist_edit_opened", "Edit watchlist: screen opened (long-press)"),
-            s("watchlist_edit_rename", "Edit watchlist: renamed"),
-            s("watchlist_edit_reorder", "Edit watchlist: scrip moved down"),
-            s("watchlist_edit_delete", "Edit watchlist: scrip deleted"),
-            s("watchlist_edit_saved", "Edit watchlist: saved, count drops by one"),
-            s("watchlist_edit_verified", "Edit watchlist: rename and order persisted"),
-            s("watchlist_edit_restored", "Edit watchlist: name restored and saved"),
-            s("search_opened", "Search screen opened"),
-            s("search_tabs_listed", "Search segments listed"),
-            s("search_stocks_added", "Stocks segment: TCS added"),
-            s("search_stocks_deleted", "Stocks segment: TCS deleted again"),
-            s("search_fno_added", "F&O segment: NIFTY added"),
-            s("search_fno_deleted", "F&O segment: NIFTY deleted again"),
-            s("search_commodity_added", "Commodity segment: crude oil added"),
-            s("search_commodity_deleted", "Commodity segment: crude oil deleted again"),
-            s("search_all_added", "All segment: INFY added"),
-            s("search_details_opened", "Search result details opened and closed"),
-            s("search_closed", "Search screen closed"),
-            s("watchlist_count_updated", "Watchlist count matches the adds and deletes"),
+        ) + WatchlistSuite.steps() + listOf(
             s("orders_pending_loaded", "Orders › Pending loaded"),
             s("orders_order_book_loaded", "Orders › Order Book loaded"),
             s("orders_trade_book_loaded", "Orders › Trade Book loaded"),
@@ -110,14 +98,55 @@ class TradionAutomationFlow(
             s("orders_gtt_loaded", "Orders › GTT loaded"),
             s("orders_sip_loaded", "Orders › SIP loaded"),
             s("dashboard_trading_loaded", "Dashboard › Trading loaded"),
+            s("dashboard_index_dropdown_checked", "Dashboard › index dropdown opens and lists the indices"),
+            s("dashboard_trading_tab_selected", "Dashboard › Trading tab is clickable, opens Trading and shows as selected"),
             s("option_chain_opened", "Trading › Option Chain opened"),
             s("option_chain_nfo_loaded", "Option Chain › NFO: first script loads in 7 s"),
             s("option_chain_mcx_loaded", "Option Chain › MCX: first script loads in 7 s"),
             s("option_chain_cds_loaded", "Option Chain › CDS: first script loads in 7 s"),
             s("option_chain_bfo_loaded", "Option Chain › BFO: first script loads in 7 s"),
             s("research_calls_loaded", "Trading › Research calls: every tab and sub tab loads"),
+            s("trading_ideas_tabs_clickable", "Research › Trading Ideas opens and every tab is clickable"),
+            s("trading_ideas_subtabs_search", "Trading Ideas › Intraday / Positional tabs clickable and the scrip search finds a scrip"),
+            s("trading_ideas_menu_opened", "Trading Ideas › the top-right menu is clickable and opens"),
+            s("trading_ideas_filter_checked", "Trading Ideas › Filter By (Status, Exchange, Returns) clickable and Clear resets"),
+            s("futures_view_all_checked", "Futures › View All: every tab clickable, sort options work and Clear resets"),
+            s("futures_scrip_buy_sell_checked", "Futures › one scrip: Buy and Sell open the order pad (nothing placed)"),
+            s("fii_dii_view_all_checked", "FII / DII › View All opens and shows the data"),
+            s("dashboard_customize_checked", "Dashboard › Customize opens its options"),
             s("dashboard_investments_loaded", "Dashboard › Investments loaded"),
+            s("investment_tab_selected", "Dashboard › Investment tab is clickable, opens Investment and shows as selected"),
+            s("alerts_page_opened", "Investment › Alerts: the Alerts page opens and + New Alert opens the create page"),
+            s("alert_created", "Investment › Alerts: the New Alert fields take values and an alert is created"),
+            s("alerts_search_checked", "Investment › Alerts: the search box finds the alert"),
+            s("alert_deleted", "Investment › Alerts: the test alert is deleted again"),
+            s("ipo_page_checked", "Investment › IPO: the page opens, every tab is clickable and the search box finds an IPO"),
+            s("ipo_details_checked", "Investment › IPO: one IPO's details open and its buttons are clickable (Apply is not tapped)"),
+            s("reports_page_opened", "Investment › Reports: the button opens the Reports page"),
+            s("etf_page_opened", "Investment › ETF: the button opens the ETF page"),
+            s("etf_tabs_options", "ETF › every tab: one instrument's Chart, Alert, Basket and More Details open"),
+            s("etf_tabs_buy_sell", "ETF › every tab: Buy and Sell open the order pad (nothing placed)"),
+            s("etf_search_settings", "ETF › search finds an instrument; settings icon NSE / BSE and sort options work and Clear resets"),
+            s("pledge_page_opened", "Investment › Pledge: the button opens the Pledge page"),
+            s("back_office_opened", "Investment › Back Office: the button opens the page and Back returns to the dashboard"),
+            s("other_request_opened", "Investment › Other request: the button opens its page"),
+            s("top_sectors_view_all_checked", "Investment › Top Sectors: View All opens the sectors page and every tab is clickable"),
             s("scanners_view_all_loaded", "Investments › Scanners › View All: every tab loads"),
+            s("screener_tabs_checked", "Scanners › opens, every tab is clickable and shows data"),
+            s("screener_dropdown_checked", "Scanners › segment dropdown shows its options and each is clickable"),
+            s("screener_search_checked", "Scanners › search accepts a value and lists the matching scrips"),
+            s("screener_sort_checked", "Scanners › sort sheet: every sort option clickable, Close restores the default"),
+            s("screener_scrip_checked", "Scanners › one scrip: Chart, Op.Chain, More Details open; Buy and Sell open the order pad (nothing placed)"),
+            s("scanners_equity_tab_options", "Scanners › Equity: every tab, one instrument's Chart, Alert, Op.Chain and More Details open"),
+            s("scanners_equity_tab_buy_sell", "Scanners › Equity: every tab, Buy and Sell open the order pad (nothing placed)"),
+            s("scanners_equity_search_settings", "Scanners › Equity: search finds a scrip; settings icon NSE / BSE and sort options work and Clear resets"),
+            s("scanners_futures_tab_options", "Scanners › Futures: every tab, one instrument's Chart, Alert, Op.Chain and More Details open"),
+            s("scanners_futures_tab_buy_sell", "Scanners › Futures: every tab, Buy and Sell open the order pad (nothing placed)"),
+            s("scanners_options_tab_options", "Scanners › Options: every tab, one instrument's Chart, Alert, Op.Chain and More Details open"),
+            s("scanners_options_tab_buy_sell", "Scanners › Options: every tab, Buy and Sell open the order pad (nothing placed)"),
+            s("scanners_commodity_tab_options", "Scanners › Commodity: every tab, one instrument's Chart, Alert, Op.Chain and More Details open"),
+            s("scanners_commodity_tab_buy_sell", "Scanners › Commodity: every tab, Buy and Sell open the order pad (nothing placed)"),
+            s("investment_customize_checked", "Investment › Customize opens its options"),
             s("holdings_loaded", "Portfolio › Holdings loaded"),
             s("holdings_mode_toggled", "Holdings › Net P&L / Day P&L toggled"),
             s("holdings_switch_toggled", "Holdings › Stock / MTF switched and restored"),
@@ -153,12 +182,6 @@ class TradionAutomationFlow(
         T.BOTTOMNAV_PORTFOLIO_TAB, T.BOTTOMNAV_PROFILE_TAB,
     )
 
-    /**
-     * Every possible header tab index of each strip. A tab scrolled out of view
-     * is not in the accessibility tree at all, so "a tab of this strip is
-     * showing" is the only reliable way to tell which strip is on screen.
-     */
-    private val watchlistTabIds = (0 until Timeouts.MAX_WATCHLIST_TABS).map { "${T.WATCHLIST_TAB_PREFIX}$it" }
     private val predefinedTabIds = (0 until Timeouts.MAX_WATCHLIST_TABS).map { "${T.PREDEFINED_TAB_PREFIX}$it" }
 
     private val ordersTabIds = listOf(
@@ -316,7 +339,9 @@ class TradionAutomationFlow(
             )
         }
 
-        if (!moduleOn("login")) skipModule("login") else {
+        if (!moduleOn("login")) skipModule("login")
+        else if (modules.directLogin) skipSteps(LOGIN_DETOUR_STEPS, "direct login only")
+        else {
         // 5a — Guest User, Unblock Account, Join Now ------------------------------
         val guest = step("guest_user_checked")
         begin(guest)
@@ -391,7 +416,7 @@ class TradionAutomationFlow(
             )
         }
 
-        if (moduleOn("login")) {
+        if (moduleOn("login") && !modules.directLogin) {
         // 8a — Forgot Password, Switch Account ---------------------------------------
         val forgot = step("forgot_password_checked")
         begin(forgot)
@@ -539,11 +564,12 @@ class TradionAutomationFlow(
             )
         }
 
+        var enableNowTapped = false
         if (moduleOn("login")) {
         // 13a — Enable 2FA --------------------------------------------------------------------------------------
-        // Tradion's biometric screen is titled "Enable 2FA security". It appears
-        // only on a device with biometrics, and the run cannot go past it (no
-        // Skip), so the next step ends the run there after this one is recorded.
+        // Tradion's biometric screen is titled "Enable 2FA security". It appears only on a
+        // device with biometrics and has no Skip. Tapping Enable now raises Android's own
+        // prompt; a person answers it, and the disclosure step below waits for that.
         val enable2fa = step("enable_2fa_checked")
         begin(enable2fa)
         if (afterOtpId != T.BIOMETRIC_SCREEN) {
@@ -560,10 +586,12 @@ class TradionAutomationFlow(
             if (!tap.ok) {
                 failAndContinue(enable2fa, "Enable now could not be tapped: ${tap.detail}")
             } else {
+                enableNowTapped = true
                 pass(
                     enable2fa,
                     "Enable now was visible and clickable and was tapped (${tap.detail}); it starts Android's " +
-                        "own authentication prompt, which this tool does not read or drive",
+                        "own authentication prompt, which this tool does not read or drive: touch the " +
+                        "fingerprint sensor (or use the phone's PIN) when it asks, and the run carries on",
                 )
             }
         }
@@ -576,15 +604,56 @@ class TradionAutomationFlow(
         // later, so seeing Home is not proof that no dialog is coming.
         val disclosure = step("disclosure_accepted")
         begin(disclosure)
+        var arrivedId = afterOtpId
+        var biometricNote = ""
         if (afterOtpId == T.BIOMETRIC_SCREEN) {
-            return abort(
-                disclosure,
-                "The app is offering to enable biometric login. Tradion's enrolment screen has no " +
-                    "Skip, and this tool never drives fingerprint or face authentication, so the run " +
-                    "cannot continue. Use a device or emulator with no biometrics enrolled.",
-            )
+            // The enrolment screen is mandatory and has no Skip. The tool never answers the
+            // fingerprint / face / PIN prompt itself, so it waits for a person to, the way it
+            // waits for a person to allow a permission. While the prompt is up the app's window
+            // is unreadable, which is why this is a plain poll and not a wait that treats a lost
+            // window as the app having gone.
+            val signedIn = postLoginIds + bottomNavIds
+            val started = SystemClock.elapsedRealtime()
+            var retaps = 0
+            var onScreenSince = 0L
+            if (!enableNowTapped) {
+                val tap = engine.tap(T.BIOMETRIC_ENABLE_BUTTON, listOf("Enable now"))
+                if (!tap.ok) {
+                    return abort(disclosure, "The biometric screen is showing but Enable now could not be tapped: ${tap.detail}")
+                }
+            }
+            val confirmed = engine.waitUntil(Timeouts.BIOMETRIC_CONFIRM) {
+                if (engine.firstPresent(signedIn) != null) return@waitUntil true
+                if (engine.isPresent(T.BIOMETRIC_SCREEN)) {
+                    // Back on the screen: the prompt is not up (dismissed, or never appeared).
+                    val now = SystemClock.elapsedRealtime()
+                    if (onScreenSince == 0L) onScreenSince = now
+                    if (now - onScreenSince > 6_000L && retaps < 2) {
+                        engine.tap(T.BIOMETRIC_ENABLE_BUTTON, listOf("Enable now"))
+                        retaps++
+                        onScreenSince = 0L
+                    }
+                } else {
+                    onScreenSince = 0L
+                }
+                false
+            }
+            if (engine.cancelled) return stopped(disclosure)
+            if (!confirmed) {
+                return abort(
+                    disclosure,
+                    "The app is offering to enable biometric login (it is mandatory and has no Skip), and nobody " +
+                        "confirmed it within ${Timeouts.BIOMETRIC_CONFIRM / 1000} seconds. This tool never answers " +
+                        "the fingerprint, face or PIN prompt itself: touch the sensor when Android asks, or use a " +
+                        "device or emulator with no biometrics enrolled.",
+                )
+            }
+            arrivedId = engine.firstPresent(signedIn) ?: T.HOME_SCREEN
+            val seconds = (SystemClock.elapsedRealtime() - started) / 1000
+            biometricNote = "biometric enrolment was confirmed by hand after $seconds s" +
+                (if (retaps > 0) " (Enable now was tapped again $retaps time(s))" else "") + "; "
         }
-        var disclosureShown = afterOtpId == T.RISK_DISCLOSURE_DIALOG
+        var disclosureShown = arrivedId == T.RISK_DISCLOSURE_DIALOG
         if (!disclosureShown) {
             when (engine.waitForAny(listOf(T.RISK_DISCLOSURE_DIALOG), Timeouts.DISCLOSURE_APPEARS)) {
                 is WaitOutcome.Found -> disclosureShown = true
@@ -593,7 +662,7 @@ class TradionAutomationFlow(
             }
         }
         if (!disclosureShown) {
-            skip(disclosure, "the risk disclosure did not appear, so there was nothing to accept")
+            skip(disclosure, biometricNote + "the risk disclosure did not appear, so there was nothing to accept")
         } else {
             val taps = engine.tapUpTo(
                 T.DISCLOSURE_UNDERSTAND_BUTTON,
@@ -618,7 +687,7 @@ class TradionAutomationFlow(
                         "closing; that cannot be passed from here.",
                 )
             }
-            pass(disclosure, "confirmed across $taps page(s)")
+            pass(disclosure, biometricNote + "confirmed across $taps page(s)")
         }
 
         // 15 — Home displayed ----------------------------------------------------------------------------------
@@ -794,85 +863,6 @@ class TradionAutomationFlow(
 
     // ── Watchlist ───────────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Opens the details sheet of the first watchlist row. Returns null on
-     * success, a message starting "EMPTY" when there is no row, or a failure.
-     */
-    private fun openFirstRowSheet(): String? {
-        if (!engine.isPresent(T.WATCHLIST_SCRIP_ROW)) return "EMPTY: no watchlist row"
-        val sheets = listOf(T.SCRIP_DETAILS_SHEET, T.INDEX_DETAILS_SHEET)
-        val open = engine.tapAndConfirm(T.WATCHLIST_SCRIP_ROW, sheets, Timeouts.SCREEN_CHANGE)
-        if (!open.ok) return "Tapping the first watchlist row did not open its details: ${open.detail}"
-        return if (engine.sleep(1_000L)) null else "cancelled"
-    }
-
-    /** Closes a details sheet that is still open, never pressing Back with nothing to close. */
-    private fun closeSheetIfOpen() {
-        engine.firstPresent(listOf(T.SCRIP_DETAILS_SHEET, T.INDEX_DETAILS_SHEET))?.let { closeWithBack(it) }
-    }
-
-    /**
-     * Long-presses the first watchlist row to open Edit. After deleting the last
-     * row, the selected header tab is the only remaining route back into Edit,
-     * so verification sessions fall back to long-pressing that exact tab.
-     */
-    private fun openEditScreen(): String? {
-        val anchor = if (engine.isPresent(T.WATCHLIST_SCRIP_ROW)) {
-            T.WATCHLIST_SCRIP_ROW
-        } else {
-            selectedEditableWatchlistTab
-                ?: return "No scrip row or selected editable watchlist tab is available to open Edit."
-        }
-        val open = engine.tapAndConfirm(
-            anchor, listOf(T.REORDER_SCREEN), Timeouts.WATCHLIST_EDIT, longPress = true,
-        )
-        return if (open.ok) null else "Long-pressing '$anchor' did not open the edit screen: ${open.detail}"
-    }
-
-    /**
-     * Leaves an edit screen that did not close after Save. Back asks "save
-     * changes?" when something is unsaved, so Discard is tapped if that shows.
-     * Back is only pressed while the edit screen is confirmed on screen.
-     */
-    private fun escapeEditScreen(): Boolean {
-        if (!engine.isPresent(T.REORDER_SCREEN)) return true
-        // The first Back can merely dismiss the rename field's keyboard. Retry
-        // only while Edit itself is still positively present.
-        repeat(3) {
-            if (!engine.isPresent(T.REORDER_SCREEN)) return true
-            if (!engine.pressBack()) return false
-            when (val found = engine.waitForAny(
-                listOf(T.REORDER_DISCARD_BUTTON, T.WATCHLIST_SCREEN),
-                Timeouts.CONFIRM_RETRY,
-            )) {
-                is WaitOutcome.Found -> {
-                    if (found.identifier == T.REORDER_DISCARD_BUTTON) {
-                        val discard = engine.tap(T.REORDER_DISCARD_BUTTON)
-                        if (!discard.ok) return false
-                    }
-                    if (engine.waitForGone(T.REORDER_SCREEN, Timeouts.SCREEN_CHANGE)) return true
-                }
-                is WaitOutcome.Cancelled -> return false
-                else -> Unit
-            }
-        }
-        return engine.waitForGone(T.REORDER_SCREEN, Timeouts.SCREEN_CHANGE)
-    }
-
-    /**
-     * What the edit screen is showing right now, for a failed Save: the app
-     * explains a refusal in a snackbar ("Market watch name already exists",
-     * "can't be empty", ...), which is otherwise lost.
-     */
-    private fun editScreenHint(): String {
-        val texts = engine.screenTexts()
-        val identifiers = engine.visibleIdentifiers()
-        return buildString {
-            if (texts.isNotEmpty()) append(" Texts on screen: ${texts.joinToString(" | ")}.")
-            if (identifiers.isNotEmpty()) append(" Identifiers on screen: ${identifiers.joinToString(", ")}.")
-        }
-    }
-
     /** The rows of the open edit screen, top to bottom, as the app labels them. */
     private fun editRows(): List<String> =
         engine.groupedLabelsOf(T.REORDER_ROW).map { it.trim() }.filter { it.isNotEmpty() }
@@ -881,252 +871,6 @@ class TradionAutomationFlow(
         val countAfter: Int?,
         val persistedDeletes: Int,
     )
-
-    /**
-     * One edit session on the open edit screen, ending saved: rename, move the
-     * first scrip down, delete the (new) first scrip, Save, check the count; then
-     * a second session confirms the name and order persisted and puts the name
-     * back. Every step is soft; the one thing that must not happen is leaving the
-     * run stuck on the edit screen, so each failure path leaves it.
-     * Returns the watchlist count afterwards (null if unreadable), or null with
-     * the run cancelled — callers distinguish via [AutomationEngine.cancelled].
-     */
-    private fun editSession(editIds: List<String>, countBefore: Int?, allowDelete: Boolean): EditOutcome? {
-        val rename = step(editIds[1])
-        val reorder = step(editIds[2])
-        val delete = step(editIds[3])
-        val saved = step(editIds[4])
-        val verified = step(editIds[5])
-        val restored = step(editIds[6])
-
-        val rowsBefore = editRows()
-        val origName = engine.watchlistName()?.trim().orEmpty()
-        val replacement = if (origName.lastOrNull()?.uppercaseChar() == 'Q') 'R' else 'Q'
-        val newName = if (origName.length >= 25) origName.dropLast(1) + replacement else "$origName$replacement"
-
-        // Rename ---------------------------------------------------------------------------------------
-        begin(rename)
-        var renamed = false
-        if (origName.isEmpty()) {
-            failAndContinue(rename, "The watchlist's current name could not be read from the edit screen, so it was left alone.")
-        } else {
-            val typed = engine.enterText(T.REORDER_RENAME_INPUT, newName)
-            if (!typed.ok) failAndContinue(rename, "Could not type the new name: ${typed.detail}")
-            else { renamed = true; pass(rename, "renamed '$origName' to '$newName'") }
-        }
-        if (engine.cancelled) return null
-
-        // Move the first scrip down ---------------------------------------------------------------------------
-        begin(reorder)
-        var reordered = false
-        if (rowsBefore.isEmpty()) {
-            failAndContinue(reorder, "No rows could be read from the edit screen ('${T.REORDER_ROW}' carried no text). Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.")
-        } else if (rowsBefore.size < 2) {
-            skip(reorder, "the watchlist holds fewer than two scrips, so there is nothing to rearrange")
-        } else {
-            val move = engine.customAction(T.REORDER_ROW, "Move down")
-            if (!move.ok) {
-                failAndContinue(reorder, "Could not move the first scrip down: ${move.detail}")
-            } else {
-                val landed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
-                    val after = editRows()
-                    after.size >= 2 && after[0] == rowsBefore[1] && after[1] == rowsBefore[0]
-                }
-                if (engine.cancelled) return null
-                val after = editRows()
-                if (landed) {
-                    reordered = true
-                    pass(reorder, "the first scrip moved below the second")
-                } else {
-                    failAndContinue(reorder, "After 'Move down' the first two rows should have swapped, but the list now starts with ${after.take(2)} (was ${rowsBefore.take(2)}).")
-                }
-            }
-        }
-        if (engine.cancelled) return null
-
-        // Delete the (new) first scrip -----------------------------------------------------------------------
-        begin(delete)
-        val rowsNow = editRows()
-        var deleted = 0
-        // A watchlist holding one scrip is never emptied. Deleting its only scrip
-        // leaves an empty watchlist, and in a recorded run the rename that puts the
-        // name back then never completed (Save left the screen open for the whole
-        // 20 s), stranding the temporary name. The run's own INFY add puts one scrip
-        // back each time, so such an account hit this every run. With two or more
-        // scrips the list is never empty, so the delete is still exercised.
-        val deleteSkipped = rowsNow.size == 1 || !allowDelete
-        if (deleteSkipped) {
-            skip(
-                delete,
-                if (!allowDelete) {
-                    "Search and add is not selected, and its INFY add is what puts a deleted scrip back, " +
-                        "so nothing is deleted"
-                } else {
-                    "the watchlist holds a single scrip; deleting it would leave the watchlist empty, and an " +
-                        "empty watchlist's name could not be saved back in an earlier run, so nothing is deleted " +
-                        "(add a second scrip to test deleting)"
-                },
-            )
-        } else {
-            val deleteTap = engine.tap(T.REORDER_DELETE_BUTTON)
-            if (deleteTap.ok && rowsNow.isNotEmpty()) {
-                val landed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
-                    val after = editRows()
-                    after.firstOrNull() != rowsNow.first()
-                }
-                if (landed) deleted = TRIM_COUNT
-            }
-            if (engine.cancelled) return null
-            when {
-                !deleteTap.ok -> failAndContinue(delete, "No delete icon could be tapped on the edit screen: ${deleteTap.detail}")
-                rowsNow.isEmpty() -> failAndContinue(delete, "The delete control was tapped, but no row label was readable beforehand, so the affected scrip cannot be verified.")
-                deleted == 0 -> failAndContinue(delete, "The delete control was tapped, but the first row did not disappear within ${Timeouts.SCREEN_CHANGE / 1000} seconds; Save was not credited with a deletion.")
-                else -> pass(delete, "the first edit row disappeared after its delete control was tapped")
-            }
-        }
-        val expectedRows = if (deleted > 0) rowsNow.drop(deleted) else rowsNow
-
-        // Save ----------------------------------------------------------------------------------------------------
-        begin(saved)
-        var countAfter: Int? = countBefore
-        var persistedDeletes = 0
-        var saveClosed = false
-        var escapedAfterSaveFailure = true
-        if (!renamed && !reordered && deleted == 0) {
-            failAndContinue(saved, "Nothing was changed on the edit screen (rename, reorder and delete all failed or were skipped), so Save had no valid change to persist.")
-            escapedAfterSaveFailure = escapeEditScreen()
-        } else {
-            val save = engine.tap(T.REORDER_SAVE_BUTTON)
-            if (!save.ok) {
-                failAndContinue(saved, "Could not tap Save: ${save.detail}")
-                escapedAfterSaveFailure = escapeEditScreen()
-            } else if (!engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE)) {
-                if (engine.cancelled) return null
-                failAndContinue(saved, "Tapped Save but the edit screen did not close within ${Timeouts.EDIT_SAVE / 1000} seconds (a duplicate name or rejected request can leave it open); attempted to leave it with Discard.${editScreenHint()}")
-                escapedAfterSaveFailure = escapeEditScreen()
-            } else {
-                saveClosed = true
-                val back = backOnWatchlist()
-                val expected = countBefore?.minus(deleted)
-                countAfter = if (back == null) waitForScripCount(expected) else null
-                if (engine.cancelled) return null
-                if (deleted > 0 && expected != null && countAfter == expected) persistedDeletes = deleted
-                when {
-                    back != null -> failAndContinue(saved, "Saved, but then $back")
-                    deleteSkipped && (expected == null || countAfter == expected) -> pass(
-                        saved,
-                        "saved the new name; the watchlist kept its ${countAfter ?: "single"} scrip(s) because the delete was skipped",
-                    )
-                    deleted == 0 && !deleteSkipped -> failAndContinue(saved, "The edit screen closed, but no scrip deletion had been confirmed, so the required count drop was not tested.")
-                    expected != null && countAfter != expected -> failAndContinue(saved, "Saved after deleting $deleted of $countBefore scrip(s), so the count should be $expected, but it shows ${countAfter ?: "nothing readable"}." + if (countAfter == null) countDiagnostics() else "")
-                    else -> pass(saved, "saved; the watchlist went from ${countBefore ?: "an unreadable count"} to ${countAfter ?: "an unreadable count"} scrip(s)")
-                }
-            }
-        }
-
-        if (!saveClosed) {
-            if (engine.cancelled) return null
-            skip(verified, "Save did not close the edit screen, so persistence could not be checked")
-            if (escapedAfterSaveFailure) {
-                skip(restored, "the unsaved rename was discarded during recovery")
-            } else {
-                begin(restored)
-                failAndContinue(restored, "The failed Save left Edit open and the Discard recovery did not close it; the original name could not be confirmed.")
-            }
-            backOnWatchlist()
-            return EditOutcome(readScripCount() ?: countAfter, persistedDeletes = 0)
-        }
-
-        // Reopen: did the name and the order persist? ---------------------------------------------------------------
-        begin(verified)
-        if (backOnWatchlist() != null || (!engine.isPresent(T.REORDER_SCREEN) && openEditScreen() != null)) {
-            failAndContinue(verified, "The edit screen could not be reopened to check the saved changes.")
-            begin(restored)
-            if (renamed) {
-                failAndContinue(restored, "The edit screen could not be reopened, so the temporary watchlist name could not be restored safely.")
-            } else {
-                skip(restored, "the edit screen could not be reopened, but the name was never changed")
-            }
-            return EditOutcome(countAfter, persistedDeletes)
-        }
-        if (engine.cancelled) return null
-        engine.sleep(Timeouts.SETTLE)
-        val nameNow = engine.watchlistName()?.trim().orEmpty()
-        val rowsAfter = editRows()
-        val problems = mutableListOf<String>()
-        if (renamed && nameNow != newName) problems += "the name should be '$newName' but is '$nameNow'"
-        val compare = minOf(3, expectedRows.size, rowsAfter.size)
-        val rowsPersisted = when {
-            expectedRows.isEmpty() -> rowsAfter.isEmpty()
-            rowsAfter.isEmpty() -> false
-            else -> compare > 0 && rowsAfter.take(compare) == expectedRows.take(compare)
-        }
-        if (!rowsPersisted) {
-            problems += "the first rows should be ${expectedRows.take(3)} but are ${rowsAfter.take(3)}"
-        }
-        if (deleted > 0 && rowsPersisted) persistedDeletes = deleted
-        if (problems.isEmpty()) pass(verified, "the temporary name and the order of the first ${maxOf(compare, 0)} scrip(s) persisted")
-        else failAndContinue(verified, problems.joinToString("; ") + ".")
-
-        // Put the name back ---------------------------------------------------------------------------------------------
-        begin(restored)
-        if (!renamed) {
-            if (closeWithBack(T.REORDER_SCREEN)) {
-                skip(restored, "the name was never changed")
-            } else {
-                failAndContinue(restored, "The name was never changed, but the verification edit screen did not close.")
-            }
-        } else if (nameNow == origName) {
-            if (closeWithBack(T.REORDER_SCREEN)) {
-                skip(restored, "the temporary rename did not persist; the original name is already present")
-            } else {
-                failAndContinue(restored, "The original name is present, but the verification edit screen did not close.")
-            }
-        } else {
-            val back = engine.enterText(T.REORDER_RENAME_INPUT, origName)
-            if (!back.ok) {
-                failAndContinue(restored, "Could not type the original name back: ${back.detail}")
-                escapeEditScreen()
-            } else {
-                // Let the app register the typed name before Save is pressed: Save only acts
-                // once the app has marked the name as changed. If the screen is still open
-                // after a first try, press Save once more; a rename is safe to repeat.
-                if (!engine.sleep(Timeouts.SETTLE)) return null
-                var save2 = engine.tap(T.REORDER_SAVE_BUTTON)
-                var closed2 = save2.ok && engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE_FIRST_TRY)
-                var retried = false
-                if (!closed2 && !engine.cancelled && engine.isPresent(T.REORDER_SCREEN)) {
-                    retried = true
-                    save2 = engine.tap(T.REORDER_SAVE_BUTTON)
-                    closed2 = save2.ok && engine.waitForGone(T.REORDER_SCREEN, Timeouts.EDIT_SAVE - Timeouts.EDIT_SAVE_FIRST_TRY)
-                }
-                if (!closed2) {
-                    if (engine.cancelled) return null
-                    failAndContinue(
-                        restored,
-                        "The original name '$origName' could not be saved back; the watchlist is still called '$newName'." +
-                            (if (retried) " Save was pressed twice." else "") + editScreenHint(),
-                    )
-                    escapeEditScreen()
-                } else {
-                    val reopened = backOnWatchlist() == null && openEditScreen() == null
-                    if (engine.cancelled) return null
-                    if (reopened && !engine.sleep(Timeouts.SETTLE)) return null
-                    val restoredName = if (reopened) engine.watchlistName()?.trim() else null
-                    val verificationClosed = !reopened || closeWithBack(T.REORDER_SCREEN)
-                    if (restoredName == origName && verificationClosed) {
-                        pass(restored, "the original name was saved and verified after reopening Edit")
-                    } else {
-                        val closeProblem = if (reopened && !verificationClosed) " The verification edit screen also did not close." else ""
-                        failAndContinue(restored, "The restore save closed, but reopening Edit showed ${restoredName?.let { "a different name" } ?: "no readable name"}.$closeProblem")
-                    }
-                }
-            }
-        }
-        backOnWatchlist()
-        countAfter = readScripCount() ?: countAfter
-        return EditOutcome(countAfter, persistedDeletes)
-    }
 
     /**
      * True when the app's data was not cleared (switched off, or Settings could not be driven), so a
@@ -1181,656 +925,16 @@ class TradionAutomationFlow(
         }
     }
 
-    private val searchStepIds = listOf(
-        "search_tabs_listed", "search_stocks_added", "search_stocks_deleted", "search_fno_added",
-        "search_fno_deleted", "search_commodity_added", "search_commodity_deleted", "search_all_added",
-        "search_details_opened", "search_closed",
-    )
+    /** The Watchlist module: [WatchlistSuite] runs its independent test cases and reports one step per case. */
+    private fun runWatchlist(): AutomationRunResult? =
+        WatchlistSuite(
+            flow = this,
+            engine = engine,
+            modules = modules,
+            stopped = { stopped(it) },
+            sessionLost = { sessionEnded(it, "checking ${it.name}") },
+        ).run()
 
-    /** Fails [current] softly and returns false when the Watchlist tab cannot be shown. */
-    private fun onWatchlistOrFail(current: AutomationStepResult): Boolean {
-        val problem = backOnWatchlist() ?: return true
-        failAndContinue(current, problem)
-        return false
-    }
-
-    /** Number of header tabs on the user-watchlist strip, learnt while walking it. The last is "Recently Viewed". */
-    private var watchlistTabCount = 0
-
-    /** The exact editable tab selected for this run, retained for empty-list edit verification. */
-    private var selectedEditableWatchlistTab: String? = null
-
-    /**
-     * Selects a watchlist tab that can be edited. Tradion remembers the tab last
-     * selected, and after the Predefined check that is "Recently Viewed" — the
-     * last tab, which cannot take scrips. Tab 0 is not reliable to reach: a tab
-     * scrolled out of view is absent from the accessibility tree. So this takes
-     * whichever editable tab is showing, and scrolls the strip only if none is.
-     */
-    private fun selectEditableWatchlistTab(): Boolean {
-        // The final tab is Recently Viewed. With fewer than two discovered tabs
-        // there is no positively identified editable target, so do not guess.
-        if (watchlistTabCount < 2) return false
-        val lastEditable = watchlistTabCount - 2
-        val candidates = watchlistTabIds.take(lastEditable + 1)
-        val remembered = selectedEditableWatchlistTab?.takeIf { it in candidates }
-        val target = when {
-            remembered != null && engine.revealInList(remembered, watchlistTabIds) -> remembered
-            else -> engine.firstPresent(candidates)
-                ?: candidates.firstOrNull { engine.revealInList(it, watchlistTabIds) }
-                ?: return false
-        }
-        if (!engine.tap(target).ok) return false
-        if (!engine.sleep(Timeouts.SETTLE)) return false
-        selectedEditableWatchlistTab = target
-        return true
-    }
-
-    private fun runWatchlist(): AutomationRunResult? {
-        val viewOn = moduleOn("watchlist")
-        val editOn = moduleOn("watchlist_edit")
-        val searchOn = moduleOn("watchlist_search")
-        if (!viewOn && !editOn && !searchOn) {
-            // The Watchlist tab is only opened as a way into one of its modules.
-            skipSteps(listOf("watchlist_tab_opened", "watchlist_tabs_loaded"), "no Watchlist module selected")
-            skipModule("watchlist")
-            skipModule("watchlist_edit")
-            skipModule("watchlist_search")
-            return null
-        }
-        // Watchlist tab opened ------------------------------------------------------------------
-        val tabOpened = step("watchlist_tab_opened")
-        begin(tabOpened)
-        val open = engine.tapAndConfirm(T.BOTTOMNAV_WATCHLIST_TAB, listOf(T.WATCHLIST_SCREEN), Timeouts.WATCHLIST_NAV)
-        if (!open.ok) {
-            if (engine.cancelled) return stopped(tabOpened)
-            failAndContinue(tabOpened, "Could not open the Watchlist tab: ${open.detail}")
-            skipSteps(watchlistStepIds + searchStepIds + "watchlist_count_updated", "the Watchlist tab did not open")
-            return null
-        }
-        pass(tabOpened, open.detail)
-
-        // Watchlist tabs open -------------------------------------------------------------------
-        // No load test: the tabs are only counted (scrolling the strip), which the edit and search steps need.
-        val tabs = step("watchlist_tabs_loaded")
-        begin(tabs)
-        countWatchlistTabs(tabs)
-
-        // Predefined list refuses Search / add -----------------------------------------------------
-        val predefined = step("watchlist_predefined_no_add")
-        if (!viewOn) skip(predefined, modules.skipNote("watchlist")) else run {
-        begin(predefined)
-        val toPredefined = engine.tapAndConfirm(T.WATCHLIST_MODE_PREDEFINED, predefinedTabIds, Timeouts.SCREEN_CHANGE)
-        if (!toPredefined.ok) {
-            if (engine.cancelled) return stopped(predefined)
-            failAndContinue(predefined, "Could not switch to Predefined: ${toPredefined.detail}")
-        } else {
-            // Tapping the search row must NOT open Search here: Predefined lists take no scrips.
-            val tap = engine.tap(T.WATCHLIST_SEARCH_BUTTON)
-            if (!engine.sleep(2_000L)) return stopped(predefined)
-            if (engine.isPresent(T.SEARCH_SCREEN)) {
-                closeWithBack(T.SEARCH_SCREEN)
-                failAndContinue(predefined, "Search opened on a Predefined list, which should not accept scrips.")
-            } else if (!tap.ok) {
-                failAndContinue(predefined, "Could not tap the search row on the Predefined list: ${tap.detail}")
-            } else {
-                pass(predefined, "tapping Search on a Predefined list stayed on the list (it takes no scrips)")
-            }
-        }
-        // Back to the user's own watchlists, on an editable tab.
-        val toWatchlist = engine.tapAndConfirm(T.WATCHLIST_MODE_WATCHLIST, watchlistTabIds, Timeouts.SCREEN_CHANGE)
-        if (!toWatchlist.ok) {
-            if (engine.cancelled) return stopped(predefined)
-            backOnWatchlist()
-            engine.tap(T.WATCHLIST_MODE_WATCHLIST)
-        }
-        }
-        val editableReady = selectEditableWatchlistTab()
-        if (engine.cancelled) return stopped(predefined)
-
-        if (!viewOn) skipModule("watchlist") else run {
-        // Basket mode toggled and restored -------------------------------------------------------------
-        val basket = step("watchlist_basket_toggled")
-        begin(basket)
-        if (onWatchlistOrFail(basket)) {
-            if (!engine.isPresent(T.WATCHLIST_MODE_WATCHLIST)) {
-                failAndContinue(basket, "The Watchlist / Predefined switch is not on screen, so basket mode cannot be told apart from normal mode.")
-            } else {
-                val on = engine.tap(T.WATCHLIST_BASKET_BUTTON)
-                if (!on.ok) {
-                    failAndContinue(basket, "Could not tap the basket icon: ${on.detail}")
-                } else {
-                    val entered = engine.waitForGone(T.WATCHLIST_MODE_WATCHLIST, Timeouts.SCREEN_CHANGE)
-                    if (engine.cancelled) return stopped(basket)
-                    // Restore regardless, so the rest of the run is not left in basket mode.
-                    val off = engine.tapAndConfirm(
-                        T.WATCHLIST_BASKET_BUTTON, listOf(T.WATCHLIST_MODE_WATCHLIST), Timeouts.SCREEN_CHANGE,
-                        tapAtLeastOnce = entered,
-                    )
-                    when {
-                        engine.cancelled -> return stopped(basket)
-                        !off.ok -> failAndContinue(basket, "Basket mode could not be switched off again: ${off.detail}")
-                        entered -> pass(basket, "basket mode hid the Watchlist/Predefined switch and was switched off again")
-                        else -> failAndContinue(basket, "Tapping the basket icon did not change the screen.")
-                    }
-                }
-            }
-        }
-
-        // Filter screen opened and closed ----------------------------------------------------------------
-        val filter = step("watchlist_filter_opened")
-        begin(filter)
-        if (onWatchlistOrFail(filter)) {
-            val filterOpen = engine.tapAndConfirm(T.WATCHLIST_FILTER_BUTTON, listOf(T.WATCHLIST_FILTER_SCREEN), Timeouts.SCREEN_CHANGE)
-            when {
-                !filterOpen.ok -> {
-                    if (engine.cancelled) return stopped(filter)
-                    failAndContinue(filter, "The Filter screen did not open: ${filterOpen.detail}")
-                }
-                !closeWithBack(T.WATCHLIST_FILTER_SCREEN) -> {
-                    if (engine.cancelled) return stopped(filter)
-                    failAndContinue(filter, "The Filter screen opened but did not close on Back.")
-                }
-                else -> pass(filter, "opened from the gear icon and closed with Back, nothing applied")
-            }
-        }
-
-        // Scrip details opened and closed ------------------------------------------------------------------
-        val details = step("scrip_details_opened")
-        begin(details)
-        if (onWatchlistOrFail(details)) {
-            val sheets = listOf(T.SCRIP_DETAILS_SHEET, T.INDEX_DETAILS_SHEET)
-            if (!engine.isPresent(T.WATCHLIST_SCRIP_ROW)) {
-                skip(details, "this watchlist is empty, so there is no row to open")
-            } else {
-                val detailsOpen = engine.tapAndConfirm(T.WATCHLIST_SCRIP_ROW, sheets, Timeouts.SCREEN_CHANGE)
-                if (!detailsOpen.ok) {
-                    if (engine.cancelled) return stopped(details)
-                    failAndContinue(details, "Tapping the first watchlist row did not open its details: ${detailsOpen.detail}")
-                } else {
-                    val sheet = engine.firstPresent(sheets) ?: T.SCRIP_DETAILS_SHEET
-                    if (!engine.sleep(1_500L)) return stopped(details)
-                    if (!closeWithBack(sheet)) {
-                        if (engine.cancelled) return stopped(details)
-                        failAndContinue(details, "The details sheet opened but did not close on Back.")
-                    } else {
-                        pass(details, "opened '$sheet' from the first row and closed it with Back")
-                    }
-                }
-            }
-        }
-
-        // Chart and More Details, both opened from the first row's details sheet -------------------------------
-        // Back from either lands on the Watchlist, not on the sheet, so the sheet is reopened for each.
-        val chart = step("scrip_chart_loaded")
-        begin(chart)
-        if (onWatchlistOrFail(chart)) {
-            val sheetFailure = openFirstRowSheet()
-            if (engine.cancelled) return stopped(chart)
-            if (sheetFailure != null) {
-                if (sheetFailure.startsWith("EMPTY")) skip(chart, "this watchlist is empty, so there is no row to open")
-                else failAndContinue(chart, sheetFailure)
-            } else {
-                val toChart = engine.tapAndConfirm(T.SCRIP_SHEET_CHART_BUTTON, listOf(T.CHART_SCREEN), Timeouts.SCREEN_CHANGE)
-                if (!toChart.ok) {
-                    if (engine.cancelled) return stopped(chart)
-                    failAndContinue(chart, "The Chart button did not open the chart: ${toChart.detail}")
-                    closeSheetIfOpen()
-                } else {
-                    // The chart is a web page; the app only knows when the page has finished.
-                    val ready = engine.waitForAny(listOf(T.CHART_READY), Timeouts.CHART_LOAD)
-                    if (engine.cancelled) return stopped(chart)
-                    engine.sleep(1_000L)
-                    captureScreenshot("chart")
-                    if (ready !is WaitOutcome.Found) {
-                        failAndContinue(chart, "The chart page had not finished loading after ${Timeouts.CHART_LOAD / 1000} seconds (screenshot saved).")
-                    } else {
-                        pass(chart, "the chart page finished loading; screenshot saved")
-                    }
-                    if (!closeWithBack(T.CHART_SCREEN)) {
-                        if (engine.cancelled) return stopped(chart)
-                        if (chart.status == StepStatus.PASSED) failAndContinue(chart, "The chart opened but did not close on Back.")
-                    }
-                }
-            }
-        }
-
-        val more = step("scrip_more_details_tabs")
-        begin(more)
-        if (onWatchlistOrFail(more)) {
-            val sheetFailure = openFirstRowSheet()
-            if (engine.cancelled) return stopped(more)
-            if (sheetFailure != null) {
-                if (sheetFailure.startsWith("EMPTY")) skip(more, "this watchlist is empty, so there is no row to open")
-                else failAndContinue(more, sheetFailure)
-            } else if (!engine.isPresent(T.SCRIP_SHEET_MORE_BUTTON)) {
-                closeSheetIfOpen()
-                skip(more, "this scrip's sheet offers no More Details (an index, for instance)")
-            } else {
-                val toMore = engine.tapAndConfirm(T.SCRIP_SHEET_MORE_BUTTON, listOf(T.MORE_INFO_SCREEN), Timeouts.SCREEN_CHANGE)
-                if (!toMore.ok) {
-                    if (engine.cancelled) return stopped(more)
-                    failAndContinue(more, "The More Details button did not open the details screen: ${toMore.detail}")
-                    closeSheetIfOpen()
-                } else {
-                    // Equity (NSE/BSE) has Market Depth, Technicals, Fundamentals and Info; other segments have no Fundamentals.
-                    val failures = mutableListOf<String>()
-                    val seen = mutableListOf<String>()
-                    for (name in listOf("market_depth", "technicals", "fundamentals", "info")) {
-                        val id = "${T.MORE_INFO_TAB_PREFIX}$name"
-                        if (!engine.isPresent(id)) continue
-                        val select = engine.tap(id)
-                        if (!select.ok) { failures += "$name could not be selected (${select.detail})"; continue }
-                        if (!engine.sleep(Timeouts.SETTLE)) return stopped(more)
-                        val check = checkPageLoads(Timeouts.MORE_INFO_LOAD, scrollPages = 2)
-                        if (engine.cancelled) return stopped(more)
-                        loadFailure(check, Timeouts.MORE_INFO_LOAD, name)?.let { failures += it }
-                        seen += name
-                    }
-                    when {
-                        seen.isEmpty() -> failAndContinue(more, "None of the More Details tabs could be found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.")
-                        failures.isNotEmpty() -> failAndContinue(more, failures.joinToString("; ") + ". Tabs seen: ${seen.joinToString()}.")
-                        else -> pass(more, "tabs ${seen.joinToString()} each loaded within ${Timeouts.MORE_INFO_LOAD / 1000} s" + if ("fundamentals" !in seen) " (no Fundamentals tab: not an equity scrip)" else "")
-                    }
-                    if (!closeWithBack(T.MORE_INFO_SCREEN)) {
-                        if (engine.cancelled) return stopped(more)
-                        if (more.status == StepStatus.PASSED) failAndContinue(more, "The details screen opened but did not close on Back.")
-                    }
-                }
-            }
-        }
-
-        }
-
-        // Edit watchlist: rename, move a scrip, delete a scrip, save, verify, restore -------------------------------
-        val editIds = listOf(
-            "watchlist_edit_opened", "watchlist_edit_rename", "watchlist_edit_reorder", "watchlist_edit_delete",
-            "watchlist_edit_saved", "watchlist_edit_verified", "watchlist_edit_restored",
-        )
-        var countAfterTrim: Int? = null
-        var persistedEditDeletes = 0
-        if (!editOn) {
-            skipModule("watchlist_edit")
-            if (searchOn) {
-                // Search checks the count against where it started.
-                backOnWatchlist()
-                countAfterTrim = readScripCount()
-            }
-        } else run {
-        val edit = step(editIds[0])
-        begin(edit)
-        if (!onWatchlistOrFail(edit)) {
-            skipSteps(editIds.drop(1), "the Watchlist tab was not showing")
-        } else if (!editableReady && !selectEditableWatchlistTab()) {
-            failAndContinue(edit, "No editable watchlist tab could be selected (only Recently Viewed was reachable).")
-            skipSteps(editIds.drop(1), "no editable watchlist tab")
-        } else {
-            if (!engine.sleep(Timeouts.SETTLE)) return stopped(edit)
-            val countBeforeEdit = readScripCount()
-            countAfterTrim = countBeforeEdit
-            if (!engine.isPresent(T.WATCHLIST_SCRIP_ROW)) {
-                skip(edit, "this watchlist is empty, so there is nothing to edit")
-                skipSteps(editIds.drop(1), "this watchlist is empty")
-            } else {
-                val opened = openEditScreen()
-                if (engine.cancelled) return stopped(edit)
-                if (opened != null) {
-                    failAndContinue(edit, opened)
-                    skipSteps(editIds.drop(1), "the edit screen did not open")
-                } else {
-                    pass(edit, "long-pressed the first row and the edit screen appeared" + countNote(countBeforeEdit))
-                    val outcome = editSession(editIds, countBeforeEdit, allowDelete = searchOn)
-                    if (engine.cancelled) return stopped(edit)
-                    countAfterTrim = outcome?.countAfter
-                    persistedEditDeletes = outcome?.persistedDeletes ?: 0
-                }
-            }
-        }
-
-        }
-
-        // Search ----------------------------------------------------------------------------------------------------
-        if (!searchOn) {
-            skipModule("watchlist_search")
-            return null
-        }
-        val searchOpened = step("search_opened")
-        begin(searchOpened)
-        if (!onWatchlistOrFail(searchOpened)) {
-            skipSteps(searchStepIds + "watchlist_count_updated", "the Watchlist tab was not showing")
-            return null
-        }
-        if (!engine.isPresent(T.WATCHLIST_SEARCH_BUTTON) || !selectEditableWatchlistTab()) {
-            failAndContinue(searchOpened, "No editable watchlist tab is selected, so Search would not take scrips.")
-            skipSteps(searchStepIds + "watchlist_count_updated", "Search was not opened")
-            return null
-        }
-        val searchOpen = engine.tapAndConfirm(T.WATCHLIST_SEARCH_BUTTON, listOf(T.SEARCH_SCREEN), Timeouts.SEARCH_SCREEN)
-        val inputFound = searchOpen.ok &&
-            engine.waitForAny(listOf(T.SEARCH_SCRIP_INPUT), Timeouts.SCREEN_CHANGE) is WaitOutcome.Found
-        if (engine.cancelled) return stopped(searchOpened)
-        if (!inputFound) {
-            failAndContinue(searchOpened, "Could not open Search: ${searchOpen.detail}")
-            if (engine.isPresent(T.SEARCH_SCREEN)) closeWithBack(T.SEARCH_SCREEN)
-            skipSteps(searchStepIds + "watchlist_count_updated", "Search did not open")
-            return null
-        }
-        pass(searchOpened, searchOpen.detail)
-
-        val tabsListed = step("search_tabs_listed")
-        begin(tabsListed)
-        val missingTabs = T.SEARCH_TABS.filterNot { engine.revealInList(it, T.SEARCH_TABS) }
-        if (engine.cancelled) return stopped(tabsListed)
-        if (missingTabs.isNotEmpty()) {
-            failAndContinue(tabsListed, "These search segments are missing: ${missingTabs.joinToString()}. Expected All, F&O, Commodity and Stocks.")
-        } else {
-            pass(tabsListed, "All, F&O, Commodity and Stocks are all offered")
-        }
-
-        // Each segment: add the first new result, then delete that exact result
-        // again. All keeps its result only when it compensates a deletion that
-        // the edit verification proved persisted.
-        var net = 0
-        for (seg in listOf(
-            SearchSeg("stocks", T.SEARCH_TAB_STOCKS, "Stocks", "tcs", "TCS", deleteAgain = true),
-            SearchSeg("fno", T.SEARCH_TAB_FNO, "F&O", "nifty", "NIFTY", deleteAgain = true),
-            SearchSeg("commodity", T.SEARCH_TAB_COMMODITY, "Commodity", "crudeoil", "crude oil", deleteAgain = true),
-            SearchSeg(
-                "all", T.SEARCH_TAB_ALL, "All", "infy", "INFY",
-                deleteAgain = persistedEditDeletes == 0,
-            ),
-        )) {
-            val addStep = step("search_${seg.key}_added")
-            val delStep = if (seg.key == "all") null else step("search_${seg.key}_deleted")
-            begin(addStep)
-            if (engine.isPresent(T.SEARCH_SCREEN).not()) {
-                failAndContinue(addStep, "The Search screen is no longer showing.")
-                delStep?.let { skip(it, "the Search screen is no longer showing") }
-                continue
-            }
-            val outcome = searchAndAdd(seg)
-            if (engine.cancelled) return stopped(addStep)
-            if (outcome.failure != null) {
-                failAndContinue(addStep, outcome.failure)
-                delStep?.let { skip(it, "nothing was added") }
-                continue
-            }
-            net++
-            if (!seg.deleteAgain) {
-                pass(addStep, "added and kept the first new ${seg.what} result under ${seg.tabName} to replace the edit deletion")
-                continue
-            }
-            if (delStep != null) {
-                pass(addStep, "added the first new ${seg.what} result under the ${seg.tabName} segment")
-                begin(delStep)
-            }
-            val deleteFailure = deleteAddedSearchResult(outcome.rowIndex, seg.what)
-            if (engine.cancelled) return stopped(delStep ?: addStep)
-            if (deleteFailure == null) {
-                net--
-                if (delStep != null) {
-                    pass(delStep, "removed the same ${seg.what} result that this run added")
-                } else {
-                    pass(addStep, "added INFY successfully, then removed that same result because no edit deletion needed replacing")
-                }
-            } else {
-                failAndContinue(delStep ?: addStep, deleteFailure)
-            }
-        }
-
-        // Search result details ------------------------------------------------------------------------------------
-        val searchDetails = step("search_details_opened")
-        begin(searchDetails)
-        if (!engine.isPresent(T.SEARCH_SCREEN)) {
-            failAndContinue(searchDetails, "The Search screen is no longer showing.")
-        } else if (!engine.isPresent(T.SEARCH_RESULT_ROW)) {
-            failAndContinue(searchDetails, "No search result row is on screen to open.")
-        } else {
-            val opened = engine.tapAndConfirm(T.SEARCH_RESULT_ROW, listOf(T.SEARCH_RESULT_SHEET), Timeouts.SCREEN_CHANGE)
-            if (!opened.ok) {
-                if (engine.cancelled) return stopped(searchDetails)
-                failAndContinue(searchDetails, "Tapping a search result did not open its details: ${opened.detail}")
-            } else {
-                if (!engine.sleep(1_500L)) return stopped(searchDetails)
-                if (!closeWithBack(T.SEARCH_RESULT_SHEET)) {
-                    if (engine.cancelled) return stopped(searchDetails)
-                    failAndContinue(searchDetails, "The result's details sheet opened but did not close on Back.")
-                } else {
-                    pass(searchDetails, "opened a result's details sheet and closed it with Back")
-                }
-            }
-        }
-
-        // Search closed ------------------------------------------------------------------------------------------------
-        val searchClosed = step("search_closed")
-        begin(searchClosed)
-        val closeOutcome = engine.tapAndConfirm(
-            T.SEARCH_BACK_BUTTON,
-            listOf(T.WATCHLIST_SCREEN),
-            Timeouts.SCREEN_CHANGE,
-            tapAtLeastOnce = true,
-        )
-        val searchGone = engine.waitForGone(T.SEARCH_SCREEN, Timeouts.SCREEN_CHANGE)
-        if (!closeOutcome.ok || !searchGone) {
-            if (engine.cancelled) return stopped(searchClosed)
-            failAndContinue(searchClosed, "Search did not close from its back arrow: ${closeOutcome.detail}")
-            if (engine.isPresent(T.SEARCH_SCREEN)) closeWithBack(T.SEARCH_SCREEN)
-        } else {
-            pass(searchClosed, "closed from the search field's back arrow")
-        }
-
-        // Count ------------------------------------------------------------------------------------------------------------
-        val countUpdated = step("watchlist_count_updated")
-        begin(countUpdated)
-        if (!onWatchlistOrFail(countUpdated)) return null
-        val expectedCount = countAfterTrim?.plus(net)
-        val countNow = waitForScripCount(expectedCount)
-        if (engine.cancelled) return stopped(countUpdated)
-        if (expectedCount == null || countNow != expectedCount) {
-            failAndContinue(countUpdated, "After the adds and deletes (net ${if (net >= 0) "+" else ""}$net) on a watchlist of ${countAfterTrim ?: "unknown size"}, its count should show ${expectedCount ?: "a different number"}, but shows ${countNow ?: "nothing readable"}.${if (countNow == null) countDiagnostics() else ""}")
-        } else {
-            pass(countUpdated, "the watchlist went from $countAfterTrim to $countNow scrips (net ${if (net >= 0) "+" else ""}$net)")
-        }
-        return null
-    }
-
-    private val watchlistStepIds = listOf(
-        "watchlist_tabs_loaded", "watchlist_predefined_no_add", "watchlist_basket_toggled",
-        "watchlist_filter_opened", "scrip_details_opened", "scrip_chart_loaded", "scrip_more_details_tabs",
-        "watchlist_edit_opened", "watchlist_edit_rename", "watchlist_edit_reorder", "watchlist_edit_delete",
-        "watchlist_edit_saved", "watchlist_edit_verified", "watchlist_edit_restored", "search_opened",
-    )
-
-    private data class SearchSeg(
-        val key: String,
-        val tabId: String,
-        val tabName: String,
-        val query: String,
-        val what: String,
-        val deleteAgain: Boolean,
-    )
-
-    private class AddOutcome(val failure: String?, val rowIndex: Int = -1)
-
-    /**
-     * Selects [seg]'s segment, types its query and adds the first result not yet
-     * in the watchlist. The add counts only once its "+" has turned into the
-     * added icon.
-     */
-    private fun searchAndAdd(seg: SearchSeg): AddOutcome {
-        searchOnly(seg.tabId, seg.tabName, seg.query)?.let { return AddOutcome(it) }
-        val tap = engine.tapFirstDescendant(T.SEARCH_RESULT_ROW, T.SEARCH_SCRIP_ADD_BUTTON)
-        if (!tap.ok) {
-            return AddOutcome(
-                "No ${seg.what} result offered '+' under ${seg.tabName}; every listed result may " +
-                    "already be in the watchlist (${tap.detail}).",
-            )
-        }
-        val rowIndex = tap.containerIndex ?: return AddOutcome("The added ${seg.what} result's row could not be tracked.")
-        var requestInFlight = false
-        var rejected = false
-        val completed = engine.waitUntil(Timeouts.ADD_CONFIRM) {
-            val added = engine.hasDescendantAt(T.SEARCH_RESULT_ROW, rowIndex, T.SEARCH_SCRIP_ADDED_ICON)
-            val addAvailable = engine.hasDescendantAt(T.SEARCH_RESULT_ROW, rowIndex, T.SEARCH_SCRIP_ADD_BUTTON)
-            when {
-                added -> true
-                !addAvailable -> {
-                    requestInFlight = true
-                    false
-                }
-                requestInFlight -> {
-                    rejected = true
-                    true
-                }
-                else -> false
-            }
-        }
-        if (engine.cancelled) return AddOutcome("cancelled")
-        if (completed && rejected) {
-            return AddOutcome("The ${seg.what} add request completed but the same row returned to '+', so Tradion rejected the add.")
-        }
-        if (completed) return AddOutcome(null, rowIndex)
-        return AddOutcome(
-            "Tapped '+' on the first ${seg.what} result but it never turned into the added icon " +
-                "within ${Timeouts.ADD_CONFIRM / 1000} seconds. The watchlist may be full (50 scrips) or " +
-                "the add request failed.",
-        )
-    }
-
-    /** Deletes the exact search-result row returned by [searchAndAdd]. Null on success. */
-    private fun deleteAddedSearchResult(rowIndex: Int, what: String): String? {
-        if (rowIndex < 0) return "The $what result's row was not tracked, so it was not safe to delete."
-        val tap = engine.tapDescendantAt(T.SEARCH_RESULT_ROW, rowIndex, T.SEARCH_SCRIP_ADDED_ICON)
-        if (!tap.ok) return "Could not delete the same $what result that was added: ${tap.detail}"
-        var requestInFlight = false
-        var rejected = false
-        val completed = engine.waitUntil(Timeouts.ADD_CONFIRM) {
-            val addAvailable = engine.hasDescendantAt(T.SEARCH_RESULT_ROW, rowIndex, T.SEARCH_SCRIP_ADD_BUTTON)
-            val stillAdded = engine.hasDescendantAt(T.SEARCH_RESULT_ROW, rowIndex, T.SEARCH_SCRIP_ADDED_ICON)
-            when {
-                addAvailable -> true
-                !stillAdded -> {
-                    requestInFlight = true
-                    false
-                }
-                requestInFlight -> {
-                    rejected = true
-                    true
-                }
-                else -> false
-            }
-        }
-        if (engine.cancelled) return "cancelled"
-        if (completed && rejected) {
-            return "The $what delete request completed but the same row stayed added, so Tradion rejected the delete."
-        }
-        if (!completed) {
-            return "Tapped the added icon, but the same $what result did not return to '+' within ${Timeouts.ADD_CONFIRM / 1000} seconds."
-        }
-        return null
-    }
-
-    /** Selects a search tab, types [query] and waits for its results. Null on success. */
-    private fun searchOnly(tabId: String, tabName: String, query: String): String? {
-        if (!engine.revealInList(tabId, T.SEARCH_TABS)) {
-            return "The '$tabName' search tab ('$tabId') is not on the search screen."
-        }
-        // Put the new query in first. Tradion starts a fetch immediately when a
-        // tab changes, using whatever text is already in the field; selecting
-        // the tab while the previous query is still present can race that stale
-        // request against the debounced new one.
-        val entry = engine.enterText(T.SEARCH_SCRIP_INPUT, query)
-        if (!entry.ok) return "Could not enter '$query' in the search field: ${entry.detail}"
-        val select = engine.tap(tabId)
-        if (!select.ok) return "Could not select the '$tabName' tab: ${select.detail}"
-        if (!engine.sleep(Timeouts.SETTLE)) return "cancelled"
-        // Changing the segment starts a request immediately. The app clears the
-        // previous rows and exposes search_loading until the newest request is
-        // complete, so no fixed debounce delay is needed here.
-        if (!engine.waitForGone(T.SEARCH_LOADING, Timeouts.SEARCH_RESULTS)) {
-            if (engine.cancelled) return "cancelled"
-            return "Search for '$query' under $tabName was still loading after ${Timeouts.SEARCH_RESULTS / 1000} seconds."
-        }
-        if (engine.cancelled) return "cancelled"
-        return when (
-            val outcome = engine.waitForAny(
-                listOf(T.SEARCH_RESULTS_LIST, T.SEARCH_NO_RESULT),
-                Timeouts.SEARCH_RESULTS,
-            )
-        ) {
-            is WaitOutcome.Found -> if (outcome.identifier == T.SEARCH_RESULTS_LIST) null
-            else "Search returned no '$query' results under $tabName."
-            else -> reasonFor(outcome, "Search results for '$query' under $tabName", Timeouts.SEARCH_RESULTS)
-        }
-    }
-
-    /** Counts the user-watchlist header tabs by scrolling the strip; selects none and checks no loading. */
-    private fun countWatchlistTabs(step: AutomationStepResult) {
-        var counted = 0
-        for (id in watchlistTabIds) {
-            if (!engine.revealInList(id, watchlistTabIds)) break
-            counted++
-        }
-        watchlistTabCount = counted
-        if (counted == 0) {
-            failAndContinue(step, "No watchlist tabs were found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.")
-        } else {
-            pass(step, "$counted watchlist tab(s) found (the last is Recently Viewed); no load check")
-        }
-    }
-
-    /**
-     * Brings the Watchlist tab back if the app has drifted off it (an order
-     * update or a notification can move Tradion to another tab on its own).
-     * Returns null when the Watchlist is showing, else the reason it is not.
-     */
-    private fun backOnWatchlist(): String? {
-        if (engine.isPresent(T.WATCHLIST_SCREEN)) return null
-        val back = engine.tapAndConfirm(T.BOTTOMNAV_WATCHLIST_TAB, listOf(T.WATCHLIST_SCREEN), Timeouts.SCREEN_CHANGE)
-        return if (back.ok) null else "The app left the Watchlist tab and it could not be reopened: ${back.detail}"
-    }
-
-    /** Selects the first user watchlist, scrolling the tab strip back to its start first. */
-    private fun selectFirstWatchlistTab(): Boolean {
-        val first = watchlistTabIds.first()
-        if (!engine.revealInList(first, watchlistTabIds)) return false
-        if (!engine.tap(first).ok) return false
-        return engine.sleep(Timeouts.SETTLE)
-    }
-
-    /** The "N / 50" label's N, or null when it is absent or unreadable. */
-    private fun readScripCount(): Int? =
-        engine.labelsOf(T.WATCHLIST_SCRIP_COUNT).firstNotNullOfOrNull {
-            Regex("""(\d+)\s*/\s*\d+""").find(it)?.groupValues?.get(1)?.toIntOrNull()
-        }
-
-    /** Waits for the count label to read [expected]; returns the last value read. */
-    private fun waitForScripCount(expected: Int?): Int? {
-        if (expected == null) {
-            engine.sleep(Timeouts.SETTLE)
-            if (!engine.isPresent(T.WATCHLIST_SCREEN)) backOnWatchlist()
-            return readScripCount()
-        }
-        var last: Int? = null
-        var recoveredFromDrift = false
-        engine.waitUntil(Timeouts.COUNT_UPDATE) {
-            if (!engine.isPresent(T.WATCHLIST_SCREEN) && !recoveredFromDrift) {
-                recoveredFromDrift = true
-                backOnWatchlist()
-            }
-            last = readScripCount()
-            last == expected
-        }
-        return last
-    }
-
-    /** What the count label looked like, for a failure message when it could not be read. */
-    private fun countDiagnostics(): String =
-        " The label '${T.WATCHLIST_SCRIP_COUNT}' was ${if (engine.isPresent(T.WATCHLIST_SCRIP_COUNT)) "on screen with text ${engine.labelsOf(T.WATCHLIST_SCRIP_COUNT)}" else "not on screen"}. " +
-            "Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}."
-
-    private fun countNote(count: Int?): String =
-        if (count == null) "; scrip count label not readable" else "; watchlist holds $count scrip(s)"
 
     // ── Orders, Dashboard, Portfolio, Profile ─────────────────────────────────────────────────
 
@@ -1885,18 +989,31 @@ class TradionAutomationFlow(
                 maxPages = DASHBOARD_MAX_PAGES,
             ),
         )
-        val dashboardStepIds = dashboardTabs.map { it.stepId } + listOf(
-            "option_chain_opened", "option_chain_nfo_loaded", "option_chain_mcx_loaded",
-            "option_chain_cds_loaded", "option_chain_bfo_loaded", "research_calls_loaded",
-            "scanners_view_all_loaded",
-        )
+        val dashboardStepIds = dashboardTabs.map { it.stepId } + AppModules.DASHBOARD_SCENARIO_STEPS
         if (!moduleOn("dashboard")) skipModule("dashboard") else {
         withPage(Page("Dashboard", T.BOTTOMNAV_DASHBOARD_TAB, T.DASHBOARD_SCREEN), dashboardStepIds) {
             checkTab(dashboardTabs[0], budget)?.let { return@withPage it }
+            indexDropdownStep()?.let { return@withPage it }
+            tradingTabSelectedStep()?.let { return@withPage it }
             optionChainSteps()?.let { return@withPage it }
             researchCallsStep()?.let { return@withPage it }
+            tradingIdeasSteps()?.let { return@withPage it }
+            futuresSteps()?.let { return@withPage it }
+            fiiDiiStep()?.let { return@withPage it }
+            customizeStep()?.let { return@withPage it }
             checkTab(dashboardTabs[1], budget)?.let { return@withPage it }
-            scannersViewAllStep()
+            investmentTabSelectedStep()?.let { return@withPage it }
+            alertsSteps()?.let { return@withPage it }
+            ipoSteps()?.let { return@withPage it }
+            vendorTileStep("reports_page_opened", T.INVEST_TILE_REPORTS, "Reports")?.let { return@withPage it }
+            etfSteps()?.let { return@withPage it }
+            vendorTileStep("pledge_page_opened", T.INVEST_TILE_PLEDGE, "Pledge")?.let { return@withPage it }
+            vendorTileStep("back_office_opened", T.INVEST_TILE_BACK_OFFICE, "Back Office")?.let { return@withPage it }
+            vendorTileStep("other_request_opened", T.INVEST_TILE_OTHER, "Other request")?.let { return@withPage it }
+            topSectorsStep()?.let { return@withPage it }
+            scannersViewAllStep()?.let { return@withPage it }
+            screenerSteps()?.let { return@withPage it }
+            investmentCustomizeStep()
         }?.let { return it }
         }
 
@@ -2232,6 +1349,1154 @@ class TradionAutomationFlow(
         }
         if (!closeWithBack(T.SCANNERS_SCREEN) && !engine.cancelled && current.status == StepStatus.PASSED) {
             failAndContinue(current, "The scanners screen opened but did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // ── Watchlist scenarios ───────────────────────────────────────────────────────────────────
+    //
+    // Nothing here keeps a change: the gear screen's radios are put back and it is left with Clear,
+    // the Alert page is typed into and left with Back (Create is only checked, never tapped), and every
+    // scrip a step adds is removed again.
+
+    // Search extras: one scrip per exchange, then a FUT, CE and PE contract ------------------------------
+
+    /** The words of a result row that name the scrip: tokens with a letter in them (prices and changes have none). */
+    private fun stableTokens(label: String): List<String> =
+        label.split(Regex("""\s+""")).filter { token -> token.any { it.isLetter() } }
+
+    // ── Investment tab scenarios ──────────────────────────────────────────────────────────────
+    //
+    // As with the Trading tab: Buy and Sell only open the order pad (left with Back), the IPO's Apply and the
+    // Alert page's Delete-less flows never touch anything else. The one thing that is created is a test alert
+    // (Greater than 9999999, a value no scrip reaches), found again through the Alerts search and deleted.
+
+    private val scannerDeepIds = listOf(
+        "scanners_equity_tab_options", "scanners_equity_tab_buy_sell", "scanners_equity_search_settings",
+        "scanners_futures_tab_options", "scanners_futures_tab_buy_sell", "scanners_options_tab_options",
+        "scanners_options_tab_buy_sell", "scanners_commodity_tab_options", "scanners_commodity_tab_buy_sell",
+    )
+
+    private class SheetTarget(val button: String, val screen: String, val label: String)
+
+    private val sheetChart = SheetTarget(T.SCRIP_SHEET_CHART_BUTTON, T.CHART_SCREEN, "Chart")
+    private val sheetAlert = SheetTarget(T.SCRIP_SHEET_ALERT_BUTTON, T.ALERT_SCREEN, "Alert")
+    private val sheetBasket = SheetTarget(T.SCRIP_SHEET_BASKET_BUTTON, T.BASKET_SELECT_SCREEN, "Basket")
+    private val sheetOpChain = SheetTarget(T.SCRIP_SHEET_OPCHAIN_BUTTON, T.OPTION_CHAIN_SCREEN, "Op.Chain")
+    private val sheetMore = SheetTarget(T.SCRIP_SHEET_MORE_BUTTON, T.MORE_INFO_SCREEN, "More Details")
+
+    /**
+     * For the first [rowId] row of the list on [home]: opens its sheet once per target, taps the target's box, expects
+     * its screen and leaves with Back. A box the sheet does not offer is only noted. Returns the labels opened, the
+     * labels not offered, and the problems.
+     */
+    private fun optionsFromFirstRow(
+        rowId: String, home: String, targets: List<SheetTarget>,
+    ): Triple<List<String>, List<String>, List<String>> {
+        val opened = mutableListOf<String>()
+        val notOffered = mutableListOf<String>()
+        val problems = mutableListOf<String>()
+        val boxes = targets.map { it.button }
+        for (t in targets) {
+            if (!backTo(home, orderPadOverlays)) {
+                problems += "could not get back to the list before ${t.label}"
+                break
+            }
+            if (!engine.isPresent(rowId)) {
+                problems += "${t.label}: no instrument row is on screen"
+                break
+            }
+            val row = engine.tap(rowId)
+            if (!row.ok) {
+                problems += "${t.label}: the first instrument could not be tapped (${row.detail})"
+                continue
+            }
+            if (engine.waitForAny(boxes, Timeouts.SCREEN_CHANGE) !is WaitOutcome.Found) {
+                problems += "${t.label}: the instrument's sheet showed none of ${targets.joinToString(" / ") { it.label }}.${dashTagHint()}"
+                continue
+            }
+            if (!engine.isPresent(t.button)) {
+                notOffered += t.label
+                continue
+            }
+            val open = engine.tapAndConfirm(t.button, listOf(t.screen), Timeouts.SCREEN_CHANGE, retryAfterMs = Timeouts.SCREEN_CHANGE)
+            if (!open.ok) {
+                problems += "${t.label} did not open: ${open.detail}"
+                continue
+            }
+            opened += t.label
+            if (!engine.sleep(Timeouts.SETTLE)) break
+            if (!closeWithBack(t.screen) && !engine.cancelled) problems += "${t.label} did not close on Back"
+        }
+        backTo(home, orderPadOverlays)
+        if (opened.isEmpty() && problems.isEmpty()) problems += "none of ${targets.joinToString(" / ") { it.label }} is offered for the first instrument"
+        return Triple(opened, notOffered, problems)
+    }
+
+    /**
+     * Taps each tab `<prefix>0..` that exists, waits for the list to load and for a [rowId] row, then runs [body]
+     * (which returns problems). Returns the number of tabs and every problem, each prefixed with its tab.
+     */
+    private fun forEachTab(prefix: String, maxTabs: Int, rowId: String, body: () -> List<String>): Pair<Int, List<String>> {
+        val all = (0 until maxTabs).map { "$prefix$it" }
+        val problems = mutableListOf<String>()
+        var seen = 0
+        for ((i, id) in all.withIndex()) {
+            if (!engine.revealInList(id, all)) break
+            seen++
+            val label = "tab ${i + 1}"
+            val tap = engine.tap(id)
+            if (!tap.ok) {
+                problems += "$label could not be tapped (${tap.detail})"
+                continue
+            }
+            if (!engine.sleep(Timeouts.SETTLE * 2)) break
+            checkPageLoads(Timeouts.TRADION_TAB_LOAD, 1)
+            if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(rowId) }) {
+                problems += "$label lists no instrument"
+                continue
+            }
+            problems += body().map { "$label: $it" }
+            if (engine.cancelled) break
+        }
+        return seen to problems
+    }
+
+    /** The first name word of each built [rowId] row (the words with letters; prices have none). */
+    private fun rowNames(rowId: String): List<String> =
+        engine.groupedLabelsOf(rowId).mapNotNull { stableTokens(it).firstOrNull() }
+
+    /**
+     * Types the first three letters of the first [rowId] row's name into [inputId] and checks the list narrowed to
+     * rows starting with it (or shrank), then clears the field.
+     */
+    private fun searchVerdict(inputId: String, rowId: String, what: String): Verdict {
+        if (!engine.isPresent(inputId)) return bad("The $what search field is not on screen.${dashTagHint()}")
+        val before = rowNames(rowId)
+        val term = before.firstOrNull()?.take(3)
+        if (term.isNullOrEmpty()) return bad("No $what is listed to search for.${dashTagHint()}")
+        val typed = engine.enterText(inputId, term)
+        if (!typed.ok) return bad("The $what search field did not take '$term': ${typed.detail}")
+        val narrowed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
+            val now = rowNames(rowId)
+            now.isNotEmpty() && (now.all { it.startsWith(term, ignoreCase = true) } || now.size < before.size)
+        }
+        val shown = rowNames(rowId).take(3).joinToString(" | ") { clip(it) }
+        engine.enterText(inputId, "")
+        engine.sleep(Timeouts.SETTLE * 2)
+        return if (narrowed) ok("searching '$term' listed: $shown")
+        else bad("Searching '$term' did not narrow the list (showing: ${shown.ifEmpty { "none" }}).")
+    }
+
+    private fun investmentTabSelectedStep(): AutomationRunResult? = runCheck("investment_tab_selected") {
+        scrollToTop()
+        val toTrading = engine.tap(T.DASHBOARD_TAB_TRADING)
+        if (!toTrading.ok) return@runCheck bad("The Trading tab could not be tapped to move the selection: ${toTrading.detail}")
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isSelected(T.DASHBOARD_TAB_TRADING) }) {
+            return@runCheck bad("Tapping Trading did not select the Trading tab.")
+        }
+        val tap = engine.tap(T.DASHBOARD_TAB_INVESTMENTS)
+        if (!tap.ok) return@runCheck bad("The Investment tab could not be tapped: ${tap.detail}")
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(T.DASHBOARD_INVESTMENTS_VIEW) }) {
+            return@runCheck bad("Tapping Investment did not open the Investment page.")
+        }
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isSelected(T.DASHBOARD_TAB_INVESTMENTS) }) {
+            return@runCheck bad("The Investment page is showing but its tab does not report itself as selected.")
+        }
+        ok("moved to Trading and back; the Investment page opened and its tab reports selected")
+    }
+
+    // Alerts ---------------------------------------------------------------------------------------------
+
+    private var testAlertName: String? = null
+
+    private fun alertsSteps(): AutomationRunResult? {
+        val ids = listOf("alerts_page_opened", "alert_created", "alerts_search_checked", "alert_deleted")
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening Alerts")?.let { return it }
+        openRoute(T.INVEST_TILE_ALERTS, T.ALERTS_SCREEN, "The Alerts page", "The Alerts tile is not on the Investment tab.")?.let { why ->
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1), "the Alerts page did not open")
+            scrollToTop()
+            return null
+        }
+        testAlertName = null
+
+        runCheck(ids[0]) {
+            val open = engine.tapAndConfirm(T.ALERTS_NEW_ALERT_LINK, listOf(T.ALERT_SCREEN), Timeouts.SCREEN_CHANGE)
+            if (!open.ok) return@runCheck bad("+ New Alert did not open the create page: ${open.detail}${dashTagHint()}")
+            val closed = closeWithBack(T.ALERT_SCREEN)
+            if (!closed && !engine.cancelled) bad("The create page opened but did not close on Back.")
+            else ok("the Alerts page opened and + New Alert opened the create page")
+        }?.let { return it }
+
+        runCheck(ids[1]) {
+            val open = engine.tapAndConfirm(T.ALERTS_NEW_ALERT_LINK, listOf(T.ALERT_SCREEN), Timeouts.SCREEN_CHANGE)
+            if (!open.ok) return@runCheck bad("+ New Alert did not open the create page: ${open.detail}")
+            // The scrip comes from the app's own search screen.
+            val toSearch = engine.tapAndConfirm(T.ALERT_SCRIP_FIELD, listOf(T.SEARCH_SCREEN), Timeouts.SCREEN_CHANGE, retryAfterMs = Timeouts.SCREEN_CHANGE)
+            if (!toSearch.ok) {
+                closeWithBack(T.ALERT_SCREEN)
+                return@runCheck bad("The scrip field did not open the search screen: ${toSearch.detail}${dashTagHint()}")
+            }
+            val typed = engine.enterText(T.SEARCH_SCRIP_INPUT, "tcs")
+            val results = typed.ok && engine.waitForAny(listOf(T.SEARCH_RESULTS_LIST), Timeouts.SEARCH_RESULTS) is WaitOutcome.Found
+            if (!results) {
+                backTo(T.ALERT_SCREEN, listOf(T.SEARCH_SCREEN))
+                closeWithBack(T.ALERT_SCREEN)
+                return@runCheck bad("Searching 'tcs' for the alert's scrip listed no result.")
+            }
+            engine.tap(T.SEARCH_RESULT_ROW)
+            if (!engine.waitForGone(T.SEARCH_SCREEN, Timeouts.SCREEN_CHANGE)) {
+                backTo(T.ALERT_SCREEN, listOf(T.SEARCH_SCREEN))
+                closeWithBack(T.ALERT_SCREEN)
+                return@runCheck bad("Choosing a search result did not return to the create page.")
+            }
+            val name = "AUTOCHECK${System.currentTimeMillis() % 100000}"
+            val failures = mutableListOf<String>()
+            if (!engine.enterText(T.ALERT_NAME_INPUT, name).ok) failures += "the Alert Name field did not take a value"
+            if (!engine.enterText(T.ALERT_VALUE_INPUT, "9999999").ok) failures += "the value field did not take a value"
+            if (failures.isNotEmpty()) {
+                closeWithBack(T.ALERT_SCREEN)
+                return@runCheck bad(failures.joinToString("; ") + ".")
+            }
+            if (!engine.isTappable(T.ALERT_CREATE_BUTTON)) {
+                closeWithBack(T.ALERT_SCREEN)
+                return@runCheck bad("The CREATE button is missing or disabled.${dashTagHint()}")
+            }
+            testAlertName = name
+            engine.tap(T.ALERT_CREATE_BUTTON)
+            val left = engine.waitForGone(T.ALERT_SCREEN, Timeouts.SCREEN_CHANGE)
+            if (!left) {
+                val texts = engine.screenTexts().take(8).joinToString(" | ")
+                closeWithBack(T.ALERT_SCREEN)
+                testAlertName = null
+                return@runCheck bad("CREATE was tapped but the page stayed open (the app refused it?). Texts on screen: $texts")
+            }
+            val listed = engine.waitUntil(Timeouts.TRADION_TAB_LOAD) {
+                engine.isPresent(T.ALERTS_SCREEN) && engine.ownLabelsOf(T.ALERT_ROW_NAME).any { it.equals(name, ignoreCase = true) }
+            }
+            if (listed) ok("the fields took a name and a value, CREATE made the alert '$name' and it is in the Alerts list")
+            else bad("CREATE closed the page but the alert '$name' did not appear in the Alerts list.")
+        }?.let { return it }
+
+        runCheck(ids[2]) {
+            val name = testAlertName ?: return@runCheck bad("No test alert was created, so there is nothing to search for.")
+            if (!engine.isPresent(T.ALERTS_SEARCH_INPUT)) return@runCheck bad("The Alerts search field is not on screen.${dashTagHint()}")
+            val term = name.take(9)
+            val typed = engine.enterText(T.ALERTS_SEARCH_INPUT, term)
+            if (!typed.ok) return@runCheck bad("The Alerts search field did not take '$term': ${typed.detail}")
+            val found = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
+                engine.ownLabelsOf(T.ALERT_ROW_NAME).any { it.equals(name, ignoreCase = true) }
+            }
+            engine.enterText(T.ALERTS_SEARCH_INPUT, "")
+            engine.sleep(Timeouts.SETTLE * 2)
+            if (found) ok("searching '$term' found the test alert") else bad("Searching '$term' did not list the test alert '$name'.")
+        }?.let { return it }
+
+        runCheck(ids[3]) {
+            val name = testAlertName ?: return@runCheck nothingToCheck("no test alert was created")
+            var index = engine.ownLabelsOf(T.ALERT_ROW_NAME).indexOfFirst { it.equals(name, ignoreCase = true) }
+            if (index < 0) return@runCheck bad("The test alert '$name' is not in the list to delete. Remove any 'AUTOCHECK' alert by hand.")
+            val row = engine.tapAt(T.ALERT_ROW, index)
+            if (!row.ok || !engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(T.ALERT_DELETE_BUTTON) }) {
+                return@runCheck bad("The test alert's sheet did not open with a DELETE button. Remove the 'AUTOCHECK' alert by hand.")
+            }
+            engine.tap(T.ALERT_DELETE_BUTTON)
+            val gone = engine.waitUntil(Timeouts.TRADION_TAB_LOAD) {
+                engine.isPresent(T.ALERTS_SCREEN) && engine.ownLabelsOf(T.ALERT_ROW_NAME).none { it.equals(name, ignoreCase = true) }
+            }
+            if (gone) {
+                testAlertName = null
+                ok("the test alert '$name' was deleted")
+            } else {
+                bad("DELETE was tapped but '$name' is still listed (or its confirmation dialog is open). Remove it by hand.")
+            }
+        }?.let { return it }
+
+        if (!closeWithBack(T.ALERTS_SCREEN) && !engine.cancelled && step(ids[3]).status == StepStatus.PASSED) {
+            failAndContinue(step(ids[3]), "The Alerts page did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // IPO ------------------------------------------------------------------------------------------------
+
+    private fun ipoSteps(): AutomationRunResult? {
+        val ids = listOf("ipo_page_checked", "ipo_details_checked")
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening IPO")?.let { return it }
+        openRoute(T.INVEST_TILE_IPO, T.IPO_SCREEN, "The IPO page", "The IPO tile is not on the Investment tab.")?.let { why ->
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1), "the IPO page did not open")
+            scrollToTop()
+            return null
+        }
+        runCheck(ids[0]) {
+            val (tabs, failures) = tapEachTab(T.IPO_TAB_PREFIX, 6)
+            if (tabs == 0) return@runCheck bad("No IPO tabs were found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.${dashTagHint()}")
+            if (failures.isNotEmpty()) return@runCheck bad(failures.joinToString("; ") + ".")
+            // The first tab is Ongoing; its search box is only built when there is an IPO to search.
+            if (!engine.isPresent(T.IPO_ROW)) return@runCheck ok("$tabs tab(s) tapped; no ongoing IPO is listed, so the search box was not exercised")
+            val search = searchVerdict(T.IPO_SEARCH_INPUT, T.IPO_ROW, "IPO")
+            if (search.failure != null) bad(search.failure) else ok("$tabs tab(s) tapped; ${search.note}")
+        }?.let { return it }
+        runCheck(ids[1]) {
+            val rows = engine.countOf(T.IPO_ROW)
+            if (rows == 0) return@runCheck nothingToCheck("no ongoing IPO is listed, so there are no details to open")
+            var opened = false
+            for (i in 0 until minOf(rows, 3)) {
+                engine.tapAt(T.IPO_ROW, i)
+                if (engine.waitForAny(listOf(T.IPO_DETAILS_SCREEN), Timeouts.SCREEN_CHANGE) is WaitOutcome.Found) {
+                    opened = true
+                    break
+                }
+            }
+            if (!opened) return@runCheck bad("None of the first IPOs opened a details page (an applied IPO does not).${dashTagHint()}")
+            engine.sleep(Timeouts.SETTLE * 2)
+            val chips = engine.countOf(T.IPO_TOGGLE_CHIP)
+            val failures = mutableListOf<String>()
+            for (i in 0 until chips) {
+                val tap = engine.tapAt(T.IPO_TOGGLE_CHIP, i)
+                if (!tap.ok) failures += "button ${i + 1} could not be tapped (${tap.detail})"
+                if (!engine.sleep(Timeouts.SETTLE)) break
+            }
+            val apply = engine.isTappable(T.IPO_APPLY_BUTTON)
+            if (!closeWithBack(T.IPO_DETAILS_SCREEN) && !engine.cancelled) failures += "the details page did not close on Back"
+            when {
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok("the details page opened; $chips button(s) tapped; the Apply button was ${if (apply) "available and not tapped" else "not available"}")
+            }
+        }?.let { return it }
+        if (!closeWithBack(T.IPO_SCREEN) && !engine.cancelled && step(ids[1]).status != StepStatus.FAILED) {
+            failAndContinue(step(ids[1]), "The IPO page did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // Vendor pages (Reports, Pledge, Back Office, Other request) -----------------------------------------
+
+    private fun vendorTileStep(stepId: String, tile: String, what: String): AutomationRunResult? = runCheck(stepId) {
+        scrollToTop()
+        if (!revealDown(tile)) return@runCheck bad("The $what tile is not on the Investment tab.${dashTagHint()}")
+        val tap = engine.tap(tile)
+        if (!tap.ok) return@runCheck bad("The $what tile could not be tapped: ${tap.detail}")
+        // The vendor sign-in is a network call, so give the page longer than a plain screen change.
+        val opened = engine.waitUntil(30_000L) { engine.isPresent(T.WEB_VIEW_SCREEN) }
+        if (!opened) {
+            return@runCheck bad(
+                "Tapping $what did not open its page within 30 seconds. Identifiers on screen: " +
+                    "${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.",
+            )
+        }
+        engine.sleep(Timeouts.SETTLE * 2)
+        val closed = closeWithBack(T.WEB_VIEW_SCREEN)
+        val home = engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(T.DASHBOARD_SCREEN) }
+        when {
+            !closed && !engine.cancelled -> bad("The $what page opened but did not close on Back.")
+            !home -> bad("After leaving the $what page the dashboard did not come back.")
+            else -> ok("the $what page opened (its content is a web page the tool cannot read) and Back returned to the dashboard")
+        }
+    }
+
+    // ETF -------------------------------------------------------------------------------------------------
+
+    private fun etfSteps(): AutomationRunResult? {
+        val ids = listOf("etf_page_opened", "etf_tabs_options", "etf_tabs_buy_sell", "etf_search_settings")
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening ETF")?.let { return it }
+        scrollToTop()
+        val why = if (!revealDown(T.INVEST_TILE_ETF)) "The ETF tile is not on the Investment tab.${dashTagHint()}" else {
+            val open = engine.tapAndConfirm(T.INVEST_TILE_ETF, listOf(T.ETF_SCREEN), 20_000L, retryAfterMs = 20_000L)
+            if (open.ok) null else "The ETF page did not open: ${open.detail}"
+        }
+        if (why != null) {
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1), "the ETF page did not open")
+            scrollToTop()
+            return null
+        }
+        runCheck(ids[0]) {
+            if (engine.waitUntil(Timeouts.TRADION_TAB_LOAD) { engine.isPresent(T.ETF_TAB_PREFIX + "0") }) ok("the ETF page opened with its tabs")
+            else bad("The ETF page opened but showed no tabs.${dashTagHint()}")
+        }?.let { return it }
+
+        runCheck(ids[1]) {
+            val targets = listOf(sheetChart, sheetAlert, sheetBasket, sheetMore)
+            val (tabs, problems) = forEachTab(T.ETF_TAB_PREFIX, 10, T.ETF_ROW) {
+                optionsFromFirstRow(T.ETF_ROW, T.ETF_SCREEN, targets).third
+            }
+            if (tabs == 0) bad("No ETF tabs were found.${dashTagHint()}")
+            else if (problems.isNotEmpty()) bad(problems.joinToString("; ") + ".")
+            else ok("$tabs tab(s): each opened one instrument's Chart, Alert, Basket and More Details (a box the sheet does not offer is skipped)")
+        }?.let { return it }
+
+        runCheck(ids[2]) {
+            val (tabs, problems) = forEachTab(T.ETF_TAB_PREFIX, 10, T.ETF_ROW) {
+                buySellFromFirstRow(T.ETF_ROW, T.ETF_SCREEN, orderPadOverlays).second
+            }
+            if (tabs == 0) bad("No ETF tabs were found.${dashTagHint()}")
+            else if (problems.isNotEmpty()) bad(problems.joinToString("; ") + ".")
+            else ok("$tabs tab(s): Buy and Sell each opened the order pad and it was closed with Back; nothing was placed")
+        }?.let { return it }
+
+        runCheck(ids[3]) {
+            val tabIds = (0 until 10).map { "${T.ETF_TAB_PREFIX}$it" }
+            if (engine.revealInList(tabIds[0], tabIds)) {
+                engine.tap(tabIds[0])
+                engine.sleep(Timeouts.SETTLE * 2)
+                checkPageLoads(Timeouts.TRADION_TAB_LOAD, 1)
+            }
+            val search = searchVerdict(T.ETF_SEARCH_INPUT, T.ETF_ROW, "ETF")
+            val (sorted, failures) = sortSheetCheck(T.ETF_FILTER_BUTTON, T.ETF_FILTER_SHEET, T.ETF_FILTER_CLEAR, "ETF", T.ETF_FILTER_EXCHANGE)
+            val chips = lastChipsTapped
+            val problems = failures.toMutableList()
+            search.failure?.let { problems.add(0, it) }
+            if (problems.isNotEmpty()) bad(problems.joinToString("; ") + ".")
+            else ok("${search.note}; $chips exchange option(s) and $sorted sort option(s) tapped; Clear reset them and closed the sheet")
+        }?.let { return it }
+
+        if (!closeWithBack(T.ETF_SCREEN) && !engine.cancelled && step(ids[3]).status != StepStatus.FAILED) {
+            failAndContinue(step(ids[3]), "The ETF page did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // Top Sectors and Customize ---------------------------------------------------------------------------
+
+    private fun topSectorsStep(): AutomationRunResult? = runCheck("top_sectors_view_all_checked") {
+        scrollToTop()
+        if (!revealDown(T.DASHBOARD_TOP_SECTORS_VIEW_ALL)) {
+            return@runCheck bad("The Top Sectors 'View All' is not on the Investment tab (the section may be switched off under Customize).${dashTagHint()}")
+        }
+        val open = engine.tapAndConfirm(T.DASHBOARD_TOP_SECTORS_VIEW_ALL, listOf(T.SECTORS_SCREEN), Timeouts.SCREEN_CHANGE)
+        if (!open.ok) return@runCheck bad("Top Sectors 'View All' did not open: ${open.detail}")
+        val (tabs, failures) = tapEachTab(T.SECTORS_TAB_PREFIX, 10)
+        val closed = closeWithBack(T.SECTORS_SCREEN)
+        scrollToTop()
+        when {
+            tabs == 0 -> bad("The sectors page showed no tabs.${dashTagHint()}")
+            failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+            !closed && !engine.cancelled -> bad("The sectors page did not close on Back.")
+            else -> ok("the sectors page opened and its $tabs tab(s) were each tapped")
+        }
+    }
+
+    private fun investmentCustomizeStep(): AutomationRunResult? = runCheck("investment_customize_checked") {
+        openRoute(
+            T.INVEST_CUSTOMIZE_BUTTON, T.INVEST_CUSTOMIZE_SCREEN, "Customize",
+            "The Customize button is not on the Investment tab.",
+        )?.let { return@runCheck bad(it) }
+        if (!engine.sleep(Timeouts.SETTLE * 2)) return@runCheck bad("cancelled")
+        val closed = closeWithBack(T.INVEST_CUSTOMIZE_SCREEN)
+        scrollToTop()
+        if (closed) ok("the Customize screen opened and was left without a change")
+        else bad("The Customize screen opened but did not close on Back (it may be asking to save changes; the tool never saves or discards).")
+    }
+
+    // Scanners: every tab of every segment ----------------------------------------------------------------
+
+    private fun scannersDeepSteps(): AutomationRunResult? {
+        val segments = listOf("equity" to "Equity", "futures" to "Futures", "options" to "Options", "commodity" to "Commodity")
+        val budget = Timeouts.TRADION_TAB_LOAD
+        fun selectSegment(i: Int): String? {
+            val id = "${T.SCANNERS_SEGMENT_PREFIX}$i"
+            if (!engine.isPresent(id)) return "the segment option is not on the Scanners screen"
+            val tap = engine.tap(id)
+            if (!tap.ok) return "the segment option could not be tapped (${tap.detail})"
+            engine.sleep(Timeouts.SETTLE * 2)
+            checkPageLoads(budget, 1)
+            return null
+        }
+        for ((i, seg) in segments.withIndex()) {
+            val (key, name) = seg
+            val optionsId = "scanners_${key}_tab_options"
+            val buySellId = "scanners_${key}_tab_buy_sell"
+            val selectFailure = selectSegment(i)
+            if (engine.cancelled) return stopped(step(optionsId))
+            if (selectFailure != null) {
+                runCheck(optionsId) { bad("$name: $selectFailure.") }?.let { return it }
+                runCheck(buySellId) { bad("$name: $selectFailure.") }?.let { return it }
+                if (key == "equity") runCheck("scanners_equity_search_settings") { bad("$name: $selectFailure.") }?.let { return it }
+                continue
+            }
+            runCheck(optionsId) {
+                val targets = listOf(sheetChart, sheetAlert, sheetOpChain, sheetMore)
+                val notOffered = linkedSetOf<String>()
+                val (tabs, problems) = forEachTab(T.SCANNERS_TAB_PREFIX, 10, T.SCANNER_ROW) {
+                    val (_, missing, p) = optionsFromFirstRow(T.SCANNER_ROW, T.SCANNERS_SCREEN, targets)
+                    notOffered += missing
+                    p
+                }
+                when {
+                    tabs == 0 -> bad("$name: no Scanners tabs were found.${dashTagHint()}")
+                    problems.isNotEmpty() -> bad("$name: " + problems.joinToString("; ") + ".")
+                    else -> ok(
+                        "$name: $tabs tab(s), each opened one instrument's Chart, Alert, Op.Chain and More Details" +
+                            if (notOffered.isEmpty()) "" else " (not offered on some: ${notOffered.joinToString(", ")})",
+                    )
+                }
+            }?.let { return it }
+            runCheck(buySellId) {
+                val (tabs, problems) = forEachTab(T.SCANNERS_TAB_PREFIX, 10, T.SCANNER_ROW) {
+                    buySellFromFirstRow(T.SCANNER_ROW, T.SCANNERS_SCREEN, orderPadOverlays).second
+                }
+                when {
+                    tabs == 0 -> bad("$name: no Scanners tabs were found.${dashTagHint()}")
+                    problems.isNotEmpty() -> bad("$name: " + problems.joinToString("; ") + ".")
+                    else -> ok("$name: $tabs tab(s), Buy and Sell each opened the order pad and it was closed with Back; nothing was placed")
+                }
+            }?.let { return it }
+            if (key == "equity") {
+                runCheck("scanners_equity_search_settings") {
+                    val tabIds = (0 until 10).map { "${T.SCANNERS_TAB_PREFIX}$it" }
+                    if (engine.revealInList(tabIds[0], tabIds)) {
+                        engine.tap(tabIds[0])
+                        engine.sleep(Timeouts.SETTLE * 2)
+                        checkPageLoads(budget, 1)
+                    }
+                    val search = searchVerdict(T.SCANNERS_SEARCH_INPUT, T.SCANNER_ROW, "Scanners")
+                    val (sorted, failures) = sortSheetCheck(
+                        T.SCANNERS_FILTER_BUTTON, T.SCANNERS_FILTER_SHEET, T.SCANNERS_FILTER_CLOSE, "Scanners", T.SCANNERS_FILTER_EXCHANGE,
+                    )
+                    val chips = lastChipsTapped
+                    val problems = failures.toMutableList()
+                    search.failure?.let { problems.add(0, it) }
+                    if (problems.isNotEmpty()) bad(problems.joinToString("; ") + ".")
+                    else ok("${search.note}; $chips exchange option(s) and $sorted sort option(s) tapped; Close reset them and closed the sheet")
+                }?.let { return it }
+            }
+        }
+        // Leave on Equity, the screen's own default.
+        if (engine.isPresent("${T.SCANNERS_SEGMENT_PREFIX}0")) engine.tap("${T.SCANNERS_SEGMENT_PREFIX}0")
+        return null
+    }
+
+    // ── Dashboard scenarios ───────────────────────────────────────────────────────────────────
+    //
+    // Each check below is one report step. None of them places, modifies or cancels anything:
+    // Buy and Sell are only tapped to open the order pad, which is left with Back; Filter and sort
+    // controls are tapped and then reset with the sheet's own Clear / Close; the Customize screen
+    // is opened and left without a change.
+
+    /** What one check found: [failure] null means it passed (with [note]); [skipNote] means nothing to check. */
+    private class Verdict(val failure: String?, val note: String? = null, val skipNote: String? = null)
+
+    private fun ok(note: String? = null) = Verdict(null, note)
+    private fun bad(reason: String) = Verdict(reason)
+    private fun nothingToCheck(why: String) = Verdict(null, skipNote = why)
+
+    private fun dashTagHint(): String =
+        " If no identifier for it is listed, the installed Tradion build predates the Dashboard " +
+            "identifiers; build it with the current tradion_mobile sources."
+
+    /** Runs [body] as the step [stepId] and records its [Verdict]; a session that ended mid-check ends the run. */
+    private fun runCheck(stepId: String, body: () -> Verdict): AutomationRunResult? {
+        val current = step(stepId)
+        if (current.status == StepStatus.PENDING) begin(current)
+        sessionEnded(current, "checking ${current.name}")?.let { return it }
+        val verdict = body()
+        if (engine.cancelled) return stopped(current)
+        sessionEnded(current, "checking ${current.name}")?.let { return it }
+        val failure = verdict.failure
+        val skipNote = verdict.skipNote
+        when {
+            failure != null -> failAndContinue(current, failure)
+            skipNote != null -> skip(current, skipNote)
+            else -> pass(current, verdict.note)
+        }
+        return null
+    }
+
+    /** Scrolls to the top and opens the pushed route behind [openId]. Null on success, else why not. */
+    private fun openRoute(openId: String, screenId: String, what: String, missing: String): String? {
+        scrollToTop()
+        if (!revealDown(openId)) return missing + dashTagHint()
+        val open = engine.tapAndConfirm(openId, listOf(screenId), Timeouts.SCREEN_CHANGE)
+        return if (open.ok) null else "$what did not open: ${open.detail}"
+    }
+
+    /**
+     * Presses Back out of whichever of [overlays] is on screen until [home] shows again. Back is only
+     * ever pressed for an overlay whose own marker was just seen (see [closeWithBack]).
+     */
+    private fun backTo(home: String, overlays: List<String>): Boolean {
+        repeat(3) {
+            if (engine.isPresent(home)) return true
+            val overlay = engine.firstPresent(overlays)
+                ?: return engine.waitUntil(Timeouts.SETTLE * 4) { engine.isPresent(home) }
+            closeWithBack(overlay)
+            if (engine.cancelled) return false
+        }
+        return engine.isPresent(home)
+    }
+
+    /**
+     * Taps each tab `<prefix>0`, `<prefix>1`, ... that exists (up to [maxTabs]) and checks the screen does
+     * not turn into the retry screen. Ends back on the first tab. Returns how many tabs were seen and the failures.
+     */
+    private fun tapEachTab(prefix: String, maxTabs: Int): Pair<Int, List<String>> {
+        val all = (0 until maxTabs).map { "$prefix$it" }
+        val failures = mutableListOf<String>()
+        var seen = 0
+        for ((i, id) in all.withIndex()) {
+            if (!engine.revealInList(id, all)) break
+            seen++
+            val tap = engine.tap(id)
+            if (!tap.ok) {
+                failures += "tab ${i + 1} could not be tapped (${tap.detail})"
+                continue
+            }
+            if (!engine.sleep(Timeouts.SETTLE * 2)) break
+            if (engine.countOf(AutomationConfig.Ids.UI_ERROR) > 0) failures += "tab ${i + 1} shows the 'Something went wrong / Retry' screen"
+        }
+        if (seen > 1 && engine.revealInList(all[0], all)) {
+            engine.tap(all[0])
+            engine.sleep(Timeouts.SETTLE * 2)
+        }
+        return seen to failures
+    }
+
+    /**
+     * Opens a sort sheet through [buttonId], taps each of its sort rows, then taps [resetId] (Clear / Close,
+     * which restores the default order and closes the sheet). Returns the number of rows tapped and the failures.
+     */
+    private var lastChipsTapped = 0
+
+    private fun sortSheetCheck(
+        buttonId: String, sheetId: String, resetId: String, what: String, chipId: String? = null,
+    ): Pair<Int, List<String>> {
+        lastChipsTapped = 0
+        val open = engine.tapAndConfirm(buttonId, listOf(sheetId), Timeouts.SCREEN_CHANGE)
+        if (!open.ok) return 0 to listOf("The $what sort icon did not open its sheet: ${open.detail}${dashTagHint()}")
+        val failures = mutableListOf<String>()
+        var tapped = 0
+        if (chipId != null) {
+            val chips = engine.countOf(chipId)
+            if (chips == 0) failures += "the sheet offered no exchange (NSE / BSE) options${dashTagHint()}"
+            for (i in 0 until chips) {
+                val tap = engine.tapAt(chipId, i)
+                if (tap.ok) lastChipsTapped++ else failures += "exchange option ${i + 1} could not be tapped (${tap.detail})"
+                if (!engine.sleep(Timeouts.SETTLE)) break
+            }
+        }
+        for (option in T.SORT_OPTIONS) {
+            val name = option.removePrefix("sort_option_").replace('_', ' ')
+            if (!engine.isPresent(sheetId)) {
+                val again = engine.tapAndConfirm(buttonId, listOf(sheetId), Timeouts.SCREEN_CHANGE)
+                if (!again.ok) {
+                    failures += "the sheet closed after a sort row and could not be reopened"
+                    break
+                }
+            }
+            if (!engine.isPresent(option)) {
+                failures += "the '$name' sort row is not on the sheet"
+                continue
+            }
+            val tap = engine.tap(option)
+            if (!tap.ok) failures += "the '$name' sort row could not be tapped (${tap.detail})" else tapped++
+            if (!engine.sleep(Timeouts.SETTLE * 2)) break
+        }
+        if (!engine.isPresent(sheetId)) engine.tapAndConfirm(buttonId, listOf(sheetId), Timeouts.SCREEN_CHANGE)
+        val reset = engine.tap(resetId)
+        if (!reset.ok) {
+            failures += "the sheet's reset control could not be tapped (${reset.detail})"
+            closeWithBack(sheetId)
+        } else if (!engine.waitForGone(sheetId, Timeouts.SCREEN_CHANGE)) {
+            failures += "the sheet did not close after its reset control was tapped"
+            closeWithBack(sheetId)
+        }
+        return tapped to failures
+    }
+
+    /**
+     * For the first [rowId] row of the list on [home]: opens its sheet, taps Buy then Sell, expects the order pad
+     * each time and leaves it with Back. Nothing on the pad is touched. Returns how many pads opened and the failures.
+     */
+    private fun buySellFromFirstRow(rowId: String, home: String, overlays: List<String>): Pair<Int, List<String>> {
+        val failures = mutableListOf<String>()
+        var opened = 0
+        for ((button, label) in listOf(T.TRADE_BUY_BUTTON to "Buy", T.TRADE_SELL_BUTTON to "Sell")) {
+            if (!backTo(home, overlays)) {
+                failures += "could not get back to the list before $label"
+                break
+            }
+            if (!engine.isPresent(rowId)) {
+                failures += "$label: no scrip row is on screen"
+                break
+            }
+            val row = engine.tap(rowId)
+            if (!row.ok) {
+                failures += "$label: the first scrip could not be tapped (${row.detail})"
+                continue
+            }
+            if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(button) }) {
+                failures += "$label: the scrip's sheet never showed '$button'.${dashTagHint()}"
+                continue
+            }
+            // One tap only: the sheet closes itself, so a retry could only ever hit a second pad.
+            val pad = engine.tapAndConfirm(
+                button, listOf(T.ORDER_WINDOW_SCREEN), Timeouts.SCREEN_CHANGE, retryAfterMs = Timeouts.SCREEN_CHANGE,
+            )
+            if (!pad.ok) {
+                failures += "$label did not open the order pad: ${pad.detail}"
+                continue
+            }
+            opened++
+            if (!engine.sleep(Timeouts.SETTLE)) break
+            if (!closeWithBack(T.ORDER_WINDOW_SCREEN) && !engine.cancelled) failures += "the order pad did not close on Back after $label"
+        }
+        backTo(home, overlays)
+        return opened to failures
+    }
+
+    private val orderPadOverlays = listOf(
+        T.ORDER_WINDOW_SCREEN, T.CHART_SCREEN, T.MORE_INFO_SCREEN, T.OPTION_CHAIN_SCREEN,
+        T.SCRIP_SHEET_CHART_BUTTON, T.SCRIP_SHEET_OPCHAIN_BUTTON, T.SCRIP_SHEET_MORE_BUTTON,
+        T.TRADE_BUY_BUTTON, T.SCANNERS_FILTER_SHEET, T.FUTURES_FILTER_SHEET, T.ETF_FILTER_SHEET,
+        T.ALERT_SCREEN, T.BASKET_SELECT_SCREEN, T.SCRIP_SHEET_ALERT_BUTTON, T.SCRIP_SHEET_BASKET_BUTTON,
+    )
+
+    private fun clip(text: String, max: Int = 40): String = if (text.length <= max) text else text.take(max) + "…"
+
+    // 1 — the index dropdown -----------------------------------------------------------------------
+
+    private fun indexDropdownStep(): AutomationRunResult? = runCheck("dashboard_index_dropdown_checked") {
+        scrollToTop()
+        val open = engine.tap(T.DASHBOARD_INDEX_DROPDOWN)
+        if (!open.ok) return@runCheck bad("The index dropdown arrow could not be tapped: ${open.detail}${dashTagHint()}")
+        val shown = engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.countOf(T.DASHBOARD_INDEX_ITEM) > 0 }
+        if (!shown) {
+            return@runCheck bad(
+                "The arrow was tapped but no index was listed within ${Timeouts.SCREEN_CHANGE / 1000} seconds. " +
+                    "Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.",
+            )
+        }
+        val names = engine.groupedLabelsOf(T.DASHBOARD_INDEX_ITEM)
+        val close = engine.tap(T.DASHBOARD_INDEX_CLOSE)
+        if (!close.ok) return@runCheck bad("The index list opened but its close button could not be tapped: ${close.detail}")
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.countOf(T.DASHBOARD_INDEX_ITEM) == 0 }) {
+            return@runCheck bad("The index list did not close after its close button was tapped.")
+        }
+        ok("${names.size} index(es) listed (${names.take(3).joinToString(" | ") { clip(it) }}), then closed")
+    }
+
+    // 2 — the Trading tab ---------------------------------------------------------------------------
+
+    private fun tradingTabSelectedStep(): AutomationRunResult? = runCheck("dashboard_trading_tab_selected") {
+        scrollToTop()
+        // Move the selection away first, so "selected" has to be earned by tapping Trading.
+        val toInvestments = engine.tap(T.DASHBOARD_TAB_INVESTMENTS)
+        if (!toInvestments.ok) return@runCheck bad("The Investments tab could not be tapped to move the selection: ${toInvestments.detail}")
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(T.DASHBOARD_INVESTMENTS_VIEW) }) {
+            return@runCheck bad("Tapping Investments did not open the Investments page.")
+        }
+        val tap = engine.tap(T.DASHBOARD_TAB_TRADING)
+        if (!tap.ok) return@runCheck bad("The Trading tab could not be tapped: ${tap.detail}")
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isPresent(T.DASHBOARD_TRADING_VIEW) }) {
+            return@runCheck bad("Tapping Trading did not open the Trading page.")
+        }
+        if (!engine.waitUntil(Timeouts.SCREEN_CHANGE) { engine.isSelected(T.DASHBOARD_TAB_TRADING) }) {
+            return@runCheck bad("The Trading page is showing but its tab does not report itself as selected.")
+        }
+        ok("moved to Investments and back; the Trading page opened and its tab reports selected")
+    }
+
+    // 3–6 — Trading Ideas (the Research calls screen) -----------------------------------------------
+
+    private fun tradingIdeasSteps(): AutomationRunResult? {
+        val ids = listOf(
+            "trading_ideas_tabs_clickable", "trading_ideas_subtabs_search",
+            "trading_ideas_menu_opened", "trading_ideas_filter_checked",
+        )
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening Trading Ideas")?.let { return it }
+        openRoute(
+            T.DASHBOARD_OPEN_RESEARCH_CALLS, T.RESEARCH_CALL_SCREEN, "Trading Ideas",
+            "The Research tile is not on the Trading tab.",
+        )?.let { why ->
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1), "Trading Ideas did not open")
+            scrollToTop()
+            return null
+        }
+
+        runCheck(ids[0]) {
+            val (tabs, failures) = tapEachTab(T.RESEARCH_TAB_PREFIX, 12)
+            when {
+                tabs == 0 -> bad("No Trading Ideas tabs were found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.")
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok("$tabs tab(s) each tapped and showed no error")
+            }
+        }?.let { return it }
+
+        runCheck(ids[1]) {
+            val prefix = T.RESEARCH_SUBTAB_PREFIX
+            val (subs, failures) = tapEachTab(prefix, 6)
+            if (subs == 0) return@runCheck bad("No sub tabs (Intraday / Positional) were found on the first Trading Ideas tab.")
+            if (failures.isNotEmpty()) return@runCheck bad(failures.joinToString("; ") + ".")
+            val names = (0 until subs).mapNotNull { engine.labelsOf("$prefix$it").firstOrNull() }.joinToString(", ")
+            // The search box is only built for a sub tab holding more than one call.
+            var searchable = engine.isPresent(T.RESEARCH_SEARCH_INPUT)
+            if (!searchable) {
+                for (i in 0 until subs) {
+                    val id = "$prefix$i"
+                    if (!engine.revealInList(id, (0 until subs).map { "$prefix$it" })) continue
+                    engine.tap(id)
+                    engine.sleep(Timeouts.SETTLE * 2)
+                    if (engine.isPresent(T.RESEARCH_SEARCH_INPUT)) {
+                        searchable = true
+                        break
+                    }
+                }
+            }
+            if (!searchable) {
+                return@runCheck ok("$subs sub tab(s) tapped ($names); the search box is built only for a sub tab with more than one call and none has, so no scrip was searched")
+            }
+            val name = engine.ownLabelsOf(T.RESEARCH_CARD_NAME).firstOrNull()?.trim()
+            if (name.isNullOrEmpty()) return@runCheck bad("The search box is shown but no call is listed to search for.${dashTagHint()}")
+            val term = name.take(3)
+            val typed = engine.enterText(T.RESEARCH_SEARCH_INPUT, term)
+            if (!typed.ok) return@runCheck bad("The search box did not take '$term': ${typed.detail}")
+            val narrowed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
+                val shown = engine.ownLabelsOf(T.RESEARCH_CARD_NAME)
+                shown.isNotEmpty() && shown.all { it.startsWith(term, ignoreCase = true) }
+            }
+            val shownNow = engine.ownLabelsOf(T.RESEARCH_CARD_NAME).take(3).joinToString(" | ") { clip(it) }
+            engine.enterText(T.RESEARCH_SEARCH_INPUT, "")
+            engine.sleep(Timeouts.SETTLE * 2)
+            if (!narrowed) return@runCheck bad("Searching '$term' did not narrow the calls to scrips starting with it (showing: ${shownNow.ifEmpty { "none" }}).")
+            ok("$subs sub tab(s) tapped ($names); searching '$term' found: $shownNow")
+        }?.let { return it }
+
+        runCheck(ids[2]) {
+            if (!engine.isPresent(T.RESEARCH_FILTER_BUTTON)) {
+                return@runCheck bad("The top-right menu icon is not on the Trading Ideas page (it is hidden on the two basket tabs).${dashTagHint()}")
+            }
+            val open = engine.tapAndConfirm(T.RESEARCH_FILTER_BUTTON, listOf(T.RESEARCH_FILTER_SHEET), Timeouts.SCREEN_CHANGE)
+            if (open.ok) ok("the menu opened the Filter By sheet") else bad("The menu icon did not open its sheet: ${open.detail}")
+        }?.let { return it }
+
+        runCheck(ids[3]) {
+            if (!engine.isPresent(T.RESEARCH_FILTER_SHEET)) {
+                val again = engine.tapAndConfirm(T.RESEARCH_FILTER_BUTTON, listOf(T.RESEARCH_FILTER_SHEET), Timeouts.SCREEN_CHANGE)
+                if (!again.ok) return@runCheck bad("The Filter By sheet is not open: ${again.detail}")
+            }
+            val groups = listOf(
+                "Status" to T.RESEARCH_FILTER_STATUS,
+                "Exchange" to T.RESEARCH_FILTER_EXCHANGE,
+                "Returns" to T.RESEARCH_FILTER_RETURNS,
+            )
+            val ids3 = groups.map { it.second } + T.RESEARCH_FILTER_CLEAR
+            val tapped = mutableListOf<String>()
+            val absent = mutableListOf<String>()
+            val failures = mutableListOf<String>()
+            for ((label, id) in groups) {
+                if (!engine.revealInList(id, ids3)) {
+                    absent += label
+                    continue
+                }
+                val options = engine.countOf(id)
+                val tap = engine.tap(id)
+                if (tap.ok) tapped += "$label ($options option(s))" else failures += "a $label option could not be tapped (${tap.detail})"
+                if (!engine.sleep(Timeouts.SETTLE * 2)) break
+                if (!engine.isPresent(T.RESEARCH_FILTER_SHEET)) {
+                    val again = engine.tapAndConfirm(T.RESEARCH_FILTER_BUTTON, listOf(T.RESEARCH_FILTER_SHEET), Timeouts.SCREEN_CHANGE)
+                    if (!again.ok) {
+                        failures += "the sheet closed after a $label option and could not be reopened"
+                        break
+                    }
+                }
+            }
+            if (tapped.isEmpty() && failures.isEmpty()) {
+                closeWithBack(T.RESEARCH_FILTER_SHEET)
+                return@runCheck bad("The Filter By sheet offered no Status, Exchange or Returns options.${dashTagHint()}")
+            }
+            if (engine.isPresent(T.RESEARCH_FILTER_SHEET)) {
+                engine.revealInList(T.RESEARCH_FILTER_CLEAR, ids3)
+                val clear = engine.tap(T.RESEARCH_FILTER_CLEAR)
+                if (!clear.ok) {
+                    failures += "Clear could not be tapped (${clear.detail})"
+                    closeWithBack(T.RESEARCH_FILTER_SHEET)
+                } else if (!engine.waitForGone(T.RESEARCH_FILTER_SHEET, Timeouts.SCREEN_CHANGE)) {
+                    failures += "the sheet did not close after Clear"
+                    closeWithBack(T.RESEARCH_FILTER_SHEET)
+                }
+            }
+            when {
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok(
+                    "tapped the first option of ${tapped.joinToString(", ")}; Clear reset them and closed the sheet" +
+                        if (absent.isEmpty()) "" else "; not offered: ${absent.joinToString(", ")}",
+                )
+            }
+        }?.let { return it }
+
+        if (engine.isPresent(T.RESEARCH_FILTER_SHEET)) closeWithBack(T.RESEARCH_FILTER_SHEET)
+        if (!closeWithBack(T.RESEARCH_CALL_SCREEN) && !engine.cancelled && step(ids[3]).status == StepStatus.PASSED) {
+            failAndContinue(step(ids[3]), "Trading Ideas opened but did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // 12–13 — Futures › View All -------------------------------------------------------------------
+
+    private fun futuresSteps(): AutomationRunResult? {
+        val ids = listOf("futures_view_all_checked", "futures_scrip_buy_sell_checked")
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening Futures View All")?.let { return it }
+        openRoute(
+            T.DASHBOARD_FUTURES_VIEW_ALL, T.FUTURES_SCREEN, "Futures View All",
+            "The Futures card's View All is not on the Trading tab (the card appears only when futures data loads " +
+                "and the section is switched on under Customize).",
+        )?.let { why ->
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1), "Futures View All did not open")
+            scrollToTop()
+            return null
+        }
+
+        runCheck(ids[0]) {
+            val (tabs, failures) = tapEachTab(T.FUTURES_TAB_PREFIX, 8)
+            if (tabs == 0) return@runCheck bad("No Futures tabs were found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.${dashTagHint()}")
+            val problems = failures.toMutableList()
+            val (sorted, sortFailures) = sortSheetCheck(T.FUTURES_FILTER_BUTTON, T.FUTURES_FILTER_SHEET, T.FUTURES_FILTER_CLEAR, "Futures")
+            problems += sortFailures
+            if (problems.isNotEmpty()) bad(problems.joinToString("; ") + ".")
+            else ok("$tabs tab(s) tapped; $sorted sort option(s) tapped; Clear reset the sort and closed the sheet")
+        }?.let { return it }
+
+        runCheck(ids[1]) {
+            val (opened, failures) = buySellFromFirstRow(T.FUTURES_ROW, T.FUTURES_SCREEN, orderPadOverlays)
+            when {
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok("Buy and Sell each opened the order pad ($opened of 2) and it was closed with Back; nothing was placed")
+            }
+        }?.let { return it }
+
+        if (!closeWithBack(T.FUTURES_SCREEN) && !engine.cancelled && step(ids[1]).status == StepStatus.PASSED) {
+            failAndContinue(step(ids[1]), "The Futures screen did not close on Back.")
+        }
+        scrollToTop()
+        return null
+    }
+
+    // 14 — FII / DII ----------------------------------------------------------------------------------
+
+    private fun fiiDiiStep(): AutomationRunResult? = runCheck("fii_dii_view_all_checked") {
+        openRoute(
+            T.DASHBOARD_FII_DII_VIEW_ALL, T.FII_DII_SCREEN, "FII / DII View All",
+            "The FII / DII card's View All is not on the Trading tab (the card appears only when the section is " +
+                "switched on under Customize).",
+        )?.let { return@runCheck bad(it) }
+        val rows = engine.waitUntil(Timeouts.TRADION_TAB_LOAD) { engine.countOf(T.FII_DII_ROW) > 0 }
+        val count = engine.countOf(T.FII_DII_ROW)
+        val closed = closeWithBack(T.FII_DII_SCREEN)
+        scrollToTop()
+        when {
+            !rows -> bad("The FII / DII screen opened but showed no data within ${Timeouts.TRADION_TAB_LOAD / 1000} seconds.")
+            !closed && !engine.cancelled -> bad("The FII / DII screen showed $count row(s) but did not close on Back.")
+            else -> ok("the FII / DII screen opened with $count row(s) of data")
+        }
+    }
+
+    // 15 — Customize ----------------------------------------------------------------------------------
+
+    private fun customizeStep(): AutomationRunResult? = runCheck("dashboard_customize_checked") {
+        openRoute(
+            T.DASHBOARD_CUSTOMIZE_BUTTON, T.DASHBOARD_CUSTOMIZE_SCREEN, "Customize",
+            "The Customize button is not on the Trading tab.",
+        )?.let { return@runCheck bad(it) }
+        if (!engine.sleep(Timeouts.SETTLE * 2)) return@runCheck bad("cancelled")
+        // Nothing is changed, so Back leaves without the app's "Do you want to save changes?" dialog.
+        val closed = closeWithBack(T.DASHBOARD_CUSTOMIZE_SCREEN)
+        scrollToTop()
+        if (closed) ok("the Customize screen opened and was left without a change")
+        else bad("The Customize screen opened but did not close on Back (it may be asking to save changes; the tool never saves or discards).")
+    }
+
+    // 7–11 — Scanners (the "Screener" page) --------------------------------------------------------------
+
+    private fun screenerSteps(): AutomationRunResult? {
+        val ids = listOf(
+            "screener_tabs_checked", "screener_dropdown_checked", "screener_search_checked",
+            "screener_sort_checked", "screener_scrip_checked",
+        )
+        val budget = Timeouts.TRADION_TAB_LOAD
+        val first = step(ids[0])
+        begin(first)
+        sessionEnded(first, "opening Scanners")?.let { return it }
+        openRoute(
+            T.DASHBOARD_SCANNERS_VIEW_ALL, T.SCANNERS_SCREEN, "Scanners",
+            "The Scanners 'View All' link is not on the Investments tab.",
+        )?.let { why ->
+            if (engine.cancelled) return stopped(first)
+            failAndContinue(first, why)
+            skipSteps(ids.drop(1) + scannerDeepIds, "Scanners did not open")
+            scrollToTop()
+            return null
+        }
+        val tabIds = (0 until 8).map { "${T.SCANNERS_TAB_PREFIX}$it" }
+        fun firstTab() {
+            if (engine.revealInList(tabIds[0], tabIds)) {
+                engine.tap(tabIds[0])
+                engine.sleep(Timeouts.SETTLE * 2)
+                checkPageLoads(budget, 1)
+            }
+        }
+
+        runCheck(ids[0]) {
+            val (tabs, failures) = walkTabs(T.SCANNERS_TAB_PREFIX, budget) { i ->
+                if (engine.countOf(T.SCANNER_ROW) == 0) listOf("tab ${i + 1} shows no data${dashTagHint()}") else emptyList()
+            }
+            firstTab()
+            when {
+                tabs == 0 -> bad("No Scanners tabs were found. Identifiers on screen: ${engine.visibleIdentifiers().joinToString(", ").ifEmpty { "none" }}.")
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok("$tabs tab(s) each tapped, finished loading and listed scrips")
+            }
+        }?.let { return it }
+
+        runCheck(ids[1]) {
+            val names = listOf("Equity", "Futures", "Options", "Commodity")
+            val failures = mutableListOf<String>()
+            var seen = 0
+            for ((i, name) in names.withIndex()) {
+                val id = "${T.SCANNERS_SEGMENT_PREFIX}$i"
+                if (!engine.isPresent(id)) {
+                    failures += "the $name option is not on screen"
+                    continue
+                }
+                seen++
+                val tap = engine.tap(id)
+                if (!tap.ok) {
+                    failures += "the $name option could not be tapped (${tap.detail})"
+                    continue
+                }
+                if (!engine.sleep(Timeouts.SETTLE * 2)) break
+                loadFailure(checkPageLoads(budget, 1), budget, name)?.let { failures += it }
+            }
+            // Back to Equity, so the next checks run on the same list as the first.
+            if (engine.isPresent("${T.SCANNERS_SEGMENT_PREFIX}0")) {
+                engine.tap("${T.SCANNERS_SEGMENT_PREFIX}0")
+                engine.sleep(Timeouts.SETTLE * 2)
+                checkPageLoads(budget, 1)
+            }
+            when {
+                seen == 0 -> bad("The segment dropdown is not on the Scanners screen.${dashTagHint()}")
+                failures.isNotEmpty() -> bad(failures.joinToString("; ") + ".")
+                else -> ok("$seen option(s) shown (${names.take(seen).joinToString(", ")}), each tapped and loaded")
+            }
+        }?.let { return it }
+
+        runCheck(ids[2]) {
+            firstTab()
+            if (!engine.isPresent(T.SCANNERS_SEARCH_INPUT)) {
+                return@runCheck bad("The search field is not on the Scanners screen (it is built once the tab has data).${dashTagHint()}")
+            }
+            val name = engine.ownLabelsOf(T.SCANNER_ROW_NAME).firstOrNull()?.trim()
+            if (name.isNullOrEmpty()) return@runCheck bad("No scrip is listed to search for.${dashTagHint()}")
+            val term = name.take(3)
+            val typed = engine.enterText(T.SCANNERS_SEARCH_INPUT, term)
+            if (!typed.ok) return@runCheck bad("The search field did not take '$term': ${typed.detail}")
+            val narrowed = engine.waitUntil(Timeouts.SCREEN_CHANGE) {
+                val shown = engine.ownLabelsOf(T.SCANNER_ROW_NAME)
+                shown.isNotEmpty() && shown.all { it.startsWith(term, ignoreCase = true) }
+            }
+            val shownNow = engine.ownLabelsOf(T.SCANNER_ROW_NAME).take(3).joinToString(" | ") { clip(it) }
+            engine.enterText(T.SCANNERS_SEARCH_INPUT, "")
+            engine.sleep(Timeouts.SETTLE * 2)
+            if (narrowed) ok("searching '$term' listed: $shownNow")
+            else bad("Searching '$term' did not narrow the list to scrips starting with it (showing: ${shownNow.ifEmpty { "none" }}).")
+        }?.let { return it }
+
+        runCheck(ids[3]) {
+            val before = engine.ownLabelsOf(T.SCANNER_ROW_NAME).firstOrNull()
+            val (tapped, failures) = sortSheetCheck(T.SCANNERS_FILTER_BUTTON, T.SCANNERS_FILTER_SHEET, T.SCANNERS_FILTER_CLOSE, "Scanners")
+            engine.sleep(Timeouts.SETTLE * 2)
+            val after = engine.ownLabelsOf(T.SCANNER_ROW_NAME).firstOrNull()
+            if (failures.isNotEmpty()) return@runCheck bad(failures.joinToString("; ") + ".")
+            val order = if (before == after) "the first scrip is back to ${before?.let { clip(it) }}"
+            else "the first scrip is ${after?.let { clip(it) }} (was ${before?.let { clip(it) }}; live prices can reorder a list)"
+            ok("$tapped sort option(s) tapped; the sheet's Close (its reset control) closed it and $order")
+        }?.let { return it }
+
+        runCheck(ids[4]) {
+            val problems = mutableListOf<String>()
+            val opened = mutableListOf<String>()
+            val notOffered = mutableListOf<String>()
+            val targets = listOf(
+                Triple(T.SCRIP_SHEET_CHART_BUTTON, T.CHART_SCREEN, "Chart"),
+                Triple(T.SCRIP_SHEET_OPCHAIN_BUTTON, T.OPTION_CHAIN_SCREEN, "Op.Chain"),
+                Triple(T.SCRIP_SHEET_MORE_BUTTON, T.MORE_INFO_SCREEN, "More Details"),
+            )
+            val boxes = targets.map { it.first }
+            for ((button, screen, label) in targets) {
+                if (!backTo(T.SCANNERS_SCREEN, orderPadOverlays)) {
+                    problems += "could not get back to the list before $label"
+                    break
+                }
+                if (!engine.isPresent(T.SCANNER_ROW)) {
+                    problems += "$label: no scrip row is on screen"
+                    break
+                }
+                val row = engine.tap(T.SCANNER_ROW)
+                if (!row.ok) {
+                    problems += "$label: the first scrip could not be tapped (${row.detail})"
+                    continue
+                }
+                if (engine.waitForAny(boxes, Timeouts.SCREEN_CHANGE) !is WaitOutcome.Found) {
+                    problems += "$label: the scrip's sheet showed none of Chart / Op.Chain / More Details.${dashTagHint()}"
+                    continue
+                }
+                if (!engine.isPresent(button)) {
+                    notOffered += label
+                    continue
+                }
+                val open = engine.tapAndConfirm(button, listOf(screen), Timeouts.SCREEN_CHANGE, retryAfterMs = Timeouts.SCREEN_CHANGE)
+                if (!open.ok) {
+                    problems += "$label did not open: ${open.detail}"
+                    continue
+                }
+                opened += label
+                if (!engine.sleep(Timeouts.SETTLE)) break
+                if (!closeWithBack(screen) && !engine.cancelled) problems += "$label did not close on Back"
+            }
+            if (opened.isEmpty() && problems.isEmpty()) {
+                problems += "none of Chart / Op.Chain / More Details is offered for the first scrip"
+            }
+            val (pads, padFailures) = buySellFromFirstRow(T.SCANNER_ROW, T.SCANNERS_SCREEN, orderPadOverlays)
+            problems += padFailures
+            when {
+                problems.isNotEmpty() -> bad(problems.joinToString("; ") + ".")
+                else -> ok(
+                    "${opened.joinToString(", ")} opened and closed; Buy and Sell opened the order pad ($pads of 2) and " +
+                        "it was closed with Back; nothing was placed" +
+                        if (notOffered.isEmpty()) "" else "; not offered for this scrip: ${notOffered.joinToString(", ")}",
+                )
+            }
+        }?.let { return it }
+
+        backTo(T.SCANNERS_SCREEN, orderPadOverlays)
+        scannersDeepSteps()?.let { return it }
+        backTo(T.SCANNERS_SCREEN, orderPadOverlays)
+        if (!closeWithBack(T.SCANNERS_SCREEN) && !engine.cancelled && step(ids[4]).status == StepStatus.PASSED) {
+            failAndContinue(step(ids[4]), "The Scanners screen did not close on Back.")
         }
         scrollToTop()
         return null

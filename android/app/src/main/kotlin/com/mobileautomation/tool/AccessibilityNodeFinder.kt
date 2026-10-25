@@ -162,15 +162,21 @@ object AccessibilityNodeFinder {
      * The short, non-editable texts on screen, top to bottom, without
      * duplicates. For failure messages on screens that hold no secret (the
      * watchlist edit screen): it is how a snackbar such as "Market watch name
-     * already exists" reaches the report. Editable and password nodes are skipped.
+     * already exists" reaches the report. Editable and password nodes are skipped. A label is read from the
+     * node's text or, as Flutter publishes it, its content description, one line at a time.
      */
     fun visibleTexts(root: AccessibilityNodeInfo?, limit: Int = 12): List<String> {
         if (root == null) return emptyList()
         val out = LinkedHashSet<String>()
         fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (depth > 25 || out.size >= limit) return
+            if (depth > 60 || out.size >= limit) return
             if (!node.isEditable && !node.isPassword) {
-                node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 90 }?.let(out::add)
+                // Flutter publishes a label as the content description (its `text` is usually null), and merges
+                // a card's lines into one label separated by newlines: read both and split the lines.
+                (node.text ?: node.contentDescription)?.toString()?.lineSequence()
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() && it.length <= 90 }
+                    ?.forEach { if (out.size < limit) out.add(it) }
             }
             for (i in 0 until node.childCount) {
                 val child = try {

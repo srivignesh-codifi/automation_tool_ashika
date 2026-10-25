@@ -26,6 +26,8 @@ class SecureStorageService {
   static const String _kTargetPackage = 'uat_target_package';
   static const String _kRemember = 'uat_remember_credentials';
   static const String _kSetupDone = 'tool_setup_done';
+  static const String _kModulesOff = 'tool_modules_off';
+  static const String _kDirectLogin = 'tool_login_direct';
 
   /// Ashika's keys predate the second app and stay as they were, so an operator
   /// who saved credentials keeps them. Every other app gets suffixed keys.
@@ -53,6 +55,24 @@ class SecureStorageService {
       _read(_otpKey(appId));
 
   Future<String?> readTargetPackage() => _read(_kTargetPackage);
+
+  /// The modules the operator left out of the last run of [appId]; null when nothing was ever saved (all modules on).
+  /// The *unticked* ones are kept, so a module added in a later version starts ticked.
+  Future<Set<String>?> readModulesOff({required String appId}) async {
+    final raw = await _read('${_kModulesOff}_$appId');
+    if (raw == null) return null;
+    return raw.split(',').where((s) => s.isNotEmpty).toSet();
+  }
+
+  Future<void> saveModulesOff(Set<String> off, {required String appId}) =>
+      _write('${_kModulesOff}_$appId', off.join(','));
+
+  /// "Direct login only" for [appId]; on until the operator turns it off.
+  Future<bool> readDirectLogin({required String appId}) async =>
+      (await _read('${_kDirectLogin}_$appId')) != 'false';
+
+  Future<void> saveDirectLogin(bool value, {required String appId}) =>
+      _write('${_kDirectLogin}_$appId', value ? 'true' : 'false');
 
   /// Whether the first-launch permission setup was finished. Not a secret; it
   /// only lives here because this is the tool's one small store.

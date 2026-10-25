@@ -10,6 +10,8 @@ class ModulePicker extends StatelessWidget {
     required this.selected,
     required this.onChanged,
     this.enabled = true,
+    this.directLogin = false,
+    this.onDirectLoginChanged,
     super.key,
   });
 
@@ -17,6 +19,11 @@ class ModulePicker extends StatelessWidget {
   final Set<String> selected;
   final ValueChanged<Set<String>> onChanged;
   final bool enabled;
+
+  /// "Direct login only": the Login module signs in straight through and skips its detours (Guest User, Unblock
+  /// Account, Join Now, Forgot Password, Switch Account). Shown under Login when [onDirectLoginChanged] is given.
+  final bool directLogin;
+  final ValueChanged<bool>? onDirectLoginChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +63,7 @@ class ModulePicker extends StatelessWidget {
             ),
           ],
         ),
-        for (final module in modules)
+        for (final module in modules) ...[
           CheckboxListTile(
             key: ValueKey<String>('module_${module.id}'),
             contentPadding: EdgeInsets.zero,
@@ -69,6 +76,25 @@ class ModulePicker extends StatelessWidget {
                 ? null
                 : Text(module.description),
           ),
+          if (module.id == 'login' && onDirectLoginChanged != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 40),
+              child: SwitchListTile(
+                key: const ValueKey<String>('login_direct_only'),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Direct login only'),
+                subtitle: const Text(
+                  'Sign in straight through: skip the Guest User, Unblock Account, '
+                  'Join Now, Forgot Password and Switch Account checks.',
+                ),
+                value: directLogin,
+                onChanged: enabled && selected.contains('login')
+                    ? onDirectLoginChanged
+                    : null,
+              ),
+            ),
+        ],
         Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text(
@@ -92,6 +118,8 @@ class ModuleField extends StatelessWidget {
     required this.selected,
     required this.onChanged,
     this.enabled = true,
+    this.directLogin = false,
+    this.onDirectLoginChanged,
     super.key,
   });
 
@@ -99,14 +127,21 @@ class ModuleField extends StatelessWidget {
   final Set<String> selected;
   final ValueChanged<Set<String>> onChanged;
   final bool enabled;
+  final bool directLogin;
+  final ValueChanged<bool>? onDirectLoginChanged;
 
   /// "All modules (8)", "None: ...", or "3 of 8: Login, Orders, Profile".
-  static String summary(List<AutomationModule> modules, Set<String> selected) {
+  static String summary(
+    List<AutomationModule> modules,
+    Set<String> selected, {
+    bool directLogin = false,
+  }) {
     final chosen = modules.where((m) => selected.contains(m.id)).toList();
-    if (chosen.length == modules.length) return 'All modules (${modules.length})';
+    final direct = directLogin && selected.contains('login') ? ' · direct login only' : '';
+    if (chosen.length == modules.length) return 'All modules (${modules.length})$direct';
     if (chosen.isEmpty) return 'None: only sign-in and sign-out run';
     return '${chosen.length} of ${modules.length}: '
-        '${chosen.map((m) => m.label).join(', ')}';
+        '${chosen.map((m) => m.label).join(', ')}$direct';
   }
 
   @override
@@ -120,6 +155,8 @@ class ModuleField extends StatelessWidget {
               modules: modules,
               selected: selected,
               onChanged: onChanged,
+              directLogin: directLogin,
+              onDirectLoginChanged: onDirectLoginChanged,
             )
           : null,
       child: InputDecorator(
@@ -129,7 +166,7 @@ class ModuleField extends StatelessWidget {
           suffixIcon: const Icon(Icons.keyboard_arrow_up),
         ),
         child: Text(
-          summary(modules, selected),
+          summary(modules, selected, directLogin: directLogin),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodyLarge,
@@ -146,8 +183,11 @@ Future<void> showModuleSheet(
   required List<AutomationModule> modules,
   required Set<String> selected,
   required ValueChanged<Set<String>> onChanged,
+  bool directLogin = false,
+  ValueChanged<bool>? onDirectLoginChanged,
 }) {
   var current = Set<String>.of(selected);
+  var currentDirect = directLogin;
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -173,6 +213,13 @@ Future<void> showModuleSheet(
                           setSheetState(() => current = next);
                           onChanged(next);
                         },
+                        directLogin: currentDirect,
+                        onDirectLoginChanged: onDirectLoginChanged == null
+                            ? null
+                            : (on) {
+                                setSheetState(() => currentDirect = on);
+                                onDirectLoginChanged(on);
+                              },
                       ),
                     ),
                   ),

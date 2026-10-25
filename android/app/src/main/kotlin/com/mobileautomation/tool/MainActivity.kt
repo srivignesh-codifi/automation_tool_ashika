@@ -103,6 +103,7 @@ class MainActivity : FlutterActivity() {
                     recordScreen = call.argument<Boolean>("recordScreen") == true,
                     modules = call.argument<List<*>>("modules")?.filterIsInstance<String>(),
                     clearData = call.argument<Boolean>("clearData") != false,
+                    loginDirectOnly = call.argument<Boolean>("loginDirectOnly") == true,
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))

@@ -27,6 +27,34 @@ class AutomationStepResult(
     var failureReason: String? = null
     var note: String? = null
 
+    /** A test case's own id ("WL-05"), what it expects, how serious a failure is, and why it was skipped. */
+    var code: String? = null
+    var expected: String? = null
+    var severity: String? = null
+
+    /** The area a step belongs to (an [AppModule] id), or null for the sign-in / sign-out steps every run has. */
+    var module: String? = null
+
+    /**
+     * What a failed or blocked case turned out to be: `app_defect` (readable content contradicts the expectation),
+     * `unconfirmed` (an expected label was not in readable text: needs a look at the screenshot), `automation`
+     * (a locator or flow problem), `accessibility` (the screen exposes no readable content), `api_data` (the data
+     * or service did not answer) or `test_data` (the account's state does not allow the case).
+     */
+    var cause: String? = null
+
+    /** The UI hierarchy at the moment of failure: identifiers on screen and the readable texts. */
+    var evidence: String? = null
+
+    /** What the app needs so the case can be verified (for example a Semantics identifier). */
+    var recommendation: String? = null
+
+    /** Whether the case put back what it changed: "restored", "nothing changed" or "FAILED: ...". */
+    var cleanup: String? = null
+
+    /** "blocked", "not_applicable" or "not_tested" for a step that was skipped on purpose; null for a plain skip. */
+    var skipKind: String? = null
+
     /** What kind of server interaction this step exercises; see [StepApi]. */
     var apiKind: String? = null
     var apiStatus: String? = null
@@ -76,6 +104,15 @@ class AutomationStepResult(
         "durationMs" to durationMs,
         "failureReason" to failureReason,
         "note" to note,
+        "code" to code,
+        "expected" to expected,
+        "severity" to severity,
+        "skipKind" to skipKind,
+        "module" to module,
+        "cause" to cause,
+        "evidence" to evidence,
+        "recommendation" to recommendation,
+        "cleanup" to cleanup,
         "apiKind" to apiKind,
         "apiStatus" to apiStatus,
         "apiDetail" to apiDetail,

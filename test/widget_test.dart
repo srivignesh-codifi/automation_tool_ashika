@@ -333,6 +333,92 @@ void main() {
     expect(decoded.apiSummary.readsSlow, 1);
   });
 
+  test('the report separates defects, unreadable screens, automation faults and cleanup', () {
+    final base = DateTime(2026, 10, 25, 9, 0, 0).millisecondsSinceEpoch;
+    AutomationStep c(
+      String code,
+      String id,
+      StepStatus status, {
+      String? module = 'watchlist',
+      String? skipKind,
+      String? cause,
+      String? reason,
+      String? note,
+      String? evidence,
+      String? recommendation,
+      String? cleanup,
+    }) => AutomationStep(
+      id: id,
+      name: 'Case $code',
+      status: status,
+      startedAtMs: base,
+      finishedAtMs: base + 1000,
+      durationMs: 1000,
+      code: code,
+      expected: 'expected for $code',
+      severity: 'High',
+      module: module,
+      skipKind: skipKind,
+      cause: cause,
+      failureReason: reason,
+      note: note,
+      evidence: evidence,
+      recommendation: recommendation,
+      cleanup: cleanup,
+    );
+    final result = AutomationResult(
+      runId: 'abcdef12-3456-7890-abcd-ef1234567890',
+      testName: 'Tradion - Regression Automation',
+      targetPackage: 'com.codifi.rmoney',
+      deviceManufacturer: 'Google',
+      deviceModel: 'Pixel',
+      androidVersion: '16',
+      sdkInt: 36,
+      startedAtMs: base,
+      finishedAtMs: base + 9000,
+      durationMs: 9000,
+      steps: <AutomationStep>[
+        const AutomationStep(id: 'login_tapped', name: 'Login button tapped', status: StepStatus.passed),
+        c('WL-01', 'a', StepStatus.passed),
+        c('WL-20', 'b', StepStatus.failed,
+            cause: 'app_defect',
+            reason: 'All returned nothing while Stocks returned 2 INFY results',
+            evidence: 'identifiers: search_screen; readable text: No result found'),
+        c('WL-05', 'c', StepStatus.skipped,
+            skipKind: 'blocked',
+            cause: 'accessibility',
+            note: 'BLOCKED: no readable text',
+            recommendation: 'Publish scrip_sheet_name'),
+        c('WL-08', 'd', StepStatus.failed, cause: 'automation', reason: 'dropdown could not be tapped'),
+        c('WL-30', 'e', StepStatus.failed,
+            cause: 'test_data',
+            reason: 'name could not be restored',
+            cleanup: 'FAILED: the watchlist still reads testQR'),
+        c('WL-25', 'f', StepStatus.skipped, skipKind: 'not_tested', note: 'NOT TESTED: no full watchlist'),
+      ],
+    );
+    final text = reports.buildChecklistText(result);
+    expect(text, contains('RESULTS BY AREA'));
+    expect(text, contains('Login'));
+    expect(text, contains('CONFIRMED APPLICATION DEFECTS'));
+    expect(text, contains('D1  WL-20'));
+    expect(text, contains('UI hierarchy'));
+    expect(text, contains('ACCESSIBILITY LIMITATIONS'));
+    expect(text, contains('X1  WL-05'));
+    expect(text, contains('Publish scrip_sheet_name'));
+    expect(text, contains('AUTOMATION / LOCATOR FAILURES'));
+    expect(text, contains('A1  WL-08'));
+    expect(text, contains('TEST-DATA / STATE FAILURES'));
+    expect(text, contains('CLEANUP OF TEST-CREATED CHANGES'));
+    expect(text, contains('FAILED: the watchlist still reads testQR'));
+    expect(text, contains('WARNING: 1 case(s) could not put back what they changed'));
+    // A blocked, unreadable screen is not a defect and not a pass.
+    expect(text, isNot(contains('D2  WL-05')));
+    final decoded = AutomationResult.fromMap(result.toJson());
+    expect(decoded.steps[3].cause, 'accessibility');
+    expect(decoded.steps[5].cleanup, startsWith('FAILED'));
+  });
+
   test('modules come from the driver, and the fallback lists every one', () async {
     const channel = MethodChannel('modules_config_test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -370,10 +456,50 @@ void main() {
     expect(
       fallback.last.modules.map((m) => m.id),
       <String>[
-        'login', 'watchlist', 'watchlist_edit', 'watchlist_search',
-        'orders', 'dashboard', 'portfolio', 'profile',
+        'login', 'watchlist', 'watchlist_search', 'watchlist_edit',
+        'watchlist_settings', 'orders', 'dashboard', 'portfolio', 'profile',
       ],
     );
+  });
+
+  testWidgets('Direct login only sits under Login, follows it, and shows in the summary', (
+    tester,
+  ) async {
+    final modules = const AutomationConfigInfo.fallback().targets.last.modules;
+    var selected = modules.map((m) => m.id).toSet();
+    var direct = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => SingleChildScrollView(
+              child: ModulePicker(
+                modules: modules,
+                selected: selected,
+                onChanged: (next) => setState(() => selected = next),
+                directLogin: direct,
+                onDirectLoginChanged: (on) => setState(() => direct = on),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final toggle = find.byKey(const ValueKey<String>('login_direct_only'));
+    expect(toggle, findsOneWidget);
+    expect(find.text('Direct login only'), findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(direct, isTrue);
+    expect(ModuleField.summary(modules, selected, directLogin: direct), 'All modules (9) · direct login only');
+
+    // With Login unticked there is nothing to make direct: the switch is off-limits and not mentioned.
+    await tester.tap(find.byKey(const ValueKey<String>('module_login')));
+    await tester.pump();
+    expect(selected, isNot(contains('login')));
+    expect(tester.widget<SwitchListTile>(toggle).onChanged, isNull);
+    expect(ModuleField.summary(modules, selected, directLogin: direct), isNot(contains('direct login only')));
   });
 
   testWidgets('the module picker starts full, unticks one and clears all', (
@@ -396,13 +522,13 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Modules to test (8 of 8)'), findsOneWidget);
+    expect(find.text('Modules to test (9 of 9)'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('module_orders')));
     await tester.pump();
     expect(selected, isNot(contains('orders')));
-    expect(selected.length, 7);
-    expect(find.text('Modules to test (7 of 8)'), findsOneWidget);
+    expect(selected.length, 8);
+    expect(find.text('Modules to test (8 of 9)'), findsOneWidget);
 
     await tester.tap(find.text('None'));
     await tester.pump();
@@ -411,7 +537,7 @@ void main() {
 
     await tester.tap(find.text('All'));
     await tester.pump();
-    expect(selected.length, 8);
+    expect(selected.length, 9);
   });
 
   testWidgets('the modules field summarises the choice and opens a bottom sheet', (
@@ -432,25 +558,25 @@ void main() {
         ),
       ),
     );
-    expect(find.text('All modules (8)'), findsOneWidget);
+    expect(find.text('All modules (9)'), findsOneWidget);
     expect(find.byType(CheckboxListTile), findsNothing);
 
-    await tester.tap(find.text('All modules (8)'));
+    await tester.tap(find.text('All modules (9)'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsOneWidget);
-    expect(find.byType(CheckboxListTile), findsNWidgets(8));
+    expect(find.byType(CheckboxListTile), findsNWidgets(9));
 
     await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_edit')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_search')));
     await tester.pump();
-    expect(selected.length, 6);
+    expect(selected.length, 7);
 
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsNothing);
     expect(
-      find.text('6 of 8: Login, Watchlist, Orders, Dashboard, Portfolio, Profile'),
+      find.text('7 of 9: Login, Watchlist, Manage Watchlist, Orders, Dashboard, Portfolio, Profile'),
       findsOneWidget,
     );
     expect(

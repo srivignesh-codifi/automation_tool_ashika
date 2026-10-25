@@ -65,6 +65,15 @@ class AutomationStep {
     this.apiDetail,
     this.apiMs,
     this.apiChecks = 0,
+    this.code,
+    this.expected,
+    this.severity,
+    this.skipKind,
+    this.module,
+    this.cause,
+    this.evidence,
+    this.recommendation,
+    this.cleanup,
   });
 
   final String id;
@@ -84,6 +93,62 @@ class AutomationStep {
   final String? apiDetail;
   final int? apiMs;
   final int apiChecks;
+
+  /// Test-case metadata for steps that are formal cases (the Watchlist suite): its id such as `WL-06`, the
+  /// expected result, the severity a defect would carry, and why a skipped case was skipped
+  /// (`blocked`, `not_applicable` or `not_tested`).
+  final String? code;
+  final String? expected;
+  final String? severity;
+  final String? skipKind;
+
+  /// The area (module id) the step belongs to; null for the sign-in / sign-out steps every run has.
+  final String? module;
+
+  /// What a failed or blocked case turned out to be: `app_defect`, `unconfirmed`, `automation`, `accessibility`,
+  /// `api_data` or `test_data`; the UI hierarchy at that moment; what the app would need so the case can be verified;
+  /// and whether the case put back what it changed.
+  final String? cause;
+  final String? evidence;
+  final String? recommendation;
+  final String? cleanup;
+
+  /// The cause in the report's fixed vocabulary.
+  String get causeTag => switch (cause) {
+    'app_defect' => 'APPLICATION',
+    'automation' => 'AUTOMATION',
+    'accessibility' => 'ACCESSIBILITY',
+    'api_data' => 'API',
+    'test_data' => 'TEST DATA',
+    'unconfirmed' => 'UNKNOWN',
+    _ => '',
+  };
+
+  String get causeLabel => switch (cause) {
+    'app_defect' => 'Application defect',
+    'unconfirmed' => 'Needs review (expected content not found in readable text)',
+    'automation' => 'Automation / locator',
+    'accessibility' => 'Accessibility limitation',
+    'api_data' => 'API / data dependency',
+    'test_data' => 'Test data / state',
+    _ => '',
+  };
+
+  bool get isCase => code != null;
+
+  /// PASS / FAIL / BLOCKED / NOT APPLICABLE / NOT TESTED, the vocabulary of a test report.
+  String get outcomeLabel => switch (status) {
+    StepStatus.passed => 'PASS',
+    StepStatus.failed => 'FAIL',
+    StepStatus.skipped => switch (skipKind) {
+      'blocked' => 'BLOCKED',
+      'not_applicable' => 'NOT APPLICABLE',
+      'not_tested' => 'NOT TESTED',
+      _ => 'SKIPPED',
+    },
+    StepStatus.running => 'RUNNING',
+    StepStatus.pending => 'NOT TESTED',
+  };
 
   bool get hasApiCheck => apiKind != null && apiStatus != null;
 
@@ -132,6 +197,15 @@ class AutomationStep {
       apiDetail: apiDetail,
       apiMs: apiMs,
       apiChecks: apiChecks,
+      code: code,
+      expected: expected,
+      severity: severity,
+      skipKind: skipKind,
+      module: module,
+      cause: cause,
+      evidence: evidence,
+      recommendation: recommendation,
+      cleanup: cleanup,
       id: id,
       name: name,
       status: status ?? this.status,
@@ -158,6 +232,15 @@ class AutomationStep {
       apiDetail: map['apiDetail'] as String?,
       apiMs: (map['apiMs'] as num?)?.toInt(),
       apiChecks: (map['apiChecks'] as num?)?.toInt() ?? 0,
+      code: map['code'] as String?,
+      expected: map['expected'] as String?,
+      severity: map['severity'] as String?,
+      skipKind: map['skipKind'] as String?,
+      module: map['module'] as String?,
+      cause: map['cause'] as String?,
+      evidence: map['evidence'] as String?,
+      recommendation: map['recommendation'] as String?,
+      cleanup: map['cleanup'] as String?,
     );
   }
 
@@ -175,5 +258,14 @@ class AutomationStep {
     'apiDetail': apiDetail,
     'apiMs': apiMs,
     'apiChecks': apiChecks,
+    'code': code,
+    'expected': expected,
+    'severity': severity,
+    'skipKind': skipKind,
+    'module': module,
+    'cause': cause,
+    'evidence': evidence,
+    'recommendation': recommendation,
+    'cleanup': cleanup,
   };
 }

@@ -56,6 +56,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
 
   /// The modules this run covers. Every module starts selected.
   Set<String> _modules = <String>{};
+
+  /// Login module option: sign in straight through, skipping its detours (Guest, Unblock, Join Now, Forgot, Switch).
+  bool _directLogin = true;
   bool _busy = true;
   bool _running = false;
 
@@ -104,6 +107,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
       _packageController.text = app.packageName;
     });
     await _loadSaved(app);
+    await _loadChoices(app);
     if (!mounted) return;
     setState(() => _busy = false);
     await _refreshStatuses();
@@ -132,6 +136,30 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     });
   }
 
+  /// The module choice and "Direct login only" of the last run of [app]; the first time, every module and direct login.
+  Future<void> _loadChoices(TargetAppInfo app) async {
+    final off = await widget.storage.readModulesOff(appId: app.id);
+    final direct = await widget.storage.readDirectLogin(appId: app.id);
+    if (!mounted || app.id != _app.id) return;
+    setState(() {
+      _modules = app.modules
+          .map((m) => m.id)
+          .where((id) => !(off ?? const <String>{}).contains(id))
+          .toSet();
+      _directLogin = direct;
+    });
+  }
+
+  /// Keeps the choice for the next time the tool opens.
+  void _saveChoices() {
+    final off = _app.modules
+        .map((m) => m.id)
+        .where((id) => !_modules.contains(id))
+        .toSet();
+    widget.storage.saveModulesOff(off, appId: _app.id);
+    widget.storage.saveDirectLogin(_directLogin, appId: _app.id);
+  }
+
   Future<void> _selectApp(TargetAppInfo app) async {
     if (app.id == _app.id) return;
     setState(() {
@@ -141,6 +169,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
       _target = null;
     });
     await _loadSaved(app);
+    await _loadChoices(app);
     await widget.storage.saveTargetPackage(app.packageName);
     await _checkTargetApp(announce: false);
   }
@@ -280,6 +309,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             password: app.secret == TargetSecret.password ? secret : '',
             recordScreen: recordScreen,
             clearData: _clearData,
+            loginDirectOnly: _directLogin && _modules.contains('login'),
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules
@@ -380,9 +410,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
       _otpController.clear();
       _remember = false;
     });
-    _snack(
-      'Saved ${_app.userIdLabel}, ${_app.secret.label} and OTP cleared.',
-    );
+    _snack('Saved ${_app.userIdLabel}, ${_app.secret.label} and OTP cleared.');
   }
 
   void _snack(String message) {
@@ -463,7 +491,17 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                 modules: _app.modules,
                 selected: _modules,
                 enabled: !_running,
-                onChanged: (next) => setState(() => _modules = next),
+                onChanged: (next) {
+                  setState(() => _modules = next);
+                  _saveChoices();
+                },
+                directLogin: _directLogin,
+                onDirectLoginChanged: _app.modules.any((m) => m.id == 'login')
+                    ? (on) {
+                        setState(() => _directLogin = on);
+                        _saveChoices();
+                      }
+                    : null,
               ),
             ],
             const SizedBox(height: 14),

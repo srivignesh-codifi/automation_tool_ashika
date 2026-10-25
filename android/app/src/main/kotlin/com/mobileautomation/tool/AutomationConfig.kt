@@ -278,6 +278,34 @@ object AutomationConfig {
         const val WATCHLIST_BASKET_BUTTON = "watchlist_basket_button"
         const val WATCHLIST_FILTER_BUTTON = "watchlist_filter_button"
         const val WATCHLIST_FILTER_SCREEN = "watchlist_filter_screen"
+        const val WATCHLIST_FILTER_RESET_BUTTON = "watchlist_filter_reset_button"
+        const val WATCHLIST_FILTER_APPLY_BUTTON = "watchlist_filter_apply_button"
+
+        /** The Watchlist header: the two pinned indices, and the arrow that opens the index / funds panel. */
+        const val WATCHLIST_TICKER = "watchlist_ticker"
+        const val WATCHLIST_INDEX_DROPDOWN = "watchlist_index_dropdown"
+
+        /** The New Alert page's condition dropdown, and its options by position (`alert_condition_item_<i>`). */
+        const val ALERT_CONDITION = "alert_condition"
+
+        /** A Manage Watchlist filter chip by lower-case exchange (`watchlist_filter_chip_nse`); publishes `selected`. */
+        const val WATCHLIST_FILTER_CHIP_PREFIX = "watchlist_filter_chip_"
+        const val ALERT_CONDITION_ITEM_PREFIX = "alert_condition_item_"
+        const val WATCHLIST_RADIO_PREFIX = "watchlist_radio_"
+
+        /** Radio groups of the Manage Watchlist screen: card type, tile, change basis, add position (Watchlist mode only). */
+        val WATCHLIST_RADIO_GROUPS = listOf(
+            listOf("basic", "depth", "all"),
+            listOf("list", "grid"),
+            listOf("open_price", "close_price"),
+            listOf("top", "bottom"),
+        )
+        val WATCHLIST_SORT_ROWS = listOf("watchlist_sort_alphabetical", "watchlist_sort_ltp", "watchlist_sort_change")
+        const val SCRIP_SHEET_ALERT_BUTTON = "scrip_sheet_alert_button"
+        const val ALERT_SCREEN = "alert_screen"
+        const val ALERT_NAME_INPUT = "alert_name_input"
+        const val ALERT_VALUE_INPUT = "alert_value_input"
+        const val ALERT_CREATE_BUTTON = "alert_create_button"
         const val WATCHLIST_LIST_VIEW = "watchlist_list_view"
         const val WATCHLIST_GRID_VIEW = "watchlist_grid_view"
         const val WATCHLIST_EMPTY_STATE = "watchlist_empty_state"
@@ -285,6 +313,7 @@ object AutomationConfig {
         const val SCRIP_DETAILS_SHEET = "scrip_details_sheet"
         const val INDEX_DETAILS_SHEET = "index_details_sheet"
         const val SCRIP_SHEET_CHART_BUTTON = "scrip_sheet_chart_button"
+        const val SCRIP_SHEET_OPCHAIN_BUTTON = "scrip_sheet_opchain_button"
         const val SCRIP_SHEET_MORE_BUTTON = "scrip_sheet_more_button"
         const val CHART_SCREEN = "chart_screen"
         const val CHART_READY = "chart_ready"
@@ -296,6 +325,9 @@ object AutomationConfig {
         const val REORDER_ROW = "reorder_row"
         const val REORDER_RENAME_INPUT = "reorder_rename_input"
         const val REORDER_DISCARD_BUTTON = "reorder_discard_button"
+
+        /** The Save button of the "Do you want to save changes?" dialog (the app bar's Save is `reorder_save_button`). */
+        const val REORDER_CONFIRM_SAVE_BUTTON = "reorder_confirm_save_button"
 
         // Search
         const val SEARCH_SCREEN = "search_screen"
@@ -341,6 +373,100 @@ object AutomationConfig {
         const val RESEARCH_SUBTAB_PREFIX = "research_subtab_"
         const val SCANNERS_SCREEN = "scanners_screen"
         const val SCANNERS_TAB_PREFIX = "scanners_tab_"
+
+        // Dashboard scenarios: index panel, Trading Ideas, Scanners, Futures, FII / DII, Customize
+        const val DASHBOARD_INDEX_DROPDOWN = "dashboard_index_dropdown"
+        const val DASHBOARD_INDEX_ITEM = "dashboard_index_item"
+        const val DASHBOARD_INDEX_CLOSE = "dashboard_index_close"
+        const val DASHBOARD_TRADING_VIEW = "dashboard_trading_view"
+        const val DASHBOARD_INVESTMENTS_VIEW = "dashboard_investments_view"
+        const val DASHBOARD_FUTURES_VIEW_ALL = "dashboard_futures_view_all"
+        const val DASHBOARD_FII_DII_VIEW_ALL = "dashboard_fii_dii_view_all"
+        const val DASHBOARD_CUSTOMIZE_BUTTON = "dashboard_customize_button"
+        const val DASHBOARD_CUSTOMIZE_SCREEN = "dashboard_customize_screen"
+        const val FII_DII_SCREEN = "fii_dii_screen"
+        const val FII_DII_ROW = "fii_dii_row"
+
+        /** Trading Ideas (the Research calls screen): search, calls, and the Filter By sheet. */
+        const val RESEARCH_SEARCH_INPUT = "research_search_input"
+        const val RESEARCH_CARD = "research_card"
+        const val RESEARCH_CARD_NAME = "research_card_name"
+        const val RESEARCH_FILTER_BUTTON = "research_filter_button"
+        const val RESEARCH_FILTER_SHEET = "research_filter_sheet"
+        const val RESEARCH_FILTER_CLEAR = "research_filter_clear_button"
+        const val RESEARCH_FILTER_STATUS = "research_filter_status"
+        const val RESEARCH_FILTER_EXCHANGE = "research_filter_exchange"
+        const val RESEARCH_FILTER_RETURNS = "research_filter_returns"
+
+        /** Scanners (the page the test scenarios call Screener). */
+        const val SCANNERS_SEGMENT_PREFIX = "scanners_segment_"
+        const val SCANNERS_SEARCH_INPUT = "scanners_search_input"
+        const val SCANNERS_FILTER_BUTTON = "scanners_filter_button"
+        const val SCANNERS_FILTER_SHEET = "scanners_filter_sheet"
+        const val SCANNERS_FILTER_CLOSE = "scanners_filter_close_button"
+        const val SCANNER_ROW = "scanner_row"
+        const val SCANNER_ROW_NAME = "scanner_row_name"
+
+        /** Futures › View All. */
+        const val FUTURES_SCREEN = "futures_screen"
+        const val FUTURES_TAB_PREFIX = "futures_tab_"
+        const val FUTURES_ROW = "futures_row"
+        const val FUTURES_FILTER_BUTTON = "futures_filter_button"
+        const val FUTURES_FILTER_SHEET = "futures_filter_sheet"
+        const val FUTURES_FILTER_CLEAR = "futures_filter_clear_button"
+
+        /** The three sort rows shared by the Scanners and Futures sheets (`sort_option_<slug of title>`). */
+        val SORT_OPTIONS = listOf(
+            "sort_option_alphabetically", "sort_option_last_traded_price", "sort_option_change",
+        )
+
+        /**
+         * The order pad and the plain Buy / Sell pair that opens it. The tool opens the pad and
+         * leaves with Back; nothing on the pad is ever tapped.
+         */
+        const val ORDER_WINDOW_SCREEN = "order_window_screen"
+        const val TRADE_BUY_BUTTON = "trade_buy_button"
+        const val TRADE_SELL_BUTTON = "trade_sell_button"
+
+        // Investments tab: Quick Tools tiles, Alerts, IPO, ETF, Top Sectors, Customize, vendor pages
+        const val INVEST_TILE_ALERTS = "invest_tile_0"
+        const val INVEST_TILE_IPO = "invest_tile_1"
+        const val INVEST_TILE_REPORTS = "invest_tile_3"
+        const val INVEST_TILE_ETF = "invest_tile_4"
+        const val INVEST_TILE_PLEDGE = "invest_tile_5"
+        const val INVEST_TILE_BACK_OFFICE = "invest_tile_6"
+        const val INVEST_TILE_OTHER = "invest_tile_7"
+        const val WEB_VIEW_SCREEN = "web_view_screen"
+        const val ALERTS_SCREEN = "alerts_screen"
+        const val ALERTS_NEW_ALERT_LINK = "alerts_new_alert_link"
+        const val ALERTS_SEARCH_INPUT = "alerts_search_input"
+        const val ALERT_ROW = "alert_row"
+        const val ALERT_ROW_NAME = "alert_row_name"
+        const val ALERT_DELETE_BUTTON = "alert_delete_button"
+        const val ALERT_SCRIP_FIELD = "alert_scrip_field"
+        const val IPO_SCREEN = "ipo_screen"
+        const val IPO_TAB_PREFIX = "ipo_tab_"
+        const val IPO_SEARCH_INPUT = "ipo_search_input"
+        const val IPO_ROW = "ipo_row"
+        const val IPO_DETAILS_SCREEN = "ipo_details_screen"
+        const val IPO_TOGGLE_CHIP = "ipo_toggle_chip"
+        const val IPO_APPLY_BUTTON = "ipo_apply_button"
+        const val ETF_SCREEN = "etf_screen"
+        const val ETF_TAB_PREFIX = "etf_tab_"
+        const val ETF_ROW = "etf_row"
+        const val ETF_SEARCH_INPUT = "etf_search_input"
+        const val ETF_FILTER_BUTTON = "etf_filter_button"
+        const val ETF_FILTER_SHEET = "etf_filter_sheet"
+        const val ETF_FILTER_CLEAR = "etf_filter_clear_button"
+        const val ETF_FILTER_EXCHANGE = "etf_filter_exchange"
+        const val SCANNERS_FILTER_EXCHANGE = "scanners_filter_exchange"
+        const val SCRIP_SHEET_BASKET_BUTTON = "scrip_sheet_basket_button"
+        const val BASKET_SELECT_SCREEN = "basket_select_screen"
+        const val DASHBOARD_TOP_SECTORS_VIEW_ALL = "dashboard_top_sectors_view_all"
+        const val SECTORS_SCREEN = "sectors_screen"
+        const val SECTORS_TAB_PREFIX = "sectors_tab_"
+        const val INVEST_CUSTOMIZE_BUTTON = "invest_customize_button"
+        const val INVEST_CUSTOMIZE_SCREEN = "invest_customize_screen"
 
         // Portfolio
         const val PORTFOLIO_TAB_HOLDINGS = "portfolio_tab_holdings"
@@ -475,6 +601,12 @@ object AutomationConfig {
         const val USER_ID_SCREEN = 45_000L
         const val PASSWORD_SCREEN = 30_000L
 
+        /**
+         * Tradion's biometric enrolment: how long a person has to touch the sensor (or use the
+         * phone's PIN) after Enable now. The tool never answers that prompt itself.
+         */
+        const val BIOMETRIC_CONFIRM = 90_000L
+
         /** After Join Now is tapped, how long Tradion may take to hand over to the browser. */
         const val JOIN_NOW_LEAVES = 8_000L
 
@@ -507,6 +639,17 @@ object AutomationConfig {
 
         /** How long the restore Save is given before it is tapped a second time. */
         const val EDIT_SAVE_FIRST_TRY = 8_000L
+
+        // ── The Watchlist suite (WatchlistSuite.kt) ────────────────────────────────────────────
+
+        /** A click, a navigation or a local UI response: it must be there within this. */
+        const val UI_RESPONSE = 3_000L
+
+        /** Between taps of the same control while waiting for a response. */
+        const val UI_RETRY = 1_500L
+
+        /** Data that comes from the server (rows, search results, a tab's content). */
+        const val DATA_LOAD = 10_000L
 
         /** Tabs probed on the watchlist strips; stops at the first missing index. */
         const val MAX_WATCHLIST_TABS = 20

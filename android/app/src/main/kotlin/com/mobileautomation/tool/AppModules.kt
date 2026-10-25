@@ -18,11 +18,32 @@ class AppModule(
 
 object AppModules {
 
+    /** Every Tradion Dashboard step except the two tab loads, in run order. */
+    val DASHBOARD_SCENARIO_STEPS = listOf(
+        "dashboard_index_dropdown_checked", "dashboard_trading_tab_selected",
+        "option_chain_opened", "option_chain_nfo_loaded", "option_chain_mcx_loaded",
+        "option_chain_cds_loaded", "option_chain_bfo_loaded", "research_calls_loaded",
+        "trading_ideas_tabs_clickable", "trading_ideas_subtabs_search", "trading_ideas_menu_opened",
+        "trading_ideas_filter_checked", "futures_view_all_checked", "futures_scrip_buy_sell_checked",
+        "fii_dii_view_all_checked", "dashboard_customize_checked", "scanners_view_all_loaded",
+        "screener_tabs_checked", "screener_dropdown_checked", "screener_search_checked",
+        "screener_sort_checked", "screener_scrip_checked",
+        "investment_tab_selected", "alerts_page_opened", "alert_created", "alerts_search_checked",
+        "alert_deleted", "ipo_page_checked", "ipo_details_checked", "reports_page_opened",
+        "etf_page_opened", "etf_tabs_options", "etf_tabs_buy_sell", "etf_search_settings",
+        "pledge_page_opened", "back_office_opened", "other_request_opened", "top_sectors_view_all_checked",
+        "scanners_equity_tab_options", "scanners_equity_tab_buy_sell", "scanners_equity_search_settings",
+        "scanners_futures_tab_options", "scanners_futures_tab_buy_sell", "scanners_options_tab_options",
+        "scanners_options_tab_buy_sell", "scanners_commodity_tab_options",
+        "scanners_commodity_tab_buy_sell", "investment_customize_checked",
+    )
+
     val TRADION: List<AppModule> = listOf(
         AppModule(
             "login", "Login",
             "Login page checks: Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, " +
-                "Confirm OTP button, Enable 2FA. Signing in itself always runs.",
+                "Confirm OTP button, Enable 2FA. Signing in itself always runs. \"Direct login only\" skips the " +
+                "Guest, Unblock, Join Now, Forgot Password and Switch Account detours.",
             listOf(
                 "guest_user_checked", "unblock_account_checked", "join_now_checked",
                 "forgot_password_checked", "switch_account_checked",
@@ -31,30 +52,38 @@ object AppModules {
         ),
         AppModule(
             "watchlist", "Watchlist",
-            "Predefined list, basket mode, filter, scrip details, chart and More Details.",
+            "Landing, switching watchlists, Predefined lists, the indices / funds panel, an instrument's sheet " +
+                "(Chart, Alert, Op.Chain, BUY / SELL opening the order pad) and More Details (Market Depth, " +
+                "Technicals, Fundamentals, Info). One instrument per check; nothing is ordered or created. Ends with a check " +
+                "that everything the Watchlist cases changed is back.",
             listOf(
-                "watchlist_predefined_no_add", "watchlist_basket_toggled", "watchlist_filter_opened",
-                "scrip_details_opened", "scrip_chart_loaded", "scrip_more_details_tabs",
-            ),
-        ),
-        AppModule(
-            "watchlist_edit", "Edit watchlist",
-            "Rename, rearrange, delete a scrip, save, verify and rename back. Changes the account's data.",
-            listOf(
-                "watchlist_edit_opened", "watchlist_edit_rename", "watchlist_edit_reorder",
-                "watchlist_edit_delete", "watchlist_edit_saved", "watchlist_edit_verified",
-                "watchlist_edit_restored",
+                "wl_landing_loaded", "wl_switch_watchlist", "wl_predefined_lists", "wl_index_panel",
+                "wl_instrument_sheet", "wl_chart", "wl_alert_page", "wl_alert_condition", "wl_option_chain",
+                "wl_buy_sell", "wl_more_market_depth", "wl_more_technicals", "wl_more_fundamentals",
+                "wl_more_info", "wl_predefined_instrument", "wl_predefined_search", "wl_state_restored",
             ),
         ),
         AppModule(
             "watchlist_search", "Search and add",
-            "Search every segment, add then delete a scrip, check the count. Changes the account's data.",
+            "Search INFY (All), F&O, Commodity and Stocks, then remove and re-add an instrument with the green " +
+                "tick, add one of each type per segment (an -EQ stock, F&O futures / call / put, a commodity future) and check the " +
+                "50-instrument limit. Everything it adds is removed again; leaves the watchlist as found.",
             listOf(
-                "search_opened", "search_tabs_listed", "search_stocks_added", "search_stocks_deleted",
-                "search_fno_added", "search_fno_deleted", "search_commodity_added",
-                "search_commodity_deleted", "search_all_added", "search_details_opened",
-                "search_closed", "watchlist_count_updated",
+                "wl_search_results", "wl_search_fno", "wl_search_commodity", "wl_search_stocks",
+                "wl_search_add_remove", "wl_search_segment_types", "wl_capacity_limit",
             ),
+        ),
+        AppModule(
+            "watchlist_edit", "Edit watchlist",
+            "Rename and restore a watchlist, then reorder and delete a test instrument the run added itself. " +
+                "Never deletes the account's own instruments.",
+            listOf("wl_edit_rename", "wl_edit_reorder", "wl_edit_delete"),
+        ),
+        AppModule(
+            "watchlist_settings", "Manage Watchlist",
+            "View (Depth / Grid / Open Price), sort, the INDEX filter, Apply and Clear. The original " +
+                "preferences are restored.",
+            listOf("wl_settings_view", "wl_settings_filter_sort"),
         ),
         AppModule(
             "orders", "Orders",
@@ -66,12 +95,12 @@ object AppModules {
         ),
         AppModule(
             "dashboard", "Dashboard",
-            "Trading (option chain per segment, research calls) and Investments (scanners).",
-            listOf(
-                "dashboard_trading_loaded", "option_chain_opened", "option_chain_nfo_loaded",
-                "option_chain_mcx_loaded", "option_chain_cds_loaded", "option_chain_bfo_loaded",
-                "research_calls_loaded", "dashboard_investments_loaded", "scanners_view_all_loaded",
-            ),
+            "Index dropdown, Trading tab, Option Chain per segment, Trading Ideas (tabs, search, menu, " +
+                "filters), Futures View All, FII / DII, Customize, Investments and Scanners (tabs, segments, " +
+                "search, sort, a scrip's Chart / Op.Chain / More Details and its Buy / Sell). Opens the " +
+                "order pad but never places an order.",
+            listOf("dashboard_trading_loaded", "dashboard_investments_loaded") +
+                DASHBOARD_SCENARIO_STEPS,
         ),
         AppModule(
             "portfolio", "Portfolio",
@@ -145,7 +174,12 @@ object AppModules {
  * Which modules a run covers. [selected] null means all of them, which is what
  * a run started without a choice does.
  */
-class ModuleSelection(private val all: List<AppModule>, private val selected: Set<String>?) {
+class ModuleSelection(
+    private val all: List<AppModule>,
+    private val selected: Set<String>?,
+    /** Login option: skip the detour checks (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account). */
+    val directLogin: Boolean = false,
+) {
 
     fun isOn(id: String): Boolean = selected == null || id in selected
 

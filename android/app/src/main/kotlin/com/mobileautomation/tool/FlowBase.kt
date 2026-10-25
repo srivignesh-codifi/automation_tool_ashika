@@ -16,7 +16,7 @@ abstract class FlowBase(
 
     protected lateinit var result: AutomationRunResult
 
-    protected fun step(id: String): AutomationStepResult = steps.first { it.id == id }
+    internal fun step(id: String): AutomationStepResult = steps.first { it.id == id }
 
     /**
      * Creates the run result and announces the checklist to the UI. Returns
@@ -54,7 +54,7 @@ abstract class FlowBase(
     /** The step in progress; a load check is recorded against it. */
     private var activeStep: AutomationStepResult? = null
 
-    protected fun begin(step: AutomationStepResult) {
+    internal fun begin(step: AutomationStepResult) {
         activeStep = step
         step.start()
         engine.emit(
@@ -67,12 +67,23 @@ abstract class FlowBase(
         )
     }
 
-    protected fun pass(step: AutomationStepResult, note: String? = null) {
+    internal fun pass(step: AutomationStepResult, note: String? = null) {
         step.pass(note)
         emitStep(step)
     }
 
-    protected fun skip(step: AutomationStepResult, note: String) {
+    /** Skips [step] on purpose and says which kind of skip it is: blocked, not applicable or not tested. */
+    internal fun skipAs(step: AutomationStepResult, kind: String, note: String) {
+        step.skipKind = kind
+        val label = when (kind) {
+            "blocked" -> "BLOCKED"
+            "not_applicable" -> "NOT APPLICABLE"
+            else -> "NOT TESTED"
+        }
+        skip(step, "$label: $note")
+    }
+
+    internal fun skip(step: AutomationStepResult, note: String) {
         step.skip(note)
         emitStep(step)
     }
@@ -102,7 +113,7 @@ abstract class FlowBase(
      * tab or feature should not stop the remaining ones from being checked.
      * The run's verdict still ends FAILED.
      */
-    protected fun failAndContinue(step: AutomationStepResult, reason: String) {
+    internal fun failAndContinue(step: AutomationStepResult, reason: String) {
         step.fail(reason)
         emitStep(step)
         if (result.failureMessage == null) result.failureMessage = reason
@@ -194,13 +205,14 @@ abstract class FlowBase(
      * app, or an Android 10 device, means no image. That never changes the
      * verdict of the run.
      */
-    protected fun captureScreenshot(label: String) {
+    internal fun captureScreenshot(label: String): String? {
         val path = engine.screenshot(label) { reason ->
             if (result.screenshotUnavailableReason == null) {
                 result.screenshotUnavailableReason = reason
             }
         }
         if (path != null) result.screenshots[label] = path
+        return path
     }
 
     // ── Load check ──────────────────────────────────────────────────────────
@@ -293,7 +305,7 @@ abstract class FlowBase(
      * Back that finds nothing to close would take the app with it. So this
      * refuses to press anything while the thing to close is not there.
      */
-    protected fun closeWithBack(identifier: String): Boolean {
+    internal fun closeWithBack(identifier: String): Boolean {
         if (!engine.isPresent(identifier)) return false
         repeat(2) {
             if (!engine.pressBack()) return false

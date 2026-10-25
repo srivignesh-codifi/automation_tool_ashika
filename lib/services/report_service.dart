@@ -28,6 +28,7 @@ class ReportService {
 
   static const String _historyFile = 'history.json';
   static const int _historyLimit = 50;
+  static final RegExp _caseShotKey = RegExp(r'^[A-Z]{2,}-\d+_');
 
   static final DateFormat _stamp = DateFormat('yyyy-MM-dd HH:mm:ss');
   static final DateFormat _fileStamp = DateFormat('yyyyMMdd_HHmmss');
@@ -110,7 +111,7 @@ class ReportService {
     return run;
   }
 
-  /// Packs the text report, the recording and the failed-step screenshots into
+  /// Packs the text report, the recording, the failed-step screenshots and the test cases' checkpoint screenshots into
   /// `<app>_<ddMMyyyy>_<HHmm>.zip` (see [zipNameFor]) and has Android copy it to public Downloads. Best
   /// effort: a failure is returned as text and never fails the save.
   Future<({String path, String folder, String error})> _buildSummaryZip(
@@ -127,7 +128,8 @@ class ReportService {
       entries.add(<String, String>{'path': video, 'name': '$base.mp4'});
     }
     for (final shot in result.screenshots.entries) {
-      if (!shot.key.startsWith('failed')) continue;
+      // Failure shots, and the checkpoint shots of test cases (`WL-06_chart_loaded`) that the report's table names.
+      if (!shot.key.startsWith('failed') && !_caseShotKey.hasMatch(shot.key)) continue;
       if (!await File(shot.value).exists()) continue;
       entries.add(<String, String>{
         'path': shot.value,
@@ -407,6 +409,9 @@ class ReportService {
       out.writeln();
     }
 
+    _areaSection(out, result);
+    _caseSections(out, result);
+
     // ── API / data checks ─────────────────────────────────────────────────
     final api = result.apiSummary;
     if (!api.isEmpty) {
@@ -483,7 +488,7 @@ class ReportService {
       final offset = result.videoOffsetOf(step);
       rows.add(<String>[
         '${i + 1}',
-        _resultCell(step.status),
+        _resultCell(step),
         _clip(step.name, 50),
         step.startedAt == null ? '-' : _clock24.format(step.startedAt!),
         step.finishedAt == null ? '-' : _clock24.format(step.finishedAt!),
@@ -556,13 +561,229 @@ class ReportService {
   static void _kv(StringBuffer out, String key, String value) =>
       out.writeln('  ${key.padRight(18)}$value');
 
-  static String _resultCell(StepStatus status) => switch (status) {
+  static String _resultCell(AutomationStep step) => switch (step.status) {
     StepStatus.passed => '✓ PASS',
     StepStatus.failed => '✕ FAIL',
-    StepStatus.skipped => '– SKIP',
+    StepStatus.skipped =>
+      step.skipKind == null ? '– SKIP' : '– ${step.outcomeLabel}',
     StepStatus.running => '· RUNNING',
     StepStatus.pending => '· NOT RUN',
   };
+
+  /// The screenshot that shows a test case: the evidence taken at the moment of failure (named by case, kind and the
+  /// screen it shows), else a checkpoint of that case, else the generic failure shot (taken after clean-up).
+  static String? _caseShot(AutomationResult result, AutomationStep step) {
+    final code = step.code;
+    if (code != null) {
+      for (final prefix in <String>['${code}_failure', '${code}_unreadable', '${code}_save_stuck', '${code}_all_empty']) {
+        final key = result.screenshots.keys.where((k) => k.startsWith(prefix)).toList();
+        if (key.isNotEmpty) return _fileName(result.screenshots[key.first]!);
+      }
+    }
+    final keys = code == null
+        ? <String>[]
+        : result.screenshots.keys.where((k) => k.startsWith('${code}_')).toList();
+    if (keys.isNotEmpty) return _fileName(result.screenshots[keys.first]!);
+    final failed = result.screenshots['failed_${step.id}'];
+    return failed == null ? null : _fileName(failed);
+  }
+
+
+  /// Login and Watchlist (and every other area) as separate results.
+  static void _areaSection(StringBuffer out, AutomationResult result) {
+    String area(AutomationStep s) {
+      final m = s.module;
+      if (m == null || m == 'login') return 'Login';
+      if (m.startsWith('watchlist')) return 'Watchlist';
+      return m.isEmpty ? 'Other' : '${m[0].toUpperCase()}${m.substring(1)}';
+    }
+
+    final groups = <String, List<AutomationStep>>{};
+    for (final s in result.steps) {
+      groups.putIfAbsent(area(s), () => <AutomationStep>[]).add(s);
+    }
+    if (groups.length < 2) return;
+    _heading(out, 'RESULTS BY AREA');
+    _table(
+      out,
+      <String>['Area', 'Steps', 'Pass', 'Fail', 'Blocked', 'Not tested / N/A', 'Skipped', 'Time'],
+      <List<String>>[
+        for (final e in groups.entries)
+          () {
+            int n(bool Function(AutomationStep) test) => e.value.where(test).length;
+            final ms = e.value.fold<int>(0, (a, s) => a + (s.durationMs ?? 0));
+            return <String>[
+              e.key,
+              '${e.value.length}',
+              '${n((s) => s.status == StepStatus.passed)}',
+              '${n((s) => s.status == StepStatus.failed)}',
+              '${n((s) => s.outcomeLabel == 'BLOCKED')}',
+              '${n((s) => s.outcomeLabel == 'NOT TESTED' || s.outcomeLabel == 'NOT APPLICABLE')}',
+              '${n((s) => s.outcomeLabel == 'SKIPPED')}',
+              _formatDuration(Duration(milliseconds: ms)),
+            ];
+          }(),
+      ],
+      rightAlign: <int>{1, 2, 3, 4, 5, 6, 7},
+    );
+    out.writeln();
+  }
+
+  static String _classShort(AutomationStep s) => s.causeTag.isEmpty ? '-' : s.causeTag;
+
+  /// One finding: expected, observed, probable cause, UI hierarchy, screenshot, recommendation, cleanup.
+  static void _finding(
+    StringBuffer out,
+    AutomationResult result,
+    AutomationStep s,
+    String label,
+  ) {
+    out.writeln('  $label  ${s.code}  [${s.severity ?? 'Medium'}]  ${s.name}');
+    void line(String key, String? value) {
+      if (value == null || value.isEmpty) return;
+      final lines = _wrap(value, 88);
+      out.writeln('        ${key.padRight(15)}${lines.first}');
+      for (final more in lines.skip(1)) {
+        out.writeln('        ${''.padRight(15)}$more');
+      }
+    }
+
+    line('Expected', s.expected);
+    line('Observed', s.status == StepStatus.failed ? s.failureReason : s.note);
+    line('Cause', '${s.causeTag}: ${s.causeLabel}');
+    line('UI hierarchy', s.evidence);
+    final shot = _caseShot(result, s);
+    line('Screenshot', shot);
+    line('Recommendation', s.recommendation);
+    line('Cleanup', s.cleanup);
+  }
+
+  /// The formal test-case table, the findings by class, the cleanup status and the QA assessment.
+  static void _caseSections(StringBuffer out, AutomationResult result) {
+    final cases = result.steps.where((s) => s.isCase).toList();
+    if (cases.isEmpty) return;
+    int count(String label) => cases.where((s) => s.outcomeLabel == label).length;
+    final pass = count('PASS');
+    final fail = count('FAIL');
+    _heading(out, 'WATCHLIST TEST CASES');
+    _kv(out, 'Cases', '${cases.length}');
+    _kv(
+      out,
+      'Outcome',
+      '$pass PASS, $fail FAIL, ${count('BLOCKED')} BLOCKED, '
+          '${count('NOT APPLICABLE')} NOT APPLICABLE, ${count('NOT TESTED')} NOT TESTED',
+    );
+    out.writeln();
+    _table(
+      out,
+      <String>['ID', 'Scenario', 'Expected result', 'Actual result', 'Status', 'Class', 'Screenshot'],
+      <List<String>>[
+        for (final s in cases)
+          <String>[
+            s.code!,
+            _clip(s.name, 36),
+            _clip(s.expected ?? '-', 60),
+            _clip(
+              (s.status == StepStatus.failed ? s.failureReason : null) ??
+                  s.note ??
+                  '-',
+              80,
+            ),
+            s.outcomeLabel,
+            _classShort(s),
+            _caseShot(result, s) ?? '-',
+          ],
+      ],
+    );
+    out.writeln();
+
+    // Findings, by what they turned out to be. A blank accessibility tree is never a product defect.
+    final findings = cases
+        .where((s) => s.status == StepStatus.failed || s.outcomeLabel == 'BLOCKED')
+        .toList();
+    List<AutomationStep> of(String cause) => findings
+        .where((s) => (s.cause ?? 'unconfirmed') == cause)
+        .toList();
+    final groups = <(String, String, String)>[
+      ('app_defect', 'CONFIRMED APPLICATION DEFECTS', 'D'),
+      ('unconfirmed', 'NEEDS REVIEW: EXPECTED CONTENT NOT FOUND IN READABLE TEXT', 'R'),
+      ('automation', 'AUTOMATION / LOCATOR FAILURES', 'A'),
+      ('accessibility', 'ACCESSIBILITY LIMITATIONS (content could not be read, not a defect)', 'X'),
+      ('api_data', 'API / DATA DEPENDENCY FAILURES', 'P'),
+      ('test_data', 'TEST-DATA / STATE FAILURES', 'T'),
+    ];
+    for (final g in groups) {
+      final items = of(g.$1);
+      _heading(out, g.$2);
+      if (items.isEmpty) {
+        out.writeln('  none');
+      }
+      for (var i = 0; i < items.length; i++) {
+        _finding(out, result, items[i], '${g.$3}${i + 1}');
+      }
+      out.writeln();
+    }
+    final untested = cases
+        .where((s) => s.outcomeLabel == 'NOT TESTED' || s.outcomeLabel == 'NOT APPLICABLE')
+        .toList();
+    _heading(out, 'INTENTIONALLY NOT TESTED / NOT APPLICABLE');
+    if (untested.isEmpty) out.writeln('  none');
+    for (final s in untested) {
+      out.writeln('  ${s.code}  ${s.outcomeLabel.padRight(14)} ${_clip(s.note ?? s.name, 120)}');
+    }
+    out.writeln();
+
+    final cleaned = cases.where((s) => s.cleanup != null).toList();
+    _heading(out, 'CLEANUP OF TEST-CREATED CHANGES');
+    if (cleaned.isEmpty) out.writeln('  no case changed anything');
+    for (final s in cleaned) {
+      out.writeln('  ${s.code}  ${s.cleanup}');
+    }
+    out.writeln();
+
+    final slow = cases
+        .where((s) => s.apiMs != null && s.apiMs! > 0)
+        .toList()
+      ..sort((a, b) => b.apiMs!.compareTo(a.apiMs!));
+    if (slow.isNotEmpty) {
+      _heading(out, 'PERFORMANCE');
+      for (final s in slow.take(5)) {
+        out.writeln('  ${_ms(s.apiMs!).padRight(8)} ${s.code}  ${s.apiDetail ?? s.name}');
+      }
+      out.writeln();
+    }
+
+    _heading(out, 'QA ASSESSMENT');
+    final defects = of('app_defect');
+    final critical = defects.where((s) => s.severity == 'Critical').length;
+    final unresolved = findings.length - defects.length;
+    final cleanupFailed = cleaned.where((s) => s.cleanup!.startsWith('FAILED')).length;
+    final String verdict;
+    if (cases.every((s) => s.status == StepStatus.pending)) {
+      verdict = 'Not assessed: no Watchlist case ran.';
+    } else if (critical > 0) {
+      verdict = 'Not ready: $critical critical application defect(s).';
+    } else if (defects.isNotEmpty) {
+      verdict = 'Needs fixes: ${defects.length} confirmed application defect(s), none critical.';
+    } else if (unresolved > 0 || count('NOT TESTED') > 0) {
+      verdict =
+          'No application defect confirmed. $unresolved case(s) could not be verified or need review, and '
+          '${count('NOT TESTED')} were not tested: they are not passes.';
+    } else {
+      verdict = 'Ready: every applicable case passed.';
+    }
+    out
+      ..writeln('  $verdict')
+      ..writeln(
+        cleanupFailed > 0
+            ? '  WARNING: $cleanupFailed case(s) could not put back what they changed: see CLEANUP above.'
+            : '  Everything the cases changed was put back.',
+      )
+      ..writeln(
+        '  Only cases that ran are counted; a case that could not run or could not be read is never reported as PASS.',
+      )
+      ..writeln();
+  }
 
   static String _apiCell(AutomationStep step) {
     if (!step.hasApiCheck) return '-';
@@ -651,7 +872,7 @@ class ReportService {
       <tr class="${step.status.wire}">
         <td class="glyph">${step.status.glyph}</td>
         <td class="name">${_esc(step.name)}</td>
-        <td class="status"><span class="pill ${step.status.wire}">${step.status.label}</span></td>
+        <td class="status"><span class="pill ${step.status.wire}">${step.skipKind != null || step.isCase ? _esc(step.outcomeLabel) : step.status.label}</span></td>
         <td class="time">${step.startedAt == null ? '—' : _esc(_stamp.format(step.startedAt!))}</td>
         <td class="time">${step.finishedAt == null ? '—' : _esc(_stamp.format(step.finishedAt!))}</td>
         <td class="time">${step.duration == null ? '—' : _esc(_formatDuration(step.duration!))}</td>

@@ -57,7 +57,7 @@ class TestStepTile extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        '${index + 1}. ${step.name}',
+                        '${index + 1}. ${step.code == null ? '' : '${step.code} · '}${step.name}',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: step.status == StepStatus.pending
