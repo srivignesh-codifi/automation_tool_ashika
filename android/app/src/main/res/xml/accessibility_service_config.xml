@@ -37,6 +37,13 @@
   canTakeScreenshot     - best-effort evidence capture (API 30+); failures never
                           fail the run.
 
+  isAccessibilityTool   - Android 14+ hides views flagged as sensitive (the
+                          Clear data / Clear cache buttons on the Storage page)
+                          from services that do not declare themselves an
+                          accessibility tool. This tool drives the UI for
+                          testing, so it declares it; Play Store review would
+                          need to be revisited if it is ever published.
+
   Deliberately NOT declared: flagRequestFilterKeyEvents,
   flagRequestTouchExplorationMode, flagRequestEnhancedWebAccessibility,
   canRequestFingerprintGestures, and any form of key-event filtering.
@@ -48,6 +55,7 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
+    android:isAccessibilityTool="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
     android:packageNames="com.codifi.dhanush,com.codifi.rmoney,com.android.settings,com.miui.securitycenter,com.google.android.permissioncontroller,com.android.permissioncontroller,com.android.systemui"
