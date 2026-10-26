@@ -1361,8 +1361,13 @@ class WatchlistSuite(
 
     private class Added(val wanted: Wanted, val query: String, val label: String, val name: String)
 
-    /** A search row's identity without anything that changes between two looks (prices). */
-    private fun labelKey(label: String): String = tokens(label).filterNot { PRICE.matches(it) || it.contains('%') }.take(6).joinToString(" ")
+    /**
+     * A search row's identity without anything that changes between two looks (prices). Long enough to reach the CE / PE
+     * suffix of an option (a call and a put of the same strike share every token before it) and carries the type, so
+     * two contracts of one underlying are never taken for each other.
+     */
+    private fun labelKey(label: String): String =
+        tokens(label).filterNot { PRICE.matches(it) || it.contains('%') }.take(12).joinToString(" ") + "|" + scripType(label)
 
     /**
      * One instrument of each type per segment (an -EQ stock; futures, call and put of F&O; a commodity future): each is
@@ -1371,6 +1376,7 @@ class WatchlistSuite(
      */
     private fun segmentTypes() {
         val start = startCount?.let { readCount()?.first ?: it } ?: blocked("The working watchlist's count is unknown.")
+        val baseline = rowLabels()
         val wanted = listOf(
             Wanted("Stocks", T.SEARCH_TAB_STOCKS, "Stocks", listOf("RELIANCE", "TCS", "HDFCBANK"), "EQ", setOf("NSE")),
             Wanted("F&O", T.SEARCH_TAB_FNO, "F&O", listOf("TCS", "RELIANCE"), "FUT", setOf("NFO")),
@@ -1433,7 +1439,7 @@ class WatchlistSuite(
             failure = e
         }
         // Every instrument this case added is taken out again, whatever happened above.
-        val restored = removeAdded(added, start)
+        val restored = removeAdded(added, start) || removeExtrasOnEdit(baseline, start)
         cleanup = if (restored) "restored: the ${added.size} instrument(s) added by this case are removed (count back to $start)"
         else "FAILED: instruments added by this case may still be in the watchlist (count should be $start, reads ${readCount()?.first}); remove them by hand"
         failure?.let { throw it }
@@ -1471,6 +1477,47 @@ class WatchlistSuite(
         }
         if (state == "added") deleteResult(idx, a.name)
         return state != null
+    }
+
+    /**
+     * Fallback when the tick in search could not take an instrument out again: the Edit screen lists the whole watchlist,
+     * so every row that was not among [baseline] (the rows before the case) is deleted there and saved. Only done when
+     * the number of such rows is exactly what the count says is extra, so an original instrument is never deleted.
+     */
+    private fun removeExtrasOnEdit(baseline: List<String>, start: Int): Boolean {
+        if (baseline.size != start) return false
+        try {
+            if (!recover()) return false
+            val now = readCount()?.first ?: return false
+            if (now == start) return true
+            if (now < start) return false
+            openEdit()
+            val known = baseline.map { b -> tokens(b).map { it.uppercase() }.toSet() }
+            val rows = editRows()
+            val extra = rows.indices.filter { i ->
+                val t = tokens(rows[i]).map { it.uppercase() }.filterNot { PRICE.matches(it) || it.contains('%') }.toSet()
+                known.none { it.containsAll(t) }
+            }
+            if (rows.size != now || extra.size != now - start) {
+                escapeEdit()
+                return false
+            }
+            for (i in extra.sortedDescending()) {
+                if (!engine.tapAt(T.REORDER_DELETE_BUTTON, i).ok) {
+                    escapeEdit()
+                    return false
+                }
+                pause(Timeouts.SETTLE)
+            }
+            if (editRows().size != start) {
+                escapeEdit()
+                return false
+            }
+            saveEdit("removing the instruments added by the segment case")
+            return waitUntil(LOAD) { readCount()?.first == start }
+        } catch (_: CaseEnd) {
+            return false
+        }
     }
 
     private fun removeAdded(added: List<Added>, start: Int): Boolean {

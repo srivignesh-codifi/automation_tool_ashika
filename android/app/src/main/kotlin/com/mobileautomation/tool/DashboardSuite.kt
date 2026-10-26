@@ -1244,8 +1244,11 @@ class DashboardSuite(
         val gear = engine.tapRightEdgeOf("Search")
         if (!gear.ok) fail("The settings icon could not be tapped: ${gear.detail}", Cause.AUTOMATION)
         if (!waitUntil(UI) { has("Sort") }) fail("The settings icon did not open the Filter / Sort sheet", Cause.UNCONFIRMED)
+        // The sheet slides in and builds its Sort rows after "Sort" first appears: wait for all of them before judging.
+        val sheetTexts = listOf("NSE", "BSE", "Alphabetically", "Last Traded Price", "CLEAR")
+        waitUntil(UI) { missing(readScreen(), sheetTexts).isEmpty() }
         val sheet = readScreen()
-        val gaps = missing(sheet, listOf("NSE", "BSE", "Alphabetically", "Last Traded Price", "CLEAR"))
+        val gaps = missing(sheet, sheetTexts)
         if (gaps.isNotEmpty()) fail("The Filter / Sort sheet is readable but shows no ${gaps.joinToString(", ")} (texts: ${sheet.take(12).joinToString(" | ")})", Cause.UNCONFIRMED)
         shot("DS-12_indices_filter_sort")
         tapLabel("BSE", "the BSE filter")
