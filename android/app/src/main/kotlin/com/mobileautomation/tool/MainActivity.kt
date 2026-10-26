@@ -104,6 +104,7 @@ class MainActivity : FlutterActivity() {
                     modules = call.argument<List<*>>("modules")?.filterIsInstance<String>(),
                     clearData = call.argument<Boolean>("clearData") != false,
                     loginDirectOnly = call.argument<Boolean>("loginDirectOnly") == true,
+                    orderConfig = call.argument<Map<*, *>>("orderConfig"),
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))

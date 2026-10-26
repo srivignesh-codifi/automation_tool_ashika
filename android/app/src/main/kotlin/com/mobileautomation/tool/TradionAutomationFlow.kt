@@ -90,7 +90,7 @@ class TradionAutomationFlow(
             s("enable_2fa_checked", "Enable 2FA button visible and clickable"),
             s("disclosure_accepted", "Risk disclosure accepted"),
             s("home_displayed", "Home displayed"),
-        ) + WatchlistSuite.steps() + listOf(
+        ) + WatchlistSuite.steps() + WatchlistSuite.orderSteps() + listOf(
             s("orders_pending_loaded", "Orders › Pending loaded"),
             s("orders_order_book_loaded", "Orders › Order Book loaded"),
             s("orders_trade_book_loaded", "Orders › Trade Book loaded"),
@@ -657,6 +657,7 @@ class TradionAutomationFlow(
 
         // ── Watchlist ───────────────────────────────────────────────────────────────────────────────
         runWatchlist()?.let { return it }
+        runOrderPlacement()?.let { return it }
 
         // ── Orders, Dashboard, Portfolio, Profile ────────────────────────────────────────────────────
         runTabs()?.let { return it }
@@ -882,6 +883,16 @@ class TradionAutomationFlow(
             sessionLost = { sessionEnded(it, "checking ${it.name}") },
         ).run()
 
+
+    /** The Order placement module: the order pad per segment, orders on NSE / BSE under the margin gate, then Pending and Order Book. */
+    private fun runOrderPlacement(): AutomationRunResult? =
+        WatchlistSuite(
+            flow = this,
+            engine = engine,
+            modules = modules,
+            stopped = { stopped(it) },
+            sessionLost = { sessionEnded(it, "checking ${it.name}") },
+        ).runOrders()
 
     // ── Orders, Dashboard, Portfolio, Profile ─────────────────────────────────────────────────
 

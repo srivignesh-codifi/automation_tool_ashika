@@ -507,6 +507,10 @@ object AccessibilityNodeFinder {
             ?.text
             ?.toString()
 
+    /** The switch / checkbox for this anchor (a Flutter toggle publishes `checked`), if any. */
+    fun resolveCheckable(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        resolve(anchor) { it.isCheckable }
+
     /** The node that can accept ACTION_CLICK for this anchor, if any. */
     fun resolveClickable(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? =
         resolve(anchor) { isClickableLike(it) }

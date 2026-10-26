@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/order_config.dart';
 import '../services/automation_service.dart';
+import 'order_config_panel.dart';
 
 /// The checklist of modules a run covers. All of them start selected; the
 /// operator unticks what a run should leave out, and those steps are skipped.
@@ -12,6 +14,8 @@ class ModulePicker extends StatelessWidget {
     this.enabled = true,
     this.directLogin = false,
     this.onDirectLoginChanged,
+    this.orderConfig,
+    this.onOrderConfigChanged,
     super.key,
   });
 
@@ -19,6 +23,10 @@ class ModulePicker extends StatelessWidget {
   final Set<String> selected;
   final ValueChanged<Set<String>> onChanged;
   final bool enabled;
+
+  /// The Order placement settings, shown under that module when [onOrderConfigChanged] is given.
+  final OrderConfig? orderConfig;
+  final ValueChanged<OrderConfig>? onOrderConfigChanged;
 
   /// "Direct login only": the Login module signs in straight through and skips its detours (Guest User, Unblock
   /// Account, Join Now, Forgot Password, Switch Account). Shown under Login when [onDirectLoginChanged] is given.
@@ -74,7 +82,11 @@ class ModulePicker extends StatelessWidget {
             title: Text(module.label),
             subtitle: module.description.isEmpty
                 ? null
-                : Text(module.description),
+                : ModuleSubtitle(
+                    key: ValueKey<String>('module_subtitle_${module.id}'),
+                    title: module.label,
+                    text: module.description,
+                  ),
           ),
           if (module.id == 'login' && onDirectLoginChanged != null)
             Padding(
@@ -93,6 +105,14 @@ class ModulePicker extends StatelessWidget {
                     ? onDirectLoginChanged
                     : null,
               ),
+            ),
+          if (module.id == 'order_placement' &&
+              orderConfig != null &&
+              onOrderConfigChanged != null)
+            OrderConfigPanel(
+              config: orderConfig!,
+              onChanged: onOrderConfigChanged!,
+              enabled: enabled && selected.contains('order_placement'),
             ),
         ],
         Padding(
@@ -120,6 +140,8 @@ class ModuleField extends StatelessWidget {
     this.enabled = true,
     this.directLogin = false,
     this.onDirectLoginChanged,
+    this.orderConfig,
+    this.onOrderConfigChanged,
     super.key,
   });
 
@@ -129,6 +151,8 @@ class ModuleField extends StatelessWidget {
   final bool enabled;
   final bool directLogin;
   final ValueChanged<bool>? onDirectLoginChanged;
+  final OrderConfig? orderConfig;
+  final ValueChanged<OrderConfig>? onOrderConfigChanged;
 
   /// "All modules (8)", "None: ...", or "3 of 8: Login, Orders, Profile".
   static String summary(
@@ -137,8 +161,12 @@ class ModuleField extends StatelessWidget {
     bool directLogin = false,
   }) {
     final chosen = modules.where((m) => selected.contains(m.id)).toList();
-    final direct = directLogin && selected.contains('login') ? ' · direct login only' : '';
-    if (chosen.length == modules.length) return 'All modules (${modules.length})$direct';
+    final direct = directLogin && selected.contains('login')
+        ? ' · direct login only'
+        : '';
+    if (chosen.length == modules.length) {
+      return 'All modules (${modules.length})$direct';
+    }
     if (chosen.isEmpty) return 'None: only sign-in and sign-out run';
     return '${chosen.length} of ${modules.length}: '
         '${chosen.map((m) => m.label).join(', ')}$direct';
@@ -157,6 +185,8 @@ class ModuleField extends StatelessWidget {
               onChanged: onChanged,
               directLogin: directLogin,
               onDirectLoginChanged: onDirectLoginChanged,
+              orderConfig: orderConfig,
+              onOrderConfigChanged: onOrderConfigChanged,
             )
           : null,
       child: InputDecorator(
@@ -185,9 +215,12 @@ Future<void> showModuleSheet(
   required ValueChanged<Set<String>> onChanged,
   bool directLogin = false,
   ValueChanged<bool>? onDirectLoginChanged,
+  OrderConfig? orderConfig,
+  ValueChanged<OrderConfig>? onOrderConfigChanged,
 }) {
   var current = Set<String>.of(selected);
   var currentDirect = directLogin;
+  var currentOrders = orderConfig;
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -220,6 +253,13 @@ Future<void> showModuleSheet(
                                 setSheetState(() => currentDirect = on);
                                 onDirectLoginChanged(on);
                               },
+                        orderConfig: currentOrders,
+                        onOrderConfigChanged: onOrderConfigChanged == null
+                            ? null
+                            : (next) {
+                                setSheetState(() => currentOrders = next);
+                                onOrderConfigChanged(next);
+                              },
                       ),
                     ),
                   ),
@@ -238,4 +278,63 @@ Future<void> showModuleSheet(
       );
     },
   );
+}
+
+/// A module's description: one line when it fits. A longer one is cut to its first line with a "Read more" link that
+/// shows the whole text in a dialog, so the checklist stays short.
+class ModuleSubtitle extends StatelessWidget {
+  const ModuleSubtitle({required this.title, required this.text, super.key});
+
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final style = DefaultTextStyle.of(context).style;
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          maxLines: 1,
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout(maxWidth: constraints.maxWidth);
+        final overflows = painter.didExceedMaxLines;
+        painter.dispose();
+        if (!overflows) return Text(text);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
+            InkWell(
+              key: const ValueKey<String>('module_read_more'),
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: Text(title),
+                  content: SingleChildScrollView(child: Text(text)),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Close'),
+                    ),
+                  ],
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  'Read more',
+                  style: style.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }

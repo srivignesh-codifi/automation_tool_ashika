@@ -1,3 +1,4 @@
+import '../models/order_config.dart';
 import 'package:flutter/services.dart';
 
 import '../models/automation_result.dart';
@@ -170,6 +171,7 @@ class AutomationConfigInfo {
             AutomationModule(id: 'watchlist_search', label: 'Search and add'),
             AutomationModule(id: 'watchlist_edit', label: 'Edit watchlist'),
             AutomationModule(id: 'watchlist_settings', label: 'Manage Watchlist'),
+            AutomationModule(id: 'order_placement', label: 'Order placement'),
             AutomationModule(id: 'orders', label: 'Orders'),
             AutomationModule(id: 'dashboard', label: 'Dashboard'),
             AutomationModule(id: 'portfolio', label: 'Portfolio'),
@@ -384,6 +386,7 @@ class AutomationService {
     List<String>? modules,
     bool clearData = true,
     bool loginDirectOnly = false,
+    OrderConfig? orderConfig,
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
@@ -395,6 +398,7 @@ class AutomationService {
       'modules': modules,
       'clearData': clearData,
       'loginDirectOnly': loginDirectOnly,
+      'orderConfig': orderConfig?.toJson(),
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;

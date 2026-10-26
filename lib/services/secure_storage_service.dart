@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../models/order_config.dart';
 
 /// Storage for the UAT test credentials the operator types into the tool.
 ///
@@ -28,6 +32,7 @@ class SecureStorageService {
   static const String _kSetupDone = 'tool_setup_done';
   static const String _kModulesOff = 'tool_modules_off';
   static const String _kDirectLogin = 'tool_login_direct';
+  static const String _kOrderConfig = 'tool_order_config';
 
   /// Ashika's keys predate the second app and stay as they were, so an operator
   /// who saved credentials keeps them. Every other app gets suffixed keys.
@@ -73,6 +78,21 @@ class SecureStorageService {
 
   Future<void> saveDirectLogin(bool value, {required String appId}) =>
       _write('${_kDirectLogin}_$appId', value ? 'true' : 'false');
+
+  /// The Order placement settings of [appId]: which exchanges, which instruments, where orders are placed. The default
+  /// (NSE with IDEA, orders on NSE only; MCX with CRUDEOIL) until the operator changes it.
+  Future<OrderConfig> readOrderConfig({required String appId}) async {
+    final raw = await _read('${_kOrderConfig}_$appId');
+    if (raw == null) return OrderConfig.defaults();
+    try {
+      return OrderConfig.fromJson(jsonDecode(raw));
+    } on FormatException {
+      return OrderConfig.defaults();
+    }
+  }
+
+  Future<void> saveOrderConfig(OrderConfig value, {required String appId}) =>
+      _write('${_kOrderConfig}_$appId', jsonEncode(value.toJson()));
 
   /// Whether the first-launch permission setup was finished. Not a secret; it
   /// only lives here because this is the tool's one small store.

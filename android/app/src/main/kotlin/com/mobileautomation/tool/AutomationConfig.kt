@@ -421,10 +421,47 @@ object AutomationConfig {
         )
 
         /**
-         * The order pad and the plain Buy / Sell pair that opens it. The tool opens the pad and
-         * leaves with Back; nothing on the pad is ever tapped.
+         * The order pad and the plain Buy / Sell pair that opens it. Only the Order placement
+         * module taps anything on the pad (see OrderPad.Gate); every other module opens it and leaves with Back.
          */
         const val ORDER_WINDOW_SCREEN = "order_window_screen"
+
+        // The order pad's own controls (tradion_mobile lib/screens/order_window, docs/AUTOMATION_SEMANTICS.md). The three
+        // tabs, the form each tab shows (only the open tab is built), every input box (the tag wraps label + field), the
+        // switches, the product / validity chips and the footer.
+        const val ORDER_TAB_REGULAR = "order_tab_regular"
+        const val ORDER_TAB_BO_CO = "order_tab_bo_co"
+        const val ORDER_TAB_AMO = "order_tab_amo"
+        const val ORDER_FORM_REGULAR = "order_form_regular"
+        const val ORDER_FORM_BO_CO = "order_form_bo_co"
+        const val ORDER_FORM_AMO = "order_form_amo"
+        const val ORDER_FIELD_QUANTITY = "order_field_quantity"
+        const val ORDER_FIELD_PRICE = "order_field_price"
+        const val ORDER_FIELD_SL_PRICE = "order_field_sl_price"
+        const val ORDER_FIELD_TRIGGER_PRICE = "order_field_trigger_price"
+        const val ORDER_FIELD_DISCLOSED_QUANTITY = "order_field_disclosed_quantity"
+        const val ORDER_FIELD_STOPLOSS = "order_field_stoploss"
+        const val ORDER_FIELD_TARGET = "order_field_target"
+        const val ORDER_FIELD_TRAILING_STOPLOSS = "order_field_trailing_stoploss"
+        const val ORDER_PRICE_TYPE_TOGGLE = "order_field_price_type_toggle"
+        const val ORDER_QUANTITY_MINUS = "order_quantity_minus"
+        const val ORDER_QUANTITY_PLUS = "order_quantity_plus"
+        const val ORDER_QUANTITY_LOT_TOGGLE = "order_quantity_lot_toggle"
+        const val ORDER_SL_PRICE_TYPE_TOGGLE = "order_field_sl_price_type_toggle"
+        const val ORDER_SWITCH_MARKET_PROTECTION = "order_switch_market_protection"
+        const val ORDER_SWITCH_STOPLOSS = "order_switch_stoploss"
+        const val ORDER_SWITCH_TARGET = "order_switch_target"
+        const val ORDER_ADVANCED_OPTIONS = "order_advanced_options"
+        const val ORDER_VIEW_BROKERAGE = "order_view_brokerage"
+        const val ORDER_PRODUCT_PREFIX = "order_product_"
+        const val ORDER_VALIDITY_PREFIX = "order_validity_"
+        const val ORDER_SUBMIT_BUTTON = "order_submit_button"
+        const val ORDER_MARGIN_REQUIRED = "order_margin_required"
+        const val ORDER_MARGIN_AVAILABLE = "order_margin_available"
+        const val ORDER_FUNDS_BANNER = "order_funds_banner"
+        const val ORDER_LTP_PREFIX = "order_ltp_"
+        const val ORDER_EXCHANGE_PREFIX = "order_exchange_"
+        const val ERROR_SNACKBAR_MESSAGE = "error_snackbar_message"
         const val TRADE_BUY_BUTTON = "trade_buy_button"
         const val TRADE_SELL_BUTTON = "trade_sell_button"
 

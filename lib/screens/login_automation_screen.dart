@@ -1,3 +1,4 @@
+import '../models/order_config.dart';
 import 'package:flutter/material.dart';
 
 import '../models/automation_step.dart';
@@ -59,6 +60,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
 
   /// Login module option: sign in straight through, skipping its detours (Guest, Unblock, Join Now, Forgot, Switch).
   bool _directLogin = true;
+
+  /// Order placement module settings: which exchanges, which instruments, where orders are placed.
+  OrderConfig _orderConfig = OrderConfig.defaults();
   bool _busy = true;
   bool _running = false;
 
@@ -140,6 +144,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
   Future<void> _loadChoices(TargetAppInfo app) async {
     final off = await widget.storage.readModulesOff(appId: app.id);
     final direct = await widget.storage.readDirectLogin(appId: app.id);
+    final orders = await widget.storage.readOrderConfig(appId: app.id);
     if (!mounted || app.id != _app.id) return;
     setState(() {
       _modules = app.modules
@@ -147,6 +152,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
           .where((id) => !(off ?? const <String>{}).contains(id))
           .toSet();
       _directLogin = direct;
+      _orderConfig = orders;
     });
   }
 
@@ -158,6 +164,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
         .toSet();
     widget.storage.saveModulesOff(off, appId: _app.id);
     widget.storage.saveDirectLogin(_directLogin, appId: _app.id);
+    widget.storage.saveOrderConfig(_orderConfig, appId: _app.id);
   }
 
   Future<void> _selectApp(TargetAppInfo app) async {
@@ -310,6 +317,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             recordScreen: recordScreen,
             clearData: _clearData,
             loginDirectOnly: _directLogin && _modules.contains('login'),
+            orderConfig: _modules.contains('order_placement') ? _orderConfig : null,
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules
@@ -499,6 +507,13 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                 onDirectLoginChanged: _app.modules.any((m) => m.id == 'login')
                     ? (on) {
                         setState(() => _directLogin = on);
+                        _saveChoices();
+                      }
+                    : null,
+                orderConfig: _orderConfig,
+                onOrderConfigChanged: _app.modules.any((m) => m.id == 'order_placement')
+                    ? (next) {
+                        setState(() => _orderConfig = next);
                         _saveChoices();
                       }
                     : null,

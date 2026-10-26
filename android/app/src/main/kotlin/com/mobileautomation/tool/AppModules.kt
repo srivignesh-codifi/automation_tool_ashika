@@ -66,6 +66,17 @@ object AppModules {
             listOf("wl_settings_view", "wl_settings_filter_sort"),
         ),
         AppModule(
+            "order_placement", "Order placement",
+            "The order pad and the order book, on a LIVE account. Choose below which exchanges to open the pad for and " +
+                "which instrument to use (by default NSE with IDEA, and MCX with CRUDEOIL). Each takes an empty user watchlist " +
+                "(a full one is cleared: every instrument in it is removed), adds the instrument and checks the pad's fields, " +
+                "order types and validation messages. Orders (Regular Market / Limit, CO, BO, AMO, BUY and SELL) are placed only " +
+                "where \"Place orders\" is on (NSE and BSE only; NSE by default), and only while the pad itself shows Avail. " +
+                "Margin 0.00 and a margin shortfall, so the exchange refuses them; with any other margin they are skipped. " +
+                "Afterwards Pending is cleaned of this run's orders and the Order Book is checked.",
+            WatchlistSuite.ORDER_IDS,
+        ),
+        AppModule(
             "orders", "Orders",
             "Every Orders tab loads: Pending, Order Book, Trade Book, Basket, GTT, SIP.",
             listOf(
@@ -150,6 +161,64 @@ object AppModules {
     }
 }
 
+/** What the Order placement module does on one exchange; see [OrderPlan]. */
+class OrderSegmentPlan(
+    /** Open the order pad of this exchange's instrument and check it. */
+    val enabled: Boolean,
+    /** Also place orders (NSE and BSE only; the margin gate still applies). */
+    val place: Boolean,
+    /** The instrument to search for and open the pad of: IDEA, CRUDEOIL, ... */
+    val script: String,
+)
+
+/**
+ * The Order placement settings of a run: for each exchange whether its pad is checked, whether orders are placed there
+ * (only NSE and BSE ever can be), and which instrument is used. The default places on NSE only, with IDEA, and checks
+ * the MCX pad with CRUDEOIL.
+ */
+class OrderPlan(private val segments: Map<String, OrderSegmentPlan>) {
+
+    fun of(key: String): OrderSegmentPlan = segments[key] ?: DEFAULT.segments.getValue(key)
+
+    companion object {
+        val KEYS = listOf("nse", "bse", "nfo", "bfo", "mcx")
+        private val PLACEABLE = setOf("nse", "bse")
+
+        val DEFAULT = OrderPlan(
+            mapOf(
+                "nse" to OrderSegmentPlan(enabled = true, place = true, script = "IDEA"),
+                "bse" to OrderSegmentPlan(enabled = false, place = false, script = "IDEA"),
+                "nfo" to OrderSegmentPlan(enabled = false, place = false, script = "IDEA"),
+                "bfo" to OrderSegmentPlan(enabled = false, place = false, script = "IDEA"),
+                "mcx" to OrderSegmentPlan(enabled = true, place = false, script = "CRUDEOIL"),
+            ),
+        )
+
+        /** Reads what the Flutter side sent; anything missing or odd falls back to the default for that exchange. */
+        fun fromMap(raw: Map<*, *>?): OrderPlan {
+            if (raw == null) return DEFAULT
+            val out = LinkedHashMap<String, OrderSegmentPlan>()
+            for (key in KEYS) {
+                val default = DEFAULT.segments.getValue(key)
+                val m = raw[key] as? Map<*, *>
+                if (m == null) {
+                    out[key] = default
+                    continue
+                }
+                val script = (m["script"] as? String).orEmpty().uppercase().filter { it.isLetterOrDigit() || it == '&' || it == '-' }.take(24)
+                val enabled = (m["enabled"] as? Boolean) ?: default.enabled
+                out[key] = OrderSegmentPlan(
+                    enabled = enabled,
+                    // Orders are never placed outside NSE and BSE, whatever was sent.
+                    place = enabled && key in PLACEABLE && ((m["place"] as? Boolean) ?: default.place),
+                    script = script.ifEmpty { default.script },
+                )
+            }
+            return OrderPlan(out)
+        }
+    }
+}
+
 /**
  * Which modules a run covers. [selected] null means all of them, which is what
  * a run started without a choice does.
@@ -159,6 +228,8 @@ class ModuleSelection(
     private val selected: Set<String>?,
     /** Login option: skip the detour checks (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account). */
     val directLogin: Boolean = false,
+    /** Order placement module settings: which exchanges, which instruments, where orders are placed. */
+    val orders: OrderPlan = OrderPlan.DEFAULT,
 ) {
 
     fun isOn(id: String): Boolean = selected == null || id in selected

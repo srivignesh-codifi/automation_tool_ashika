@@ -115,6 +115,41 @@ class WatchlistSuite(
                 "The working watchlist has its original name, instrument count and tile layout again.", "High"),
         )
 
+        /**
+         * The Order placement module: the order pad of one instrument per segment (IDEA on NSE, BSE, NFO and BFO; CRUDEOIL
+         * or GOLD on MCX), orders placed on NSE and BSE only, and the Orders tabs checked afterwards.
+         */
+        val ORDER_CASES: List<Case> = listOf(
+            c("OW-01", "ow_nse_pad", "order_placement", "NSE › order pad fields and validation",
+                "The first exchange gets the full checks: the three tabs, fields and products, typing, the quantity buttons, the Price box with its Market / Limit / SL / SL-M order types, Advanced Options, and invalid quantity, price and trigger refused. The other exchanges only get what differs by exchange.", "High"),
+            c("OW-02", "ow_nse_buy", "order_placement", "NSE › BUY orders: Regular, Limit, CO, BO, AMO",
+                "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
+            c("OW-03", "ow_nse_sell", "order_placement", "NSE › SELL orders: Regular, Limit, CO, BO, AMO",
+                "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
+            c("OW-04", "ow_bse_pad", "order_placement", "BSE › order pad fields and validation",
+                "The BSE radio is selected and the BSE listing shows its price, funds, products and fields (the form checks are not repeated).", "High"),
+            c("OW-05", "ow_bse_buy", "order_placement", "BSE › BUY orders: Regular, Limit, CO, BO, AMO",
+                "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
+            c("OW-06", "ow_bse_sell", "order_placement", "BSE › SELL orders: Regular, Limit, CO, BO, AMO",
+                "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
+            c("OW-07", "ow_nfo_pad", "order_placement", "NFO › order pad fields and validation",
+                "Price, funds, lot and tick size, products (MIS, NRML only) and fields are shown for the contract. No order is placed.", "Medium"),
+            c("OW-08", "ow_bfo_pad", "order_placement", "BFO › order pad fields and validation",
+                "Price, funds, lot and tick size, products (MIS, NRML only) and fields are shown for the contract. No order is placed.", "Medium"),
+            c("OW-09", "ow_mcx_pad", "order_placement", "MCX › order pad fields and validation",
+                "Price, funds, lot and tick size, products (MIS, NRML only) and fields are shown for the contract. No order is placed.", "Medium"),
+            c("OW-20", "ow_pending_clean", "order_placement", "Orders › Pending holds no order of this run",
+                "No order of this run is open: any that is pending is cancelled, and Pending is back to its count before the run.", "High"),
+            c("OW-21", "ow_orderbook", "order_placement", "Orders › Order Book shows every order sent, none executed",
+                "The Order Book grew by the number of orders sent, all of them rejected, each with the order type it was placed as (MKT / LIMIT); the Trade Book did not change.", "High"),
+            c("OW-90", "ow_state_restored", "order_placement", "The watchlist used for the order checks is back",
+                "The instruments added for the checks are removed again.", "Medium"),
+        )
+
+        fun orderSteps(): List<AutomationStepResult> = ORDER_CASES.map { it.toStep() }
+
+        val ORDER_IDS: List<String> = ORDER_CASES.map { it.id }
+
         fun steps(): List<AutomationStepResult> = CASES.map { it.toStep() }
 
         const val STATE_ID = "wl_state_restored"
@@ -384,7 +419,7 @@ class WatchlistSuite(
 
     // ── Running a case ─────────────────────────────────────────────────────────────────────────
 
-    private fun case(id: String): Case = CASES.first { it.id == id }
+    private fun case(id: String): Case = (CASES + ORDER_CASES).first { it.id == id }
 
     /**
      * Runs [body] as the step of case [id] and records how it ended. With [recoverAfter] the app is then taken back
@@ -2183,5 +2218,873 @@ class WatchlistSuite(
         }
         if (problem != null) fail(problem)
         if (!sortChecked) notTested("The sort order could not be checked: this watchlist holds fewer than two instruments. The filter and Clear were checked (${notes.joinToString("; ")}).")
+    }
+
+    // ═══ Order placement (OW-xx) ═══════════════════════════════════════════════════════════════
+    //
+    // The order pad and the order book, on one instrument per segment. The account is LIVE, so nothing is sent unless
+    // the pad itself says it will be refused (OrderPad.Gate: Avail. Margin 0.00 and a margin shortfall). Orders are only
+    // ever placed on NSE and BSE; NFO, BFO and MCX get their fields checked and, for validation messages, only an
+    // order button tap with a quantity of 0 or empty (which the app refuses before sending anything).
+
+    private val pad by lazy { OrderPad(engine) }
+
+    private class OrderSeg(
+        val key: String,
+        val exchange: String,
+        val tab: String,
+        val tabName: String,
+        val queries: List<String>,
+        val padId: String,
+        val buyId: String?,
+        val sellId: String?,
+        /** The settings: this exchange is checked at all, and orders are placed on it. */
+        val enabled: Boolean,
+        val placeOrders: Boolean,
+        val accept: (String, String) -> Boolean,
+    ) {
+        val equity: Boolean get() = exchange == "NSE" || exchange == "BSE"
+    }
+
+    /** The exchanges of the Order placement module, as the settings of this run say (see [OrderPlan]). */
+    private val orderSegments: List<OrderSeg> by lazy {
+        fun same(l: String, q: String) = baseName(nameOf(l)).equals(q, ignoreCase = true)
+        val plan = modules.orders
+        fun queries(key: String, extra: String? = null): List<String> {
+            val script = plan.of(key).script
+            // IDEA has no BFO contract in the UAT data; SENSEX (BSE's own index) is the fallback and is named in the report.
+            return if (extra != null && script == "IDEA") listOf(script, extra) else listOf(script)
+        }
+        fun seg(key: String, exchange: String, tab: String, tabName: String, extra: String? = null, accept: (String, String) -> Boolean): OrderSeg {
+            val p = plan.of(key)
+            val equity = key == "nse" || key == "bse"
+            return OrderSeg(
+                key, exchange, tab, tabName, queries(key, extra), "ow_${key}_pad",
+                if (equity) "ow_${key}_buy" else null, if (equity) "ow_${key}_sell" else null,
+                p.enabled, p.place && equity, accept,
+            )
+        }
+        listOf(
+            seg("nse", "NSE", T.SEARCH_TAB_STOCKS, "Stocks") { l, q ->
+                exchangeOf(l) == "NSE" && scripType(l) == "EQ" && same(l, q)
+            },
+            seg("bse", "BSE", T.SEARCH_TAB_STOCKS, "Stocks") { l, q ->
+                exchangeOf(l) == "BSE" && (scripType(l) == null || scripType(l) == "EQ") && same(l, q)
+            },
+            seg("nfo", "NFO", T.SEARCH_TAB_FNO, "F&O") { l, q ->
+                exchangeOf(l) == "NFO" && scripType(l) == "FUT" && same(l, q)
+            },
+            seg("bfo", "BFO", T.SEARCH_TAB_FNO, "F&O", extra = "SENSEX") { l, q ->
+                exchangeOf(l) == "BFO" && scripType(l) != null && same(l, q)
+            },
+            seg("mcx", "MCX", T.SEARCH_TAB_COMMODITY, "Commodity") { l, q ->
+                exchangeOf(l) == "MCX" && scripType(l) == "FUT" && same(l, q)
+            },
+        )
+    }
+
+    /** The instruments the settings name: the Pending cleanup looks for orders on them. */
+    private val orderNames: List<String> by lazy { orderSegments.filter { it.enabled }.flatMap { it.queries }.distinct() }
+
+    private class OrderSession {
+        var rep: Rep? = null
+        var added: Added? = null
+        var baseline: List<String> = emptyList()
+        var start = 0
+        var problem: String? = null
+        var removed: Boolean? = null
+    }
+
+    private val orderSessions = mutableMapOf<String, OrderSession>()
+    private var orderTab: String? = null
+    private var orderListName: String? = null
+    private var orderListStart: Int? = null
+    private var orderCleared: List<String> = emptyList()
+
+    /** Every order the tool tapped the button for (it may have been refused afterwards), to compare with the Order Book. */
+    private val ordersSent = mutableListOf<String>()
+
+    private class OrderCounts(val pending: Int?, val book: Int?, val trades: Int?)
+
+    private var orderBase: OrderCounts? = null
+
+    private fun orderSegment(key: String) = orderSegments.first { it.key == key }
+
+    // ── The watchlist the checks work in ───────────────────────────────────────────────────────
+
+    /**
+     * Picks the user watchlist the order checks add their instrument to: an empty one when there is one, otherwise the
+     * emptiest (only the instrument added here is touched). A watchlist that is full cannot take an instrument, so that
+     * one is cleared (every instrument removed on the Edit screen) and the report says which were removed.
+     */
+    private fun prepareOrderList() {
+        ensureLanding()
+        if (orderTab == null) {
+            establishLanding()
+            var best: Pair<String, Int>? = null
+            for (t in editableTabs) {
+                selectTab(t)
+                val n = readCount()?.first ?: continue
+                if (best == null || n < best.second) best = t to n
+                if (n == 0) break
+            }
+            val pick = best?.first ?: blocked("No user watchlist count could be read, so no watchlist could be chosen for the order checks.")
+            orderTab = pick
+            workTab = pick
+            selectTab(pick)
+            orderListName = tabLabel()
+            readCount()?.let {
+                orderListStart = it.first
+                capacity = it.second
+            }
+            if ((orderListStart ?: 0) > 0) {
+                note("no empty watchlist: using '${orderListName.orEmpty()}' with ${orderListStart} instrument(s); only the instruments added here are removed")
+            } else {
+                note("using the empty watchlist '${orderListName.orEmpty()}'")
+            }
+        }
+        toWorkTab()
+        val count = readCount()?.first ?: fail("The watchlist count could not be read before the order checks")
+        if (count >= capacity) clearOrderList(count)
+    }
+
+    private fun clearOrderList(count: Int) {
+        openEdit()
+        val rows = editRows()
+        if (rows.isEmpty()) {
+            escapeEdit()
+            fail("The watchlist is full ($count / $capacity) but its Edit screen lists no instrument to remove")
+        }
+        repeat(rows.size) {
+            val tap = engine.tapAt(T.REORDER_DELETE_BUTTON, 0)
+            if (!tap.ok) {
+                escapeEdit()
+                fail("Could not tap the delete icon while clearing the full watchlist: ${tap.detail}", Cause.AUTOMATION)
+            }
+            pause(Timeouts.SETTLE)
+        }
+        if (editRows().isNotEmpty()) {
+            escapeEdit()
+            fail("Instruments were left on the Edit screen after clearing the full watchlist")
+        }
+        saveEdit("clearing the full watchlist for the order checks")
+        if (!waitUntil(LOAD) { readCount()?.first == 0 }) fail("After clearing the full watchlist its count reads ${readCount()?.first}, not 0")
+        orderCleared = rows.map { it.lines().firstOrNull()?.trim().orEmpty() }
+        note("the watchlist was full ($count / $capacity), so all ${rows.size} instruments were removed: ${orderCleared.joinToString(", ")}")
+    }
+
+    /** Searches [seg]'s instrument and adds it to the chosen watchlist (or notes that it was already in it). */
+    private fun addOrderInstrument(seg: OrderSeg, s: OrderSession) {
+        s.baseline = rowLabels()
+        s.start = readCount()?.first ?: fail("The watchlist count could not be read before adding the ${seg.exchange} instrument")
+        val wanted = Wanted(seg.exchange, seg.tab, seg.tabName, seg.queries, "ANY", setOf(seg.exchange))
+        ensureSearchOpen()
+        var found: String? = null
+        for (query in seg.queries) {
+            try {
+                searchQuery(seg.tab, seg.tabName, query)
+            } catch (e: CaseEnd) {
+                if (e.kind != Kind.FAIL) throw e
+                continue
+            }
+            var scrolls = 0
+            while (found == null) {
+                val rows = resultRows()
+                val i = rows.indices.firstOrNull { seg.accept(rows[it], query) && hasIcon(it) }
+                if (i != null) {
+                    val name = nameOf(rows[i]) ?: query
+                    if (engine.hasDescendantAt(T.SEARCH_RESULT_ROW, i, T.SEARCH_SCRIP_ADD_BUTTON)) {
+                        s.added = Added(wanted, query, rows[i], name)
+                        addResult(i, name)
+                        note("${seg.exchange}: added '$name' to the watchlist")
+                    } else {
+                        note("${seg.exchange}: '$name' was already in the watchlist")
+                    }
+                    s.rep = Rep(name, seg.exchange)
+                    found = name
+                    break
+                }
+                if (scrolls >= 3 || !engine.scrollPage(forward = true)) break
+                scrolls++
+                pause(Timeouts.SETTLE)
+            }
+            if (found != null) break
+        }
+        if (found == null) {
+            blocked(
+                "Search found no ${seg.exchange} instrument for ${seg.queries.joinToString(" / ")} that can be added " +
+                    "(${seg.tabName} category), so its order pad cannot be opened.",
+                Cause.TEST_DATA,
+            )
+        }
+        leaveSearch()
+        val rep = s.rep!!
+        if (!waitUntil(LOAD) { findRow(rep) >= 0 }) fail("'${rep.name}' (${rep.exchange}) was added but is not in the watchlist")
+    }
+
+    /** The segment's instrument, set up on first use; a segment that could not be set up blocks its later cases. */
+    private fun orderRep(seg: OrderSeg): Rep {
+        val s = orderSessions.getOrPut(seg.key) { OrderSession() }
+        s.problem?.let { blocked("The ${seg.exchange} instrument could not be set up earlier: $it") }
+        s.rep?.let { return it }
+        try {
+            prepareOrderList()
+            addOrderInstrument(seg, s)
+        } catch (e: CaseEnd) {
+            s.problem = e.message
+            throw e
+        }
+        return s.rep!!
+    }
+
+    /** Takes the instrument this segment added out of the watchlist again; the result is recorded on [lastId]'s step. */
+    private fun finishSegment(seg: OrderSeg, lastId: String): AutomationRunResult? {
+        val s = orderSessions[seg.key] ?: return null
+        val added = s.added ?: return null
+        var restored = false
+        try {
+            if (recover()) {
+                toWorkTab()
+                restored = removeAdded(listOf(added), s.start) || removeExtrasOnEdit(s.baseline, s.start)
+            }
+        } catch (_: CaseEnd) {
+        } catch (_: Stopped) {
+            return stopped(flow.step(lastId))
+        }
+        s.removed = restored
+        s.added = null
+        s.rep = null
+        val text = if (restored) "restored: '${added.name}' is removed from the watchlist again" else
+            "FAILED: '${added.name}' may still be in the watchlist (count should be ${s.start}, reads ${readCount()?.first}); remove it by hand"
+        val step = flow.step(lastId)
+        step.cleanup = listOfNotNull(step.cleanup, text).joinToString("; ")
+        return null
+    }
+
+    // ── Opening and leaving the pad ────────────────────────────────────────────────────────────
+
+    private fun openPad(seg: OrderSeg, buy: Boolean) {
+        val r = orderRep(seg)
+        val side = if (buy) "BUY" else "SELL"
+        if (!pad.isOpen()) {
+            if (!sheetOpen()) {
+                ensureLanding()
+                toWorkTab()
+                openSheet(r)
+            }
+            val button = if (buy) T.TRADE_BUY_BUTTON else T.TRADE_SELL_BUTTON
+            if (!waitUntil(UI) { engine.isPresent(button) }) fail("The instrument sheet showed no $side button")
+            val open = engine.tapAndConfirm(button, listOf(T.ORDER_WINDOW_SCREEN), UI, retryAfterMs = UI)
+            alive()
+            if (!open.ok) fail("$side did not open the order pad: ${open.detail}")
+            pause(300)
+        }
+        if (!waitUntil(UI) { pad.has(T.ORDER_SUBMIT_BUTTON) }) {
+            blocked(
+                "The order pad carries none of the order_* identifiers, so it cannot be driven reliably.",
+                Cause.ACCESSIBILITY,
+                "Install a Tradion build that has the order pad tags (tradion_mobile docs/AUTOMATION_SEMANTICS.md, Order pad).",
+            )
+        }
+        // NSE and BSE share one pad with a radio for each exchange; the pad opens on NSE whichever row was tapped.
+        if (seg.equity) {
+            val radio = "${T.ORDER_EXCHANGE_PREFIX}${seg.exchange.lowercase()}"
+            if (engine.isPresent(radio) && !engine.isSelected(radio)) {
+                if (!engine.tap(radio).ok || !waitUntil(UI) { engine.isSelected(radio) }) {
+                    fail("The ${seg.exchange} radio on the order pad could not be selected", Cause.AUTOMATION)
+                }
+                pause(Timeouts.SETTLE)
+            }
+        }
+        if (!pad.waitForFunds(LOAD)) note("the funds strip did not fill within ${LOAD / 1000} s")
+    }
+
+    private fun closePad() {
+        if (pad.isOpen() && !flow.closeWithBack(T.ORDER_WINDOW_SCREEN)) fail("The order pad did not close on Back")
+    }
+
+    private fun setSwitch(id: String, on: Boolean): Boolean {
+        val state = pad.switchState(id) ?: return false
+        if (state == on) return true
+        if (!pad.tap(id)) return false
+        return waitUntil(UI) { pad.switchState(id) == on }
+    }
+
+    private fun ensureMarket(market: Boolean): Boolean {
+        if (pad.priceIsMarket() == market) return true
+        if (!pad.toggleMarketLimit()) return false
+        return waitUntil(UI) { pad.priceIsMarket() == market }
+    }
+
+    // ── Field checks and validation messages (no order is placed) ──────────────────────────────
+
+    private var mayHaveSent = 0
+
+    /** Waits for the previous validation snackbar to go (it shows for three seconds), so a stale one is never taken for the next. */
+    private fun clearMessage() {
+        waitUntil(4_000) { pad.message() == null }
+    }
+
+    /**
+     * Taps the order button with an invalid value in a field and expects the app's own validation snackbar. The value is
+     * read back first: when it is not the invalid one that was meant, the button is NOT tapped.
+     */
+    private fun invalidTap(name: String, expect: Regex, problems: MutableList<String>, guard: () -> Boolean) {
+        if (!guard()) {
+            problems += "$name: the invalid value could not be entered, so no order button was tapped"
+            return
+        }
+        clearMessage()
+        if (!pad.tapOrderButton()) {
+            problems += "$name: the order button could not be tapped"
+            return
+        }
+        var shown: String? = null
+        waitUntil(UI + 2_000) {
+            shown = pad.message()?.takeIf { expect.containsMatchIn(it) }
+            shown != null || !pad.isOpen()
+        }
+        if (!pad.isOpen()) {
+            mayHaveSent++
+            problems += "$name: the pad closed, so the app may have sent the order (check the Order Book)"
+            return
+        }
+        if (shown == null) {
+            problems += "$name: no validation message appeared (the snackbar read '${pad.message().orEmpty().ifEmpty { "nothing" }}')"
+        } else {
+            note("$name → '${shown!!.take(70)}'")
+        }
+        clearMessage()
+    }
+
+    /** True once the full pad checks have run (on the first exchange): the other exchanges only get the light ones. */
+    private var fullPadChecksDone = false
+
+    private fun padCase(seg: OrderSeg) {
+        openPad(seg, buy = true)
+        val full = !fullPadChecksDone
+        fullPadChecksDone = true
+        if (full) {
+            note("order settings: " + orderSegments.filter { it.enabled }.joinToString(", ") {
+                "${it.exchange} ${it.queries.first()}${if (it.placeOrders) " (orders placed)" else ""}"
+            })
+        }
+        note(if (full) "full checks on ${seg.exchange} (the form, its switches and the validation messages are the same on every exchange, so they are checked here only)"
+        else "light checks on ${seg.exchange}: what differs by exchange (header price, funds, lot and tick size, products, fields)")
+        val problems = mutableListOf<String>()
+        val hidden = engine.suppressKeyboard(true)
+        try {
+            padChecksCommon(seg, problems)
+            if (full) padChecksFull(seg, problems)
+        } finally {
+            if (hidden) engine.suppressKeyboard(false)
+        }
+        if (problems.isNotEmpty()) fail(problems.joinToString("; "), Cause.UNCONFIRMED)
+        shot("pad_checked")
+        closePad()
+    }
+
+    /** What can differ from one exchange to the next: the header, the funds strip, lot / tick size, products, which fields exist. */
+    private fun padChecksCommon(seg: OrderSeg, problems: MutableList<String>) {
+        fun need(ok: Boolean, what: String) {
+            if (!ok) problems += what
+        }
+        val ex = seg.exchange
+        need(pad.ltp(ex) != null, "the header shows no $ex price")
+        val gate = pad.gate()
+        note("funds: ${gate.why}")
+        note("lot size ${pad.lotSize() ?: "?"}, tick size ${pad.tickSize() ?: "?"}")
+        for (t in OrderPad.TABS) need(pad.hasTab(t), "the '$t' tab is missing")
+        need(pad.openTab("Regular"), "the Regular tab could not be opened")
+        need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_QUANTITY) }, "Regular shows no Quantity box")
+        need(waitUntil(UI) { pad.has(T.ORDER_FIELD_PRICE) }, "Regular shows no Price box")
+        need(pad.has(T.ORDER_SWITCH_STOPLOSS), "Regular shows no Stoploss switch")
+        for (p in if (seg.equity) OrderPad.EQUITY_PRODUCTS else OrderPad.DERIVATIVE_PRODUCTS) {
+            need(pad.hasProduct(p), "the product ${p.uppercase()} is not offered")
+        }
+        if (!seg.equity) for (p in listOf("cnc", "mtf")) need(!pad.hasProduct(p), "the product ${p.uppercase()} is offered on $ex, where only MIS and NRML exist")
+        // The Lots / Quantity switch exists on NFO and BFO only.
+        val lotExchange = ex == "NFO" || ex == "BFO"
+        need(pad.has(T.ORDER_QUANTITY_LOT_TOGGLE) == lotExchange, if (lotExchange) "$ex shows no Lots / Quantity switch" else "$ex shows a Lots / Quantity switch, which only NFO and BFO have")
+        if (pad.openTab("BO / CO")) {
+            need(pad.present(T.ORDER_FIELD_STOPLOSS), "BO / CO shows no Stoploss (Cover) box")
+            need(pad.present(T.ORDER_SWITCH_TARGET), "BO / CO shows no Target (Bracket) switch")
+        } else problems += "the BO / CO tab could not be opened"
+        if (pad.openTab("AMO")) {
+            need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_QUANTITY) }, "AMO shows no Quantity box")
+            need(waitUntil(UI) { pad.has(T.ORDER_FIELD_PRICE) }, "AMO shows no Price box")
+        } else problems += "the AMO tab could not be opened"
+        pad.openTab("Regular")
+        engine.toTop()
+    }
+
+    private fun tickMultiple(price: Double, tick: Double): Boolean = tick > 0 && kotlin.math.abs(Math.round(price / tick) * tick - price) < 1e-6
+
+    /**
+     * The Price box and the order type it stands for. The arrow in the box switches Market <-> Limit, and the rest of the
+     * pad follows: a Market order is a disabled box that reads "Market" and offers Market Protection, a Limit order is an
+     * enabled box with a price (a whole number of ticks) and no Market Protection. With Stoploss on, the Price box of the
+     * pair does the same for SL (limit) and SL-M (market), and the pair needs a Trigger Price. Leaves Market, Stoploss off.
+     */
+    private fun priceAndOrderType(problems: MutableList<String>, tick: Double?) {
+        fun need(ok: Boolean, what: String) {
+            if (!ok) problems += what
+        }
+        // Market order.
+        if (!ensureMarket(true)) {
+            problems += "the Price box could not be set to Market"
+            return
+        }
+        need(pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Market order offers no Market Protection switch")
+        engine.toTop()
+        // Limit order.
+        if (!pad.toggleMarketLimit() || !waitUntil(UI) { !pad.priceIsMarket() }) {
+            problems += "the arrow in the Price box did not turn the Market order into a Limit order"
+            return
+        }
+        val price = pad.value(T.ORDER_FIELD_PRICE)?.toDoubleOrNull()
+        need(price != null && price > 0, "a Limit order's Price box holds no price (reads '${pad.value(T.ORDER_FIELD_PRICE).orEmpty()}')")
+        if (price != null && tick != null) {
+            need(tickMultiple(price, tick), "the Limit price $price is not a whole number of ticks ($tick)")
+            val next = "%.2f".format(price + tick)
+            val typed = pad.setField(T.ORDER_FIELD_PRICE, next)
+            need(typed.ok && pad.value(T.ORDER_FIELD_PRICE) == next, "typing the price $next reads '${pad.value(T.ORDER_FIELD_PRICE)}' (${typed.detail})")
+        }
+        need(!pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Limit order still offers the Market Protection switch, which is for Market orders only")
+        engine.toTop()
+        note("Market order: disabled Price box with Market Protection; Limit order: enabled Price box prefilled ${price ?: "?"}, no Market Protection")
+        if (!ensureMarket(true)) problems += "the Price box could not be switched back to Market"
+
+        // Stoploss: SL (limit) and SL-M (market).
+        val hadTrigger = pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE)
+        if (!pad.tap(T.ORDER_SWITCH_STOPLOSS)) {
+            problems += "the Stoploss switch could not be tapped"
+            return
+        }
+        need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) != hadTrigger }, "the Stoploss switch did not show / hide the Trigger Price box")
+        need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_SL_PRICE) }, "Stoploss (limit) shows no Price box next to the Trigger Price")
+        need(pad.hasLabel("(Limit)"), "Stoploss does not say (Limit)")
+        if (engine.tap(T.ORDER_SL_PRICE_TYPE_TOGGLE).ok) {
+            need(waitUntil(UI) { !pad.hasField(T.ORDER_FIELD_SL_PRICE) && pad.hasLabel("(Market)") }, "the arrow in the Stoploss price box did not turn SL into SL-M (Market)")
+            engine.tap(T.ORDER_SL_PRICE_TYPE_TOGGLE)
+            need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_SL_PRICE) && pad.hasLabel("(Limit)") }, "the Stoploss price box did not come back to (Limit)")
+        } else problems += "the arrow in the Stoploss price box could not be tapped"
+        note("Stoploss: SL (limit) shows Trigger Price and Price, SL-M (market) leaves the Trigger Price only")
+        pad.tap(T.ORDER_SWITCH_STOPLOSS)
+        waitUntil(UI) { pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) == hadTrigger }
+    }
+
+    /** The checks that are the same on every exchange (one widget serves them all): run once, on the first exchange. */
+    private fun padChecksFull(seg: OrderSeg, problems: MutableList<String>) {
+        fun need(ok: Boolean, what: String) {
+            if (!ok) problems += what
+        }
+        val gate = pad.gate()
+        val lot = pad.lotSize()
+        val tick = pad.tickSize()
+        pad.openTab("Regular")
+
+        // Quantity: typed, and the two step buttons.
+        val typed = pad.setField(T.ORDER_FIELD_QUANTITY, "2")
+        need(typed.ok && pad.value(T.ORDER_FIELD_QUANTITY) == "2", "typing 2 in Quantity reads '${pad.value(T.ORDER_FIELD_QUANTITY)}' (${typed.detail})")
+        val before = pad.value(T.ORDER_FIELD_QUANTITY)
+        need(pad.stepQuantity(plus = true), "the Quantity + button could not be tapped")
+        need(waitUntil(UI) { pad.value(T.ORDER_FIELD_QUANTITY) != before }, "the Quantity + button did not change the quantity (still '${pad.value(T.ORDER_FIELD_QUANTITY)}')")
+        pad.stepQuantity(plus = false)
+
+        // Price and the order type it stands for (Market, Limit, SL, SL-M).
+        priceAndOrderType(problems, tick)
+
+        // Advanced options: what it opens lies below the fold, so it is paged to.
+        if (pad.tap(T.ORDER_ADVANCED_OPTIONS)) {
+            need(pad.present("${T.ORDER_VALIDITY_PREFIX}day"), "Advanced Options did not show Validity DAY")
+            need(pad.has("${T.ORDER_VALIDITY_PREFIX}ioc"), "Advanced Options did not show Validity IOC")
+            if (seg.equity) need(pad.present(T.ORDER_FIELD_DISCLOSED_QUANTITY), "Advanced Options shows no Disclosed Quantity box")
+            pad.tap(T.ORDER_ADVANCED_OPTIONS)
+        } else problems += "'Advanced Options' could not be reached and opened"
+        need(pad.present(T.ORDER_VIEW_BROKERAGE), "'View Brokerage' is not on the pad")
+        engine.toTop()
+
+        // Validation messages: only with Avail. Margin 0.00 (nothing could be accepted anyway).
+        if (!gate.ok) {
+            note("validation messages were not triggered: ${gate.why}")
+            return
+        }
+        val validQty = (lot ?: 1).toString()
+        fun qtyIs(v: String): Boolean =
+            pad.setField(T.ORDER_FIELD_QUANTITY, v).ok && pad.value(T.ORDER_FIELD_QUANTITY).let { if (v.isEmpty()) it.isNullOrBlank() else it == v }
+        // An invalid quantity is refused before anything is sent. Regular and AMO show a message; BO / CO names its Target first.
+        for (tab in listOf("Regular", "AMO")) {
+            if (!pad.openTab(tab)) {
+                problems += "$tab: the tab could not be opened for the validation check"
+                continue
+            }
+            invalidTap("$tab · Quantity 0", Regex("zero|empty", RegexOption.IGNORE_CASE), problems) { qtyIs("0") }
+            invalidTap("$tab · Quantity empty", Regex("empty|zero", RegexOption.IGNORE_CASE), problems) { qtyIs("") }
+            qtyIs(validQty)
+        }
+        pad.openTab("Regular")
+        qtyIs(validQty)
+        // A Limit order needs a price that is a whole number of ticks.
+        if (ensureMarket(false)) {
+            invalidTap("Limit · Price empty", Regex("price|empty|zero", RegexOption.IGNORE_CASE), problems) {
+                pad.setField(T.ORDER_FIELD_PRICE, "").ok && pad.value(T.ORDER_FIELD_PRICE).isNullOrBlank()
+            }
+            invalidTap("Limit · Price 0", Regex("zero|price", RegexOption.IGNORE_CASE), problems) {
+                pad.setField(T.ORDER_FIELD_PRICE, "0").ok && pad.value(T.ORDER_FIELD_PRICE) == "0"
+            }
+            if (tick != null && tick >= 0.02) {
+                val bad = "%.2f".format(tick / 2)
+                invalidTap("Limit · Price off the tick size ($bad)", Regex("tick", RegexOption.IGNORE_CASE), problems) {
+                    pad.setField(T.ORDER_FIELD_PRICE, bad).ok && pad.value(T.ORDER_FIELD_PRICE) == bad
+                }
+            } else note("the tick size is ${tick ?: "unknown"}: the box takes two decimals, so no off-tick price can be typed")
+            ensureMarket(true)
+        } else problems += "the Price box could not be switched to Limit for the price checks"
+        // A stoploss order needs its Trigger Price.
+        if (pad.tap(T.ORDER_SWITCH_STOPLOSS) && waitUntil(UI) { pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) }) {
+            invalidTap("Stoploss · Trigger Price empty", Regex("trig|empty|zero", RegexOption.IGNORE_CASE), problems) {
+                pad.setField(T.ORDER_FIELD_TRIGGER_PRICE, "").ok && pad.value(T.ORDER_FIELD_TRIGGER_PRICE).isNullOrBlank()
+            }
+            pad.tap(T.ORDER_SWITCH_STOPLOSS)
+            waitUntil(UI) { !pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) }
+        } else problems += "the Stoploss switch could not be turned on for the Trigger Price check"
+        if (pad.openTab("BO / CO")) {
+            // BO / CO checks its Target (on by default, 0) and Stoploss (Cover) first, so the message names them whatever else is wrong.
+            val bracket = Regex("target|stoploss|trig|trail|zero|empty", RegexOption.IGNORE_CASE)
+            invalidTap("BO / CO · Quantity 0", bracket, problems) { qtyIs("0") }
+            qtyIs(validQty)
+            invalidTap("BO / CO · Stoploss (Cover) 0", bracket, problems) {
+                pad.setField(T.ORDER_FIELD_STOPLOSS, "0").ok && pad.value(T.ORDER_FIELD_STOPLOSS) == "0"
+            }
+        }
+    }
+
+    // ── Placing orders (NSE and BSE only) ──────────────────────────────────────────────────────
+
+    private val placeVariants = listOf("Regular · Market", "Regular · Limit", "CO", "BO", "AMO")
+
+    private class Placed(val kind: Int, val text: String) {
+        companion object {
+            const val SENT = 0
+            const val SKIPPED = 1
+            const val FAILED = 2
+        }
+    }
+
+    /** Sets the pad up for [variant]; null when it is ready, otherwise what could not be set. */
+    private fun configureVariant(seg: OrderSeg, variant: String): String? {
+        fun product(): String? =
+            if (pad.tap("${T.ORDER_PRODUCT_PREFIX}mis") && waitUntil(UI) { pad.productSelected("mis") }) null else "the MIS product could not be selected"
+        return when (variant) {
+            "Regular · Market" -> if (!pad.openTab("Regular")) "the Regular tab could not be opened"
+            else if (!ensureMarket(true)) "the Price box could not be set to Market" else product()
+            "Regular · Limit" -> if (!pad.openTab("Regular")) "the Regular tab could not be opened"
+            else if (!ensureMarket(false)) "the Price box could not be set to Limit" else product()
+            "CO", "BO" -> {
+                if (!pad.openTab("BO / CO")) return "the BO / CO tab could not be opened"
+                val bracket = variant == "BO"
+                if (!setSwitch(T.ORDER_SWITCH_TARGET, bracket)) return "the Target (Bracket) switch could not be read or turned ${if (bracket) "on" else "off"}"
+                // The cover stoploss, and for a bracket the target and trailing stoploss, are distances from the price: a
+                // percent of it, in whole ticks. The pad refuses an empty or zero one.
+                val ltp = pad.ltp(seg.exchange) ?: return "the ${seg.exchange} price could not be read to size the stoploss and target"
+                val tick = pad.tickSize() ?: 0.05
+                fun ticks(points: Double) = "%.2f".format(maxOf(1.0, Math.round(points / tick).toDouble()) * tick)
+                val points = maxOf(ltp * 0.01, tick * 2)
+                if (!pad.setField(T.ORDER_FIELD_STOPLOSS, ticks(points)).ok) return "the Stoploss (Cover) box could not be filled"
+                if (bracket) {
+                    if (!pad.setField(T.ORDER_FIELD_TARGET, ticks(points)).ok) return "the Target box could not be filled"
+                    if (!pad.setField(T.ORDER_FIELD_TRAILING_STOPLOSS, ticks(points / 2)).ok) return "the Trailing Stoploss box could not be filled"
+                }
+                null
+            }
+            else -> if (!pad.openTab("AMO")) "the AMO tab could not be opened" else product()
+        }
+    }
+
+    private fun placeVariant(seg: OrderSeg, buy: Boolean, variant: String): Placed {
+        val side = if (buy) "BUY" else "SELL"
+        val label = "${seg.exchange} $side $variant"
+        try {
+            openPad(seg, buy)
+            val hidden = engine.suppressKeyboard(true)
+            // A pad that sent nothing is reused for the next variant (an order that is sent closes it).
+            var keepOpen = false
+            try {
+                configureVariant(seg, variant)?.let { return Placed(Placed.FAILED, "$label: $it") }
+                // The margin is worked out about a second after the last change; the gate reads it only once it has settled.
+                pause(1_000)
+                pad.waitForFunds(LOAD)
+                val gate = pad.settledGate(6_000)
+                if (!gate.ok) {
+                    keepOpen = true
+                    return Placed(Placed.SKIPPED, "$label: not sent, ${gate.why}" +
+                        if (!buy && gate.available != null && gate.required != null && gate.required <= 0.0) {
+                            " (the pad shows no margin for a SELL here, so the exchange might accept it; a SELL is only sent when the pad itself predicts the refusal)"
+                        } else "")
+                }
+                if (!pad.submitIs(buy)) return Placed(Placed.FAILED, "$label: the pad's button is not $side ORDER")
+                shot("${seg.key}_${side.lowercase()}_${variant.filter { it.isLetter() }.lowercase()}")
+                clearMessage()
+                if (!pad.tapOrderButton()) return Placed(Placed.FAILED, "$label: the order button could not be tapped")
+                ordersSent += label
+                var message: String? = null
+                waitUntil(LOAD) {
+                    message = pad.message()
+                    !pad.isOpen() || message != null
+                }
+                return when {
+                    !pad.isOpen() -> Placed(Placed.SENT, "$label: sent (${gate.why}); the pad closed")
+                    message?.contains(Regex("margin|reject|fund|insufficient", RegexOption.IGNORE_CASE)) == true ->
+                        Placed(Placed.SENT, "$label: sent and refused: '${message!!.take(80)}'")
+                    message != null -> {
+                        ordersSent.removeAt(ordersSent.lastIndex)
+                        Placed(Placed.FAILED, "$label: the app's validation stopped it: '${message!!.take(80)}'")
+                    }
+                    else -> {
+                        // A sent order closes the pad; an open pad with no message is a refusal that only outlines the box in red.
+                        ordersSent.removeAt(ordersSent.lastIndex)
+                        Placed(Placed.FAILED, "$label: the pad refused the values without a message (it stayed open for ${LOAD / 1000} s with the order not sent)")
+                    }
+                }
+            } finally {
+                if (hidden) engine.suppressKeyboard(false)
+                if (pad.isOpen() && !keepOpen) flow.closeWithBack(T.ORDER_WINDOW_SCREEN)
+            }
+        } catch (e: CaseEnd) {
+            if (e.kind != Kind.FAIL) throw e
+            return Placed(Placed.FAILED, "$label: ${e.message}")
+        }
+    }
+
+    private fun placeCase(seg: OrderSeg, buy: Boolean) {
+        val results = mutableListOf<Placed>()
+        for (variant in placeVariants) {
+            // Two failures in a row mean the pad itself is not being driven: the rest would only repeat them.
+            if (results.size >= 2 && results.takeLast(2).all { it.kind == Placed.FAILED }) {
+                results += Placed(Placed.SKIPPED, "${seg.exchange} ${if (buy) "BUY" else "SELL"} $variant: not attempted after two failures")
+                continue
+            }
+            results += placeVariant(seg, buy, variant)
+        }
+        val sent = results.filter { it.kind == Placed.SENT }
+        val skipped = results.filter { it.kind == Placed.SKIPPED }
+        val failed = results.filter { it.kind == Placed.FAILED }
+        sent.forEach { note(it.text) }
+        skipped.forEach { note(it.text) }
+        if (failed.isNotEmpty()) {
+            fail(failed.joinToString("; ") { it.text } + " (${sent.size} sent, ${skipped.size} skipped)", Cause.UNCONFIRMED)
+        }
+        if (sent.isEmpty()) notTested("No order was sent: ${skipped.joinToString("; ") { it.text.substringAfter(": ") }.take(300)}")
+    }
+
+    // ── Orders: Pending, Order Book ────────────────────────────────────────────────────────────
+
+    private fun openOrders() {
+        if (!engine.isPresent(T.ORDERBOOK_SCREEN)) {
+            val open = engine.tapAndConfirm(T.BOTTOMNAV_ORDER_TAB, listOf(T.ORDERBOOK_SCREEN), LOAD, retryAfterMs = LOAD)
+            alive()
+            if (!open.ok) fail("The Orders tab did not open: ${open.detail}")
+        }
+    }
+
+    private fun tabCount(id: String): Int? =
+        engine.labelsOf(id).firstNotNullOfOrNull { Regex("""\((\d+)\)""").find(it)?.groupValues?.get(1)?.toInt() }
+
+    private fun readOrderCounts(): OrderCounts {
+        openOrders()
+        waitUntil(LOAD) { tabCount(T.ORDERS_TAB_PENDING) != null }
+        return OrderCounts(tabCount(T.ORDERS_TAB_PENDING), tabCount(T.ORDERS_TAB_ORDER_BOOK), tabCount(T.ORDERS_TAB_TRADE_BOOK))
+    }
+
+    private fun openOrdersTab(id: String) {
+        openOrders()
+        val tap = engine.tap(id)
+        if (!tap.ok) fail("The Orders tab '$id' could not be tapped: ${tap.detail}", Cause.AUTOMATION)
+        pause(Timeouts.SETTLE * 2)
+    }
+
+    private fun automationRow(): String? =
+        engine.onScreenLines().firstOrNull { l -> l.length <= 40 && orderNames.any { l.trim().startsWith(it, ignoreCase = true) } }
+
+    /** Cancels the pending order shown on [row]: long-press, Cancel Order, Yes. */
+    private fun cancelPending(row: String): String? {
+        val press = engine.longTapText(row)
+        if (!press.ok) return "the long-press on '$row' failed: ${press.detail}"
+        if (!waitUntil(UI) { engine.hasExactText("Cancel Order") }) return "the Cancel Order page did not open for '$row'"
+        val cancel = engine.tapLowestExactText("Cancel Order")
+        if (!cancel.ok) return "the Cancel Order button could not be tapped (${cancel.detail}); it may offer to cancel more than one order, so nothing was cancelled"
+        if (!waitUntil(UI) { engine.hasExactText("Yes") }) return "the 'Are you sure' dialog did not appear"
+        if (!engine.tapExactText("Yes").ok) return "the dialog's Yes could not be tapped"
+        if (!waitUntil(LOAD) { !engine.hasExactText("Cancel Order") && engine.isPresent(T.ORDERBOOK_SCREEN) }) return "the Cancel Order page did not close after Yes"
+        return null
+    }
+
+    private fun pendingClean() {
+        val base = orderBase?.pending ?: 0
+        openOrdersTab(T.ORDERS_TAB_PENDING)
+        var now = tabCount(T.ORDERS_TAB_PENDING) ?: fail("The Pending count could not be read")
+        if (now <= base) {
+            note("Pending ($now): none of the orders of this run is pending")
+            return
+        }
+        note("Pending went from $base to $now: cancelling this run's orders")
+        var cancelled = 0
+        repeat(now - base + 2) {
+            if (now <= base) return@repeat
+            val row = automationRow()
+                ?: fail("Pending holds ${now - base} more order(s) than before but none of them is an ${orderNames.joinToString("/")} order, so none was cancelled")
+            cancelPending(row)?.let { fail("Cancelling '$row': $it", Cause.AUTOMATION) }
+            cancelled++
+            openOrdersTab(T.ORDERS_TAB_PENDING)
+            waitUntil(LOAD) { (tabCount(T.ORDERS_TAB_PENDING) ?: now) < now }
+            now = tabCount(T.ORDERS_TAB_PENDING) ?: now
+        }
+        if (now > base) fail("After cancelling $cancelled order(s) Pending still shows $now (it was $base before the run)")
+        note("$cancelled pending order(s) cancelled; Pending is back to $now")
+    }
+
+    private val bookTypes = setOf("MKT", "LIMIT", "SL", "SL-M")
+    private val bookExchanges = setOf("NSE", "BSE", "NFO", "BFO", "MCX", "CDS")
+    private val bookTime = Regex("""^\d{2}:\d{2}:\d{2}$""")
+
+    /**
+     * The price type of the newest [rows] orders on the Order Book tab, newest first. A card reads `NSE  MKT  CNC` and its
+     * time (`11:52:02`, one per order), so each type is paired with the next time. Empty when the cards cannot be read.
+     */
+    private fun readBookTypes(rows: Int): List<String> {
+        engine.toTop()
+        val found = LinkedHashMap<String, String>()
+        repeat(8) {
+            val tokens = engine.onScreenLines().flatMap { l -> l.trim().split(Regex("""\s+""")).filter { it.isNotEmpty() } }
+            var i = 0
+            while (i < tokens.size - 1) {
+                if (tokens[i] in bookExchanges && tokens[i + 1].uppercase() in bookTypes) {
+                    val type = tokens[i + 1].uppercase()
+                    val time = tokens.drop(i + 2).take(6).firstOrNull { bookTime.matches(it) }
+                    if (time != null) found.putIfAbsent(time, type)
+                }
+                i++
+            }
+            if (found.size >= rows || !engine.scrollPage(forward = true)) return found.values.toList()
+            pause(Timeouts.SETTLE)
+        }
+        return found.values.toList()
+    }
+
+    /**
+     * The order type of what was placed is on the Order Book too: a Market order reads MKT and a Limit order LIMIT. The
+     * newest rows are matched to the orders sent, newest first (one row per order, as the count shows).
+     */
+    private fun checkOrderTypes() {
+        val wanted = ordersSent.reversed()
+        if (wanted.none { it.endsWith("Regular · Market") || it.endsWith("Regular · Limit") }) return
+        val types = readBookTypes(wanted.size)
+        if (types.size < wanted.size) {
+            note("the price type of ${wanted.size - types.size} of the newest rows could not be read, so Market / Limit were matched on ${types.size} of ${wanted.size}")
+        }
+        val wrong = mutableListOf<String>()
+        for ((i, label) in wanted.withIndex()) {
+            val type = types.getOrNull(i) ?: break
+            val expected = when {
+                label.endsWith("Regular · Market") -> "MKT"
+                label.endsWith("Regular · Limit") -> "LIMIT"
+                else -> continue
+            }
+            if (type != expected) wrong += "$label shows $type instead of $expected"
+        }
+        if (wrong.isNotEmpty()) fail("The Order Book shows a different order type than the pad was set to: ${wrong.joinToString("; ")}", Cause.APP)
+        note("Order Book price types match: Market orders read MKT, Limit orders read LIMIT")
+    }
+
+    private fun orderBookCheck() {
+        val sent = ordersSent.size + mayHaveSent
+        val counts = readOrderCounts()
+        openOrdersTab(T.ORDERS_TAB_ORDER_BOOK)
+        shot("order_book")
+        val base = orderBase
+        if (base?.trades != null && counts.trades != null && counts.trades > base.trades) {
+            fail("Trade Book grew from ${base.trades} to ${counts.trades}: an order of this run was EXECUTED", Cause.APP,
+                "Check the account at once: the margin gate should have kept every order from being accepted.")
+        }
+        if (sent == 0) notTested("No order was sent in this run (every one was skipped), so there is nothing to find in the Order Book.")
+        val rejected = engine.onScreenLines().count { it.trim().equals("REJECTED", ignoreCase = true) }
+        val live = engine.onScreenLines().filter { l -> listOf("OPEN", "PENDING", "TRIGGER PENDING", "COMPLETE", "EXECUTED").any { l.trim().equals(it, ignoreCase = true) } }
+        if (live.isNotEmpty()) fail("The Order Book shows ${live.joinToString(", ")} among its first rows: an order of this run is not rejected", Cause.APP)
+        checkOrderTypes()
+        if (base?.book != null && counts.book != null) {
+            val delta = counts.book - base.book
+            if (delta < sent) fail("$sent order(s) were sent but the Order Book grew by only $delta (from ${base.book} to ${counts.book})", Cause.APP)
+            note("Order Book ${base.book} → ${counts.book} for $sent order(s) sent; $rejected REJECTED row(s) on the first screen; Trade Book unchanged")
+        } else {
+            note("Order Book (${counts.book ?: "?"}); the count before the run could not be read, so the number of new rows was not compared; $rejected REJECTED row(s) on the first screen")
+        }
+    }
+
+    private fun orderStateRestored() {
+        ensureLanding()
+        toWorkTab()
+        val problems = mutableListOf<String>()
+        val count = readCount()?.first
+        val start = orderListStart
+        if (orderCleared.isEmpty() && start != null && count != null && count != start) {
+            problems += "the watchlist '${orderListName.orEmpty()}' holds $count instrument(s) instead of $start"
+        }
+        for ((key, s) in orderSessions) if (s.removed == false) problems += "the ${key.uppercase()} instrument was not removed"
+        cleanup = if (problems.isEmpty()) {
+            if (orderCleared.isEmpty()) "restored" else "the full watchlist was cleared on request (removed: ${orderCleared.joinToString(", ")})"
+        } else "FAILED: ${problems.joinToString("; ")}"
+        if (problems.isNotEmpty()) fail("The watchlist used for the order checks was not put back: ${problems.joinToString("; ")}", Cause.TEST_DATA, "Remove the leftover instrument by hand.")
+        note("'${orderListName.orEmpty()}' holds ${count ?: "?"} instrument(s) again")
+    }
+
+    // ── The module ─────────────────────────────────────────────────────────────────────────────
+
+    private fun skipOrderSteps(ids: List<String>, reason: String) {
+        for (id in ids) {
+            val step = flow.step(id)
+            if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_tested", reason)
+        }
+    }
+
+    /** Runs the Order placement module. Returns a result only when the run has to end. */
+    fun runOrders(): AutomationRunResult? {
+        if (!modules.isOn("order_placement")) {
+            for (id in ORDER_IDS) {
+                val step = flow.step(id)
+                if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_tested", modules.skipNote("order_placement"))
+            }
+            return null
+        }
+        // What the order lists hold before anything is sent, to compare against afterwards.
+        try {
+            currentCase = null
+            orderBase = readOrderCounts()
+            recover()
+        } catch (e: CaseEnd) {
+            note("setup: could not read the order counts (${e.message})")
+        } catch (_: Stopped) {
+            return flow.step(ORDER_CASES.first().id).let(stopped)
+        }
+        for (seg in orderSegments) {
+            if (!seg.enabled) {
+                skipOrderSteps(listOfNotNull(seg.padId, seg.buyId, seg.sellId), "${seg.exchange} is switched off in the Order placement settings")
+                continue
+            }
+            runCase(seg.padId) { padCase(seg) }?.let { return it }
+            if (seg.buyId != null && seg.sellId != null) {
+                if (seg.placeOrders) {
+                    runCase(seg.buyId) { placeCase(seg, buy = true) }?.let { return it }
+                    runCase(seg.sellId) { placeCase(seg, buy = false) }?.let { return it }
+                } else {
+                    skipOrderSteps(listOf(seg.buyId, seg.sellId), "\"Place orders\" is off for ${seg.exchange} in the Order placement settings")
+                }
+            }
+            finishSegment(seg, seg.sellId ?: seg.padId)?.let { return it }
+        }
+        runCase("ow_pending_clean") { pendingClean() }?.let { return it }
+        runCase("ow_orderbook") { orderBookCheck() }?.let { return it }
+        runCase("ow_state_restored") { orderStateRestored() }?.let { return it }
+        return null
     }
 }

@@ -457,7 +457,8 @@ void main() {
       fallback.last.modules.map((m) => m.id),
       <String>[
         'login', 'watchlist', 'watchlist_search', 'watchlist_edit',
-        'watchlist_settings', 'orders', 'dashboard', 'portfolio', 'profile',
+        'watchlist_settings', 'order_placement', 'orders', 'dashboard', 'portfolio',
+        'profile',
       ],
     );
   });
@@ -492,7 +493,7 @@ void main() {
     await tester.tap(toggle);
     await tester.pump();
     expect(direct, isTrue);
-    expect(ModuleField.summary(modules, selected, directLogin: direct), 'All modules (9) · direct login only');
+    expect(ModuleField.summary(modules, selected, directLogin: direct), 'All modules (10) · direct login only');
 
     // With Login unticked there is nothing to make direct: the switch is off-limits and not mentioned.
     await tester.tap(find.byKey(const ValueKey<String>('module_login')));
@@ -522,13 +523,13 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Modules to test (9 of 9)'), findsOneWidget);
+    expect(find.text('Modules to test (10 of 10)'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('module_orders')));
     await tester.pump();
     expect(selected, isNot(contains('orders')));
-    expect(selected.length, 8);
-    expect(find.text('Modules to test (8 of 9)'), findsOneWidget);
+    expect(selected.length, 9);
+    expect(find.text('Modules to test (9 of 10)'), findsOneWidget);
 
     await tester.tap(find.text('None'));
     await tester.pump();
@@ -537,7 +538,7 @@ void main() {
 
     await tester.tap(find.text('All'));
     await tester.pump();
-    expect(selected.length, 9);
+    expect(selected.length, 10);
   });
 
   testWidgets('the modules field summarises the choice and opens a bottom sheet', (
@@ -558,25 +559,25 @@ void main() {
         ),
       ),
     );
-    expect(find.text('All modules (9)'), findsOneWidget);
+    expect(find.text('All modules (10)'), findsOneWidget);
     expect(find.byType(CheckboxListTile), findsNothing);
 
-    await tester.tap(find.text('All modules (9)'));
+    await tester.tap(find.text('All modules (10)'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsOneWidget);
-    expect(find.byType(CheckboxListTile), findsNWidgets(9));
+    expect(find.byType(CheckboxListTile), findsNWidgets(10));
 
     await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_edit')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_search')));
     await tester.pump();
-    expect(selected.length, 7);
+    expect(selected.length, 8);
 
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsNothing);
     expect(
-      find.text('7 of 9: Login, Watchlist, Manage Watchlist, Orders, Dashboard, Portfolio, Profile'),
+      find.text('8 of 10: Login, Watchlist, Manage Watchlist, Order placement, Orders, Dashboard, Portfolio, Profile'),
       findsOneWidget,
     );
     expect(

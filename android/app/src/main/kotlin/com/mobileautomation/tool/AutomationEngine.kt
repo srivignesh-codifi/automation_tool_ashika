@@ -49,6 +49,8 @@ class AutomationEngine private constructor(
         val clearData: Boolean = true,
         /** Login module option: sign in straight through and skip the detour checks (Guest, Unblock, Join Now, Forgot, Switch Account). */
         val loginDirectOnly: Boolean = false,
+        /** Order placement module settings, as sent by the tool's module page (see [OrderPlan.fromMap]); null = defaults. */
+        val orderConfig: Map<*, *>? = null,
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
@@ -124,7 +126,7 @@ class AutomationEngine private constructor(
                         )
                         TargetApp.TRADION -> TradionAutomationFlow(
                             engine,
-                            ModuleSelection(AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly),
+                            ModuleSelection(AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly, OrderPlan.fromMap(request.orderConfig)),
                         ).run(
                             userId = request.clientId,
                             password = request.password,
@@ -1435,6 +1437,68 @@ class AutomationEngine private constructor(
             return ActionOutcome(false, "ACTION_SET_TEXT threw ${t.javaClass.simpleName}")
         }
         return if (accepted) ActionOutcome(true, "entered into the '$label' field") else ActionOutcome(false, "the '$label' field rejected the text")
+    }
+
+    // ── The order pad's tagged boxes ───────────────────────────────────────────────────────────
+
+    /** The editable node inside the box tagged [identifier] (the tag wraps the label and the field), or null. */
+    private fun editableOf(identifier: String): AccessibilityNodeInfo? =
+        findNow(identifier)?.let { AccessibilityNodeFinder.resolveEditable(it) }
+
+    /** Whether the box tagged [identifier] holds an input field right now (a disabled Trigger Price has only its label). */
+    fun hasFieldOf(identifier: String): Boolean = editableOf(identifier) != null
+
+    /** The text the box tagged [identifier] holds ("1", "2521.50"; empty for an empty or Market box), or null without a field. */
+    fun fieldValueOf(identifier: String): String? = editableOf(identifier)?.let { it.text?.toString().orEmpty().trim() }
+
+    /** Everything the box says besides its value: its labels and the field's description / hint (the disabled Price box reads "Market"). */
+    fun fieldWordsOf(identifier: String): String {
+        val node = editableOf(identifier)
+        val own = if (node == null) emptyList() else listOfNotNull(
+            node.contentDescription?.toString(),
+            if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString() else null,
+        )
+        return (labelsOf(identifier) + own).joinToString(" ")
+    }
+
+    /** Whether the field in the box tagged [identifier] is enabled; null without a field. */
+    fun fieldEnabledOf(identifier: String): Boolean? = editableOf(identifier)?.isEnabled
+
+    /** Whether the switch tagged [identifier] is on; null when it or its `checked` state is not exposed. */
+    fun switchStateOfId(identifier: String): Boolean? =
+        findNow(identifier)?.let { AccessibilityNodeFinder.resolveCheckable(it) }?.isChecked
+
+    /** Taps the control whose whole label is [label] and that lies lowest on screen (the footer button, not the app bar title of the same name). */
+    fun tapLowestExactText(label: String): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        val wanted = label.trim().lowercase()
+        val anchor = AccessibilityNodeFinder.allByTextContaining(root, label)
+            .filter { n -> ((n.text ?: n.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim()?.lowercase()) == wanted }
+            .maxByOrNull { n -> Rect().also { n.getBoundsInScreen(it) }.top }
+            ?: return ActionOutcome(false, "no control labelled exactly '$label' is on screen")
+        return if (clickResolved(anchor)) ActionOutcome(true, "tapped '$label'") else ActionOutcome(false, "found '$label' but could not tap it")
+    }
+
+    /** Long-presses the row whose label contains [part] (the Pending list's rows carry no identifier). */
+    fun longTapText(part: String): ActionOutcome {
+        val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
+        val anchor = AccessibilityNodeFinder.byTextContaining(root, part)
+            ?: return ActionOutcome(false, "no row labelled '$part' is on screen")
+        val node = AccessibilityNodeFinder.resolveLongClickable(anchor)
+            ?: return ActionOutcome(false, "'$part' advertises no long-press")
+        val ok = try {
+            node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+        } catch (_: Throwable) {
+            false
+        }
+        return if (ok) ActionOutcome(true, "long-pressed '$part'") else ActionOutcome(false, "the long-press on '$part' was refused")
+    }
+
+    /** Whether a node whose whole label is [label] is on screen (not a longer text that merely contains it). */
+    fun hasExactText(label: String): Boolean {
+        val wanted = label.trim().lowercase()
+        return AccessibilityNodeFinder.allByTextContaining(targetRoot(), label)
+            .any { n -> ((n.text ?: n.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim()?.lowercase()) == wanted }
     }
 
     /**
