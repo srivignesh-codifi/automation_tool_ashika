@@ -36,7 +36,8 @@ class AutomationIds {
   static const String riskDisclosureDialog = 'risk_disclosure_dialog';
 
   /// Same identifier on every page of the disclosure dialog.
-  static const String disclosureUnderstandButton = 'disclosure_understand_button';
+  static const String disclosureUnderstandButton =
+      'disclosure_understand_button';
 
   static const String bottomnavWatchlistTab = 'bottomnav_watchlist_tab';
 
@@ -54,7 +55,8 @@ class AutomationIds {
 
   /// "N/50 Scrips" label on a user watchlist tab.
   static const String watchlistScripCount = 'watchlist_scrip_count';
-  static const String watchlistViewToggleButton = 'watchlist_view_toggle_button';
+  static const String watchlistViewToggleButton =
+      'watchlist_view_toggle_button';
   static const String watchlistListView = 'watchlist_list_view';
   static const String watchlistGridView = 'watchlist_grid_view';
   static const String watchlistEmptyState = 'watchlist_empty_state';
@@ -69,7 +71,8 @@ class AutomationIds {
   static const String indexDetailsScreen = 'index_details_screen';
 
   /// Edit Watchlist per-row delete icon. Same identifier every row.
-  static const String editWatchlistDeleteButton = 'edit_watchlist_delete_button';
+  static const String editWatchlistDeleteButton =
+      'edit_watchlist_delete_button';
   static const String editWatchlistSaveButton = 'edit_watchlist_save_button';
 
   static const String watchlistSearchButton = 'watchlist_search_button';
@@ -79,8 +82,10 @@ class AutomationIds {
   static const String searchFilterChipStock = 'search_filter_chip_stock';
   static const String searchFilterChipFutures = 'search_filter_chip_futures';
   static const String searchFilterChipOptions = 'search_filter_chip_options';
-  static const String searchFilterChipCommodity = 'search_filter_chip_commodity';
-  static const String searchFilterChipMutualFunds = 'search_filter_chip_mutual_funds';
+  static const String searchFilterChipCommodity =
+      'search_filter_chip_commodity';
+  static const String searchFilterChipMutualFunds =
+      'search_filter_chip_mutual_funds';
   static const String searchLoading = 'search_loading';
   static const String searchResultsList = 'search_results_list';
 
@@ -221,15 +226,24 @@ class AutomationChecklist {
     (id: 'search_opened', name: 'Search screen opened'),
     (id: 'search_filter_chips_listed', name: 'Search filter chips listed'),
     (id: 'search_tcs_added', name: 'TCS added (Stock filter)'),
-    (id: 'search_nifty_futures_added', name: 'NIFTY futures added (Futures filter)'),
-    (id: 'search_nifty_options_added', name: 'NIFTY options added (Options filter)'),
+    (
+      id: 'search_nifty_futures_added',
+      name: 'NIFTY futures added (Futures filter)',
+    ),
+    (
+      id: 'search_nifty_options_added',
+      name: 'NIFTY options added (Options filter)',
+    ),
     (id: 'search_crudeoil_added', name: 'Crude oil added (Commodity filter)'),
     (id: 'search_all_filter_results', name: 'All filter lists results'),
     (id: 'search_mutual_fund_results', name: 'Mutual fund results listed'),
     (id: 'search_closed', name: 'Search screen closed'),
     (id: 'watchlist_count_updated', name: 'Watchlist count reflects the adds'),
     (id: 'watchlist_view_toggled', name: 'Heat map view toggled and restored'),
-    (id: 'watchlist_filter_sheet_opened', name: 'Filter & Sorting sheet opened and closed'),
+    (
+      id: 'watchlist_filter_sheet_opened',
+      name: 'Filter & Sorting sheet opened and closed',
+    ),
     (id: 'scrip_details_opened', name: 'Scrip details opened and closed'),
     (id: 'home_overview_loaded', name: 'Home › Overview loaded'),
     (id: 'home_stocks_loaded', name: 'Home › Stocks loaded'),
@@ -237,10 +251,22 @@ class AutomationChecklist {
     (id: 'home_mutual_funds_loaded', name: 'Home › Mutual Funds loaded'),
     (id: 'home_commodity_loaded', name: 'Home › Commodity loaded'),
     (id: 'research_loaded', name: 'Research loaded'),
-    (id: 'holdings_overview_loaded', name: 'Portfolio › Holdings › Overview loaded'),
-    (id: 'holdings_equity_loaded', name: 'Portfolio › Holdings › Equity loaded'),
-    (id: 'holdings_thematic_loaded', name: 'Portfolio › Holdings › Thematic Basket loaded'),
-    (id: 'holdings_mutual_funds_loaded', name: 'Portfolio › Holdings › Mutual Funds loaded'),
+    (
+      id: 'holdings_overview_loaded',
+      name: 'Portfolio › Holdings › Overview loaded',
+    ),
+    (
+      id: 'holdings_equity_loaded',
+      name: 'Portfolio › Holdings › Equity loaded',
+    ),
+    (
+      id: 'holdings_thematic_loaded',
+      name: 'Portfolio › Holdings › Thematic Basket loaded',
+    ),
+    (
+      id: 'holdings_mutual_funds_loaded',
+      name: 'Portfolio › Holdings › Mutual Funds loaded',
+    ),
     (id: 'portfolio_my_wealth_loaded', name: 'Portfolio › My Wealth loaded'),
     (id: 'orders_open_loaded', name: 'Orders › Open loaded'),
     (id: 'orders_executed_loaded', name: 'Orders › Executed loaded'),

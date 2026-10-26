@@ -1,3 +1,4 @@
+import '../models/report_modules.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -610,12 +611,7 @@ class ReportService {
 
   /// Login and Watchlist (and every other area) as separate results.
   static void _areaSection(StringBuffer out, AutomationResult result) {
-    String area(AutomationStep s) {
-      final m = s.module;
-      if (m == null || m == 'login') return 'Login';
-      if (m.startsWith('watchlist')) return 'Watchlist';
-      return m.isEmpty ? 'Other' : '${m[0].toUpperCase()}${m.substring(1)}';
-    }
+    String area(AutomationStep s) => moduleLabelOf(s);
 
     final groups = <String, List<AutomationStep>>{};
     for (final s in result.steps) {
@@ -925,8 +921,15 @@ class ReportService {
           ? '<td class="time">—</td>'
           : '<td class="time"><a href="#rec" onclick="seek(${offset.toStringAsFixed(1)});return false">'
                 '▶ ${_clock(offset)}</a></td>';
+      final haystack = <String?>[
+        step.name,
+        step.code,
+        detail,
+        step.expected,
+        step.outcomeLabel,
+      ].whereType<String>().join(' ').toLowerCase();
       rows.write('''
-      <tr class="${step.status.wire}">
+      <tr class="${step.status.wire}" data-module="${_esc(moduleLabelOf(step))}" data-status="${step.status.wire}" data-text="${_esc(haystack)}">
         <td class="glyph">${step.status.glyph}</td>
         <td class="name">${_esc(step.name)}</td>
         <td class="status"><span class="pill ${step.status.wire}">${step.skipKind != null || step.isCase ? _esc(step.outcomeLabel) : step.status.label}</span></td>
@@ -940,6 +943,56 @@ class ReportService {
 ''');
     }
 
+    final stats = summarizeModules(result.steps);
+    String rowClass(ModuleStats m) =>
+        m.failed > 0 ? 'failed' : (m.outcome == 'PASS' ? 'passed' : 'skipped');
+    final moduleRows = stats
+        .map(
+          (m) =>
+              '      <tr class="${rowClass(m)}" data-pick="${_esc(m.label)}" title="Show only ${_esc(m.label)}">\n'
+              '        <td class="name">${_esc(m.label)}</td><td>${m.total}</td><td>${m.passed}</td><td>${m.failed}</td><td>${m.skipped + m.pending}</td>\n'
+              '        <td class="status"><span class="pill ${rowClass(m)}">${m.outcome}</span></td>\n'
+              '      </tr>',
+        )
+        .join('\n');
+    final moduleChips = stats
+        .map(
+          (m) =>
+              '    <button type="button" class="chip" data-m="${_esc(m.label)}">${_esc(m.label)} (${m.total})</button>',
+        )
+        .join('\n');
+    final moduleBlock = stats.isEmpty
+        ? ''
+        : '''
+  <h2>Summary by module</h2>
+  <div class="scroll">
+  <table class="steps modsum">
+    <thead><tr><th>Module</th><th>Steps</th><th>Pass</th><th>Fail</th><th>Skipped / not tested</th><th>Result</th></tr></thead>
+    <tbody>
+$moduleRows
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">Click a module to show only its steps in the checklist below.</p>
+''';
+    final toolbar = result.steps.isEmpty
+        ? ''
+        : '''
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Search the checklist (name, id, detail)" autocomplete="off">
+    <select id="st" aria-label="Status">
+      <option value="">All statuses</option>
+      <option value="failed">Failed</option>
+      <option value="passed">Passed</option>
+      <option value="skipped">Skipped / not tested</option>
+    </select>
+  </div>
+  <div class="chips" id="mods">
+    <button type="button" class="chip on" data-m="">All (${result.steps.length})</button>
+$moduleChips
+  </div>
+  <p class="muted" id="shown"></p>
+''';
     final api = result.apiSummary;
     final apiBlock = api.isEmpty
         ? ''
@@ -993,6 +1046,51 @@ class ReportService {
         ? ''
         : '<h2>Screen recording</h2><p class="muted">${_esc(result.recordingNote!)}</p>';
 
+    // The checklist filter (search, status, module) is a few lines of inline script: no external request, no dependency.
+    const filterScript = r'''
+  <script type="text/javascript">
+    (function () {
+      var q = document.getElementById('q');
+      var st = document.getElementById('st');
+      var mods = document.getElementById('mods');
+      var rows = document.querySelectorAll('table.steps:not(.modsum) tbody tr');
+      var shown = document.getElementById('shown');
+      var module = '';
+      function apply() {
+        var words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+        var n = 0;
+        rows.forEach(function (r) {
+          var ok = (!module || r.dataset.module === module) &&
+                   (!st.value || r.dataset.status === st.value) &&
+                   words.every(function (w) { return r.dataset.text.indexOf(w) >= 0; });
+          r.style.display = ok ? '' : 'none';
+          if (ok) n++;
+        });
+        shown.textContent = 'Showing ' + n + ' of ' + rows.length + ' steps';
+        mods.querySelectorAll('.chip').forEach(function (c) {
+          c.classList.toggle('on', c.dataset.m === module);
+        });
+      }
+      function pick(m) { module = m; apply(); }
+      q.addEventListener('input', apply);
+      st.addEventListener('change', apply);
+      mods.addEventListener('click', function (e) {
+        var c = e.target.closest('.chip');
+        if (c) pick(c.dataset.m);
+      });
+      document.querySelectorAll('tr[data-pick]').forEach(function (r) {
+        r.style.cursor = 'pointer';
+        r.addEventListener('click', function () {
+          pick(r.dataset.pick);
+          q.scrollIntoView({behavior: 'smooth', block: 'center'});
+        });
+      });
+      apply();
+    })();
+  </script>''';
+
+    final filterScriptTag = result.steps.isEmpty ? '' : filterScript;
+
     // Only a report with a video needs script, and only to seek that video.
     const seekScript = '''
   <script>
@@ -1004,7 +1102,7 @@ class ReportService {
       v.scrollIntoView({behavior: 'smooth', block: 'center'});
     }
   </script>''';
-    final seekScriptTag = hasVideo ? seekScript : '';
+    final seekScriptTag = (hasVideo ? seekScript : '') + filterScriptTag;
 
     return '''<!doctype html>
 <html lang="en">
@@ -1058,6 +1156,15 @@ class ReportService {
   .pill.error, .pill.timeout, .pill.not_confirmed { color:var(--fail); }
   .pill.slow, .pill.empty, .pill.not_checked { color:var(--skip); }
   td.time a { color:inherit; text-decoration:none; border-bottom:1px dotted var(--muted); }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .toolbar input { flex:1 1 220px; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+                   background:var(--card); color:inherit; font:inherit; }
+  .toolbar select { padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+                    background:var(--card); color:inherit; font:inherit; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  .chip { padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:transparent;
+          color:inherit; font:inherit; font-size:13px; cursor:pointer; }
+  .chip.on { background:var(--card); border-color:var(--muted); font-weight:600; }
   footer { margin-top:30px; padding-top:14px; border-top:1px solid var(--line);
            font-size:12.5px; color:var(--muted); }
 </style>
@@ -1085,8 +1192,8 @@ class ReportService {
 
 $recording
 $apiBlock
-  <h2>Checklist</h2>
-  <div class="scroll">
+$moduleBlock  <h2>Checklist</h2>
+$toolbar  <div class="scroll">
   <table class="steps">
     <thead><tr><th></th><th>Step</th><th>Status</th><th>Start</th><th>End</th><th>Duration</th>${hasVideo ? '<th>Video</th>' : ''}<th>API / data check</th><th>Detail</th></tr></thead>
     <tbody>

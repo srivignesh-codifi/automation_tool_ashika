@@ -32,38 +32,14 @@ object AppModules {
         ),
         AppModule(
             "watchlist", "Watchlist",
-            "Landing, switching watchlists, Predefined lists, the indices / funds panel, an instrument's sheet " +
-                "(Chart, Alert, Op.Chain, BUY / SELL opening the order pad) and More Details (Market Depth, " +
-                "Technicals, Fundamentals, Info). One instrument per check; nothing is ordered or created. Ends with a check " +
-                "that everything the Watchlist cases changed is back.",
-            listOf(
-                "wl_landing_loaded", "wl_switch_watchlist", "wl_predefined_lists", "wl_index_panel",
-                "wl_instrument_sheet", "wl_chart", "wl_alert_page", "wl_alert_condition", "wl_option_chain",
-                "wl_buy_sell", "wl_more_market_depth", "wl_more_technicals", "wl_more_fundamentals",
-                "wl_more_info", "wl_predefined_instrument", "wl_predefined_search", "wl_state_restored",
-            ),
-        ),
-        AppModule(
-            "watchlist_search", "Search and add",
-            "Search INFY (All), F&O, Commodity and Stocks, then remove and re-add an instrument with the green " +
-                "tick, add one of each type per segment (an -EQ stock, F&O futures / call / put, a commodity future) and check the " +
-                "50-instrument limit. Everything it adds is removed again; leaves the watchlist as found.",
-            listOf(
-                "wl_search_results", "wl_search_fno", "wl_search_commodity", "wl_search_stocks",
-                "wl_search_add_remove", "wl_search_segment_types", "wl_capacity_limit",
-            ),
-        ),
-        AppModule(
-            "watchlist_edit", "Edit watchlist",
-            "Rename and restore a watchlist, then reorder and delete a test instrument the run added itself. " +
-                "Never deletes the account's own instruments.",
-            listOf("wl_edit_rename", "wl_edit_reorder", "wl_edit_delete"),
-        ),
-        AppModule(
-            "watchlist_settings", "Manage Watchlist",
-            "View (Depth / Grid / Open Price), sort, the INDEX filter, Apply and Clear. The original " +
-                "preferences are restored.",
-            listOf("wl_settings_view", "wl_settings_filter_sort"),
+            "Landing, switching watchlists, Predefined lists, the indices / funds panel, an instrument's sheet (Chart, " +
+                "Alert, Op.Chain, BUY / SELL opening the order pad) and More Details (Market Depth, Technicals, " +
+                "Fundamentals, Info); Search and add (INFY, F&O, Commodity, Stocks, the green tick, one of each type per " +
+                "segment, the 50-instrument limit); Edit watchlist (rename and restore, reorder and delete a test " +
+                "instrument the run added itself); Manage Watchlist (View Depth / Grid / Open Price, sort, the INDEX " +
+                "filter, Apply and Clear). Nothing is ordered; whatever it adds or changes is put back, and it ends with " +
+                "a check that everything is back.",
+            WatchlistSuite.ALL_IDS,
         ),
         AppModule(
             "order_placement", "Order placement",
@@ -73,6 +49,10 @@ object AppModules {
                 "order types and validation messages. Orders (Regular Market / Limit, CO, BO, AMO, BUY and SELL) are placed only " +
                 "where \"Place orders\" is on (NSE and BSE only; NSE by default), and only while the pad itself shows Avail. " +
                 "Margin 0.00 and a margin shortfall, so the exchange refuses them; with any other margin they are skipped. " +
+                "The GTT sub-module (its own switch and instrument) creates a GTT order from Orders > GTT (a trigger that cannot be reached), modifies it and cancels it, " +
+                "all on the Orders screen: no watchlist and no order pad. The basket sub-module (its own switch and instrument) " +
+                "creates a basket from Orders > Basket, adds the instrument, modifies the scrip, renames the basket, executes it " +
+                "(only while a pad shows Avail. Margin 0.00 and a shortfall), cancels what stays pending and deletes the basket. " +
                 "Afterwards Pending is cleaned of this run's orders and the Order Book is checked.",
             WatchlistSuite.ORDER_IDS,
         ),
@@ -176,7 +156,17 @@ class OrderSegmentPlan(
  * (only NSE and BSE ever can be), and which instrument is used. The default places on NSE only, with IDEA, and checks
  * the MCX pad with CRUDEOIL.
  */
-class OrderPlan(private val segments: Map<String, OrderSegmentPlan>) {
+class OrderPlan(
+    private val segments: Map<String, OrderSegmentPlan>,
+    /** Also create, modify and cancel a GTT order on the NSE instrument (Orders > GTT). */
+    val gtt: Boolean = true,
+    /** The NSE stock the GTT test uses, apart from the NSE order instrument. */
+    val gttScript: String = "IDEA",
+    /** Also test a basket from Orders > Basket. */
+    val basket: Boolean = true,
+    /** The NSE stock the basket test adds. */
+    val basketScript: String = "IDEA",
+) {
 
     fun of(key: String): OrderSegmentPlan = segments[key] ?: DEFAULT.segments.getValue(key)
 
@@ -197,6 +187,8 @@ class OrderPlan(private val segments: Map<String, OrderSegmentPlan>) {
         /** Reads what the Flutter side sent; anything missing or odd falls back to the default for that exchange. */
         fun fromMap(raw: Map<*, *>?): OrderPlan {
             if (raw == null) return DEFAULT
+            val gtt = (raw["gtt"] as? Boolean) ?: true
+            val gttScript = (raw["gttScript"] as? String).orEmpty().uppercase().filter { it.isLetterOrDigit() || it == '&' || it == '-' }.take(24).ifEmpty { "IDEA" }
             val out = LinkedHashMap<String, OrderSegmentPlan>()
             for (key in KEYS) {
                 val default = DEFAULT.segments.getValue(key)
@@ -214,7 +206,9 @@ class OrderPlan(private val segments: Map<String, OrderSegmentPlan>) {
                     script = script.ifEmpty { default.script },
                 )
             }
-            return OrderPlan(out)
+            val basket = (raw["basket"] as? Boolean) ?: true
+            val basketScript = (raw["basketScript"] as? String).orEmpty().uppercase().filter { it.isLetterOrDigit() || it == '&' || it == '-' }.take(24).ifEmpty { "IDEA" }
+            return OrderPlan(out, gtt, gttScript, basket, basketScript)
         }
     }
 }

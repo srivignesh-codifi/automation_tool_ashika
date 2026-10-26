@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/order_config.dart';
 import '../services/automation_service.dart';
 import 'order_config_panel.dart';
+import 'read_more.dart';
 
 /// The checklist of modules a run covers. All of them start selected; the
 /// operator unticks what a run should leave out, and those steps are skipped.
@@ -82,7 +83,7 @@ class ModulePicker extends StatelessWidget {
             title: Text(module.label),
             subtitle: module.description.isEmpty
                 ? null
-                : ModuleSubtitle(
+                : ReadMoreText(
                     key: ValueKey<String>('module_subtitle_${module.id}'),
                     title: module.label,
                     text: module.description,
@@ -278,63 +279,4 @@ Future<void> showModuleSheet(
       );
     },
   );
-}
-
-/// A module's description: one line when it fits. A longer one is cut to its first line with a "Read more" link that
-/// shows the whole text in a dialog, so the checklist stays short.
-class ModuleSubtitle extends StatelessWidget {
-  const ModuleSubtitle({required this.title, required this.text, super.key});
-
-  final String title;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final style = DefaultTextStyle.of(context).style;
-        final painter = TextPainter(
-          text: TextSpan(text: text, style: style),
-          maxLines: 1,
-          textDirection: Directionality.of(context),
-          textScaler: MediaQuery.textScalerOf(context),
-        )..layout(maxWidth: constraints.maxWidth);
-        final overflows = painter.didExceedMaxLines;
-        painter.dispose();
-        if (!overflows) return Text(text);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
-            InkWell(
-              key: const ValueKey<String>('module_read_more'),
-              onTap: () => showDialog<void>(
-                context: context,
-                builder: (dialogContext) => AlertDialog(
-                  title: Text(title),
-                  content: SingleChildScrollView(child: Text(text)),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: const Text('Close'),
-                    ),
-                  ],
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  'Read more',
-                  style: style.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
 }

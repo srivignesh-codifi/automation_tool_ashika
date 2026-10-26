@@ -104,13 +104,15 @@ class _SetupScreenState extends State<SetupScreen> with WidgetsBindingObserver {
       case ScreenRecordingConsent.declined:
         outcome = (
           ok: false,
-          detail: 'Screen sharing was not allowed. Try again and choose '
+          detail:
+              'Screen sharing was not allowed. Try again and choose '
               '"Share screen".',
         );
       case ScreenRecordingConsent.unsupported:
         outcome = (
           ok: false,
-          detail: 'This install has no screen-recording support. Install the '
+          detail:
+              'This install has no screen-recording support. Install the '
               'tool again with a full build (a hot reload cannot add it).',
         );
     }
@@ -243,7 +245,8 @@ class _SetupScreenState extends State<SetupScreen> with WidgetsBindingObserver {
                   label: Text(_testing ? 'Testing…' : 'Test screen recording'),
                 ),
               ],
-              footnote: 'Android 14 and newer ask for screen sharing again at '
+              footnote:
+                  'Android 14 and newer ask for screen sharing again at '
                   'the start of each run and cannot remember the answer. Once '
                   'the accessibility service is on, the tool taps "Share '
                   'screen" for you, before the test begins and never during it.',
@@ -252,7 +255,8 @@ class _SetupScreenState extends State<SetupScreen> with WidgetsBindingObserver {
             _StepCard(
               title: 'Apps to test',
               badge: 'Info',
-              done: _targets.isNotEmpty &&
+              done:
+                  _targets.isNotEmpty &&
                   _targets.values.every((t) => t.installed),
               detail: _targets.isEmpty
                   ? 'Checking…'
@@ -262,7 +266,8 @@ class _SetupScreenState extends State<SetupScreen> with WidgetsBindingObserver {
                             '${_targets[app.id]?.summary ?? 'unknown'}',
                     ].join('\n'),
               actions: const <Widget>[],
-              footnote: 'Install the current builds of the apps: they skip their '
+              footnote:
+                  'Install the current builds of the apps: they skip their '
                   'notification prompt when this tool launches them, so no build '
                   'flag is needed.',
             ),
@@ -330,9 +335,7 @@ class _StepCard extends StatelessWidget {
                   color: done ? Colors.green : muted,
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: Text(title, style: theme.textTheme.titleSmall),
-                ),
+                Expanded(child: Text(title, style: theme.textTheme.titleSmall)),
                 Text(badge, style: theme.textTheme.labelSmall),
               ],
             ),

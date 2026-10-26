@@ -126,6 +126,26 @@ class WatchlistSuite(
                 "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
             c("OW-03", "ow_nse_sell", "order_placement", "NSE › SELL orders: Regular, Limit, CO, BO, AMO",
                 "With Avail. Margin 0.00 each order is sent and refused for margin; with any other margin it is skipped.", "High"),
+            c("GT-01", "ow_gtt_pad", "order_placement", "GTT › create pad: fields, dropdowns and validation",
+                "Orders > GTT > Create GTT opens the pad of the instrument with Quantity, Price, Product, the alert and condition dropdowns and a Trigger Price; an empty or zero quantity, price or trigger is refused with a message.", "High"),
+            c("GT-02", "ow_gtt_create", "order_placement", "GTT › create an order (trigger that cannot be reached)",
+                "A GTT order is created with a trigger far from the price (it cannot be reached today); it shows in the GTT list.", "High"),
+            c("GT-03", "ow_gtt_modify", "order_placement", "GTT › modify the order",
+                "The row opens a sheet with MODIFY and CANCEL; MODIFY opens the pad filled with the order's values; a new trigger and price are saved and the list shows them.", "High"),
+            c("GT-04", "ow_gtt_cancel", "order_placement", "GTT › cancel the order (No, then Yes)",
+                "CANCEL asks for confirmation; No keeps the order; Yes removes it from the GTT list.", "High"),
+            c("BK-01", "ow_basket_create", "order_placement", "Basket › create a new basket",
+                "New Basket asks for a name (an empty one is refused); the new basket is in the Basket list.", "High"),
+            c("BK-02", "ow_basket_add", "order_placement", "Basket › add the instrument",
+                "Add Scrips > search > ADD BUY adds the instrument to the basket (nothing is sent); the detail shows it and its margin.", "High"),
+            c("BK-03", "ow_basket_modify", "order_placement", "Basket › modify the scrip",
+                "The scrip row opens a sheet with MODIFY; a new quantity is saved and the scrip row shows it.", "High"),
+            c("BK-04", "ow_basket_edit", "order_placement", "Basket › edit the basket (rename)",
+                "A long-press on the scrip opens Edit Basket; a new name is saved and the list shows it.", "Medium"),
+            c("BK-05", "ow_basket_execute", "order_placement", "Basket › execute, then cancel what stays pending",
+                "With Avail. Margin 0.00 the basket is executed with the slide; its orders are refused or cancelled from Pending; nothing is executed.", "High"),
+            c("BK-06", "ow_basket_delete", "order_placement", "Basket › delete the basket",
+                "Delete Basket removes the basket from the list; the Basket count is back to what it was.", "Medium"),
             c("OW-04", "ow_bse_pad", "order_placement", "BSE › order pad fields and validation",
                 "The BSE radio is selected and the BSE listing shows its price, funds, products and fields (the form checks are not repeated).", "High"),
             c("OW-05", "ow_bse_buy", "order_placement", "BSE › BUY orders: Regular, Limit, CO, BO, AMO",
@@ -149,6 +169,14 @@ class WatchlistSuite(
         fun orderSteps(): List<AutomationStepResult> = ORDER_CASES.map { it.toStep() }
 
         val ORDER_IDS: List<String> = ORDER_CASES.map { it.id }
+
+        /** The GTT cases: they run inside the NSE segment, after its orders. */
+        val GTT_IDS: List<String> = listOf("ow_gtt_pad", "ow_gtt_create", "ow_gtt_modify", "ow_gtt_cancel")
+
+        /** The basket cases: they run after the GTT cases, on the Orders side. */
+        val BASKET_IDS: List<String> = listOf(
+            "ow_basket_create", "ow_basket_add", "ow_basket_modify", "ow_basket_edit", "ow_basket_execute", "ow_basket_delete",
+        )
 
         fun steps(): List<AutomationStepResult> = CASES.map { it.toStep() }
 
@@ -454,7 +482,7 @@ class WatchlistSuite(
         }
         if (engine.cancelled) return stopped(step)
         val detail = notes.joinToString("; ")
-        step.cleanup = cleanup
+        step.cleanup = cleanup ?: step.cleanup
         if (end != null && (end.kind == Kind.FAIL || end.kind == Kind.BLOCKED)) {
             step.cause = end.category
             step.evidence = end.evidence
@@ -681,14 +709,15 @@ class WatchlistSuite(
 
     /** Runs every selected case. Returns a result only when the run has to end. */
     fun run(): AutomationRunResult? {
+        // One module covers the view, search, edit and settings cases (they are groups of the Watchlist module).
         val view = modules.isOn("watchlist")
-        val search = modules.isOn("watchlist_search")
-        val edit = modules.isOn("watchlist_edit")
-        val settings = modules.isOn("watchlist_settings")
-        for ((module, on) in listOf("watchlist" to view, "watchlist_search" to search, "watchlist_edit" to edit, "watchlist_settings" to settings)) {
-            if (!on) skipModule(module)
+        val search = view
+        val edit = view
+        val settings = view
+        if (!view) {
+            for (module in listOf("watchlist", "watchlist_search", "watchlist_edit", "watchlist_settings")) skipModule(module)
         }
-        if (!view && !search && !edit && !settings) {
+        if (!view) {
             flow.skipAs(flow.step(STATE_ID), "not_tested", "no Watchlist module selected")
             return null
         }
@@ -765,7 +794,7 @@ class WatchlistSuite(
     private fun skipModule(module: String) {
         for (id in idsOf(module)) {
             val step = flow.step(id)
-            if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_tested", modules.skipNote(module))
+            if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_tested", modules.skipNote("watchlist"))
         }
     }
 
@@ -2283,6 +2312,14 @@ class WatchlistSuite(
         )
     }
 
+    /** The GTT test's own instrument (an NSE stock), set apart from the NSE order settings; it never places a normal order. */
+    private val gttSegment: OrderSeg by lazy {
+        OrderSeg(
+            "gtt", "NSE", T.SEARCH_TAB_STOCKS, "Stocks", listOf(modules.orders.gttScript), "ow_gtt_pad", null, null,
+            enabled = true, placeOrders = false,
+        ) { l, q -> exchangeOf(l) == "NSE" && scripType(l) == "EQ" && baseName(nameOf(l)).equals(q, ignoreCase = true) }
+    }
+
     /** The instruments the settings name: the Pending cleanup looks for orders on them. */
     private val orderNames: List<String> by lazy { orderSegments.filter { it.enabled }.flatMap { it.queries }.distinct() }
 
@@ -2529,7 +2566,13 @@ class WatchlistSuite(
      * Taps the order button with an invalid value in a field and expects the app's own validation snackbar. The value is
      * read back first: when it is not the invalid one that was meant, the button is NOT tapped.
      */
-    private fun invalidTap(name: String, expect: Regex, problems: MutableList<String>, guard: () -> Boolean) {
+    private fun invalidTap(
+        name: String,
+        expect: Regex,
+        problems: MutableList<String>,
+        onClosed: () -> Unit = { mayHaveSent++ },
+        guard: () -> Boolean,
+    ) {
         if (!guard()) {
             problems += "$name: the invalid value could not be entered, so no order button was tapped"
             return
@@ -2545,8 +2588,8 @@ class WatchlistSuite(
             shown != null || !pad.isOpen()
         }
         if (!pad.isOpen()) {
-            mayHaveSent++
-            problems += "$name: the pad closed, so the app may have sent the order (check the Order Book)"
+            onClosed()
+            problems += "$name: the pad closed, so the app may have sent the order (check the Order Book / GTT list)"
             return
         }
         if (shown == null) {
@@ -2592,6 +2635,7 @@ class WatchlistSuite(
         val ex = seg.exchange
         need(pad.ltp(ex) != null, "the header shows no $ex price")
         val gate = pad.gate()
+        gate.available?.let { knownAvailable = it }
         note("funds: ${gate.why}")
         note("lot size ${pad.lotSize() ?: "?"}, tick size ${pad.tickSize() ?: "?"}")
         for (t in OrderPad.TABS) need(pad.hasTab(t), "the '$t' tab is missing")
@@ -2878,9 +2922,708 @@ class WatchlistSuite(
         if (sent.isEmpty()) notTested("No order was sent: ${skipped.joinToString("; ") { it.text.substringAfter(": ") }.take(300)}")
     }
 
+    // ── GTT orders: create, modify, cancel (Orders > GTT) ──────────────────────────────────────
+    //
+    // A GTT order is an instruction that is placed when the price reaches a trigger. The test creates one with a trigger
+    // that cannot be reached (far above the price for "Greater than", far below for "Less than"), only while Avail. Margin
+    // is 0.00 (so even a triggered order would be refused), modifies it, and cancels it. Nothing is left behind: a sweep at
+    // the end cancels any GTT of this run that is still listed.
+
+    private class GttMade(val script: String, var price: Double, var trigger: Double, val condition: String) {
+        var cancelled = false
+    }
+
+    private var gttMade: GttMade? = null
+    private var gttBase: Int? = null
+    private var gttMayExist = false
+
+    /** The Avail. Margin the order pad last showed (any pad), for the GTT gate. */
+    private var knownAvailable: Double? = null
+
+    private fun fmt(v: Double) = "%.2f".format(v)
+
+    /** Opens Orders > GTT and returns the number in the tab's title. */
+    private fun openGttTab(): Int {
+        openOrdersTab(T.ORDERS_TAB_GTT)
+        waitUntil(LOAD) { tabCount(T.ORDERS_TAB_GTT) != null }
+        waitUntil(UI + 2_000) { engine.isPresent(T.GTT_ROW) || engine.isPresent("ui_empty") || tabCount(T.ORDERS_TAB_GTT) == 0 }
+        return tabCount(T.ORDERS_TAB_GTT) ?: fail("The GTT count could not be read on the Orders tab")
+    }
+
+    private fun gttRows(): List<String> = engine.groupedLabelsOf(T.GTT_ROW)
+
+    private val gttValues = Regex("""(\d[\d,]*\.\d+)\s*/\s*(\d[\d,]*\.\d+)""")
+
+    /** The row of this run's GTT order: named [script] and, when known, showing `price / trigger`. -1 when it is not listed. */
+    private fun gttRowIndex(script: String, price: Double?, trigger: Double?): Int {
+        val rows = gttRows()
+        val named = rows.indices.filter { tokens(rows[it]).firstOrNull()?.uppercase()?.startsWith(script.uppercase()) == true }
+        if (price == null || trigger == null) return named.firstOrNull() ?: -1
+        return named.firstOrNull { i ->
+            gttValues.find(rows[i])?.let { m ->
+                val p = m.groupValues[1].replace(",", "").toDoubleOrNull()
+                val t = m.groupValues[2].replace(",", "").toDoubleOrNull()
+                p != null && t != null && kotlin.math.abs(p - price) < 0.005 && kotlin.math.abs(t - trigger) < 0.005
+            } == true
+        } ?: -1
+    }
+
+    /** Create GTT -> instrument search -> the GTT pad of [seg]'s instrument. */
+    private fun openGttPad(seg: OrderSeg) {
+        val script = seg.queries.first()
+        openGttTab()
+        val link = if (engine.isPresent(T.GTT_CREATE_LINK)) T.GTT_CREATE_LINK else T.GTT_CREATE_BUTTON
+        val search = engine.tapAndConfirm(link, listOf(T.SEARCH_SCREEN), UI + 2_000, retryAfterMs = UI + 2_000)
+        alive()
+        if (!search.ok) fail("Create GTT did not open the instrument search: ${search.detail}")
+        val typed = engine.enterText(T.SEARCH_SCRIP_INPUT, script)
+        if (!typed.ok) fail("Could not type '$script' in the GTT instrument search: ${typed.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { resultRows().any { seg.accept(it, script) } }) {
+            fail("Searching '$script' for a GTT showed no ${seg.exchange} result", Cause.API)
+        }
+        val index = resultRows().indexOfFirst { seg.accept(it, script) }
+        val tap = engine.tapAt(T.SEARCH_RESULT_ROW, index)
+        if (!tap.ok) fail("Could not open '$script' from the GTT search: ${tap.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { pad.isOpen() && pad.has(T.ORDER_SUBMIT_BUTTON) }) {
+            fail("The GTT pad did not open for '$script' (a search result opens it only for a stock, not an index)")
+        }
+        pause(500)
+    }
+
+    private fun gttSubmitSays(word: String): Boolean =
+        engine.labelsOf(T.ORDER_SUBMIT_BUTTON).any { it.contains(word, ignoreCase = true) }
+
+    private fun gttChoose(id: String, index: Int): Boolean {
+        if (!engine.tap(id).ok) return false
+        if (!waitUntil(UI) { engine.isPresent("${id}_item_$index") }) return false
+        if (!engine.tap("${id}_item_$index").ok) return false
+        return waitUntil(UI) { !engine.isPresent("${id}_item_$index") }
+    }
+
+    private fun gttCondition(): String = engine.labelsOf(T.GTT_CONDITION).joinToString(" ")
+
+    // GT-01 ---------------------------------------------------------------------------------------
+
+    private fun gttPadCase(seg: OrderSeg) {
+        openGttPad(seg)
+        val problems = mutableListOf<String>()
+        val hidden = engine.suppressKeyboard(true)
+        try {
+            gttPadChecks(seg, problems)
+        } finally {
+            if (hidden) engine.suppressKeyboard(false)
+        }
+        if (problems.isNotEmpty()) fail(problems.joinToString("; "), Cause.UNCONFIRMED)
+        shot("gtt_pad_checked")
+        if (pad.isOpen() && !flow.closeWithBack(T.ORDER_WINDOW_SCREEN)) fail("The GTT pad did not close on Back")
+    }
+
+    private fun gttPadChecks(seg: OrderSeg, problems: MutableList<String>) {
+        fun need(ok: Boolean, what: String) {
+            if (!ok) problems += what
+        }
+        need(gttSubmitSays("GTT"), "the pad's button does not say CREATE GTT ORDER")
+        need(pad.ltp(seg.exchange) != null, "the header shows no ${seg.exchange} price")
+        need(pad.hasField(T.ORDER_FIELD_QUANTITY), "the GTT pad shows no Quantity box")
+        need(pad.hasField(T.ORDER_FIELD_SL_PRICE), "the GTT pad shows no Price box")
+        need(pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE), "the GTT pad shows no Trigger Price box")
+        need(pad.hasProduct("cnc"), "the GTT pad does not offer CNC for ${seg.exchange}")
+        need(!pad.has(T.ORDER_MARGIN_AVAILABLE), "the GTT pad shows a funds strip, which a GTT does not use")
+        need(engine.isPresent(T.GTT_ALERT_TYPE), "the GTT pad has no alert dropdown (LTP / 52W High)")
+        need(engine.isPresent(T.GTT_CONDITION), "the GTT pad has no condition dropdown (Less than / Greater than)")
+        // The '% of LTP' sits inside the Trigger Price text field, whose node swallows it: it is noted when readable, never required.
+        waitUntil(UI) { engine.labelsOf(T.GTT_TRIGGER_PERCENT).any { it.contains("% of LTP") } }
+        val price0 = pad.value(T.ORDER_FIELD_SL_PRICE).orEmpty()
+        val trigger0 = pad.value(T.ORDER_FIELD_TRIGGER_PRICE).orEmpty()
+        val qty0 = pad.value(T.ORDER_FIELD_QUANTITY).orEmpty()
+        note("defaults: alert ${engine.labelsOf(T.GTT_ALERT_TYPE).joinToString(" ")}, condition ${gttCondition()}, quantity $qty0, price $price0, trigger $trigger0 (${engine.labelsOf(T.GTT_TRIGGER_PERCENT).firstOrNull().orEmpty()})")
+        need(gttCondition().contains("Greater", ignoreCase = true), "the default condition is '${gttCondition()}', not Greater than")
+
+        // The condition and alert dropdowns.
+        if (gttChoose(T.GTT_CONDITION, 0)) {
+            need(waitUntil(UI) { gttCondition().contains("Less", ignoreCase = true) }, "choosing 'Less than' left the dropdown reading '${gttCondition()}'")
+            gttChoose(T.GTT_CONDITION, 1)
+            need(waitUntil(UI) { gttCondition().contains("Greater", ignoreCase = true) }, "choosing 'Greater than' again left the dropdown reading '${gttCondition()}'")
+        } else problems += "the condition dropdown could not be opened and a condition chosen"
+        if (gttChoose(T.GTT_ALERT_TYPE, 1)) {
+            // 52W High takes its trigger from the instrument, so the Trigger Price box stops being an input.
+            need(waitUntil(UI) { !pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) }, "with the 52W High alert the Trigger Price box is still editable")
+            gttChoose(T.GTT_ALERT_TYPE, 0)
+            need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) }, "with the LTP alert back the Trigger Price box is not editable again")
+        } else note("the alert dropdown could not be switched to 52W High")
+
+        // Quantity buttons.
+        val before = pad.value(T.ORDER_FIELD_QUANTITY)
+        if (pad.stepQuantity(plus = true)) {
+            need(waitUntil(UI) { pad.value(T.ORDER_FIELD_QUANTITY) != before }, "the Quantity + button did not change the quantity")
+            pad.stepQuantity(plus = false)
+        } else problems += "the Quantity + button could not be tapped"
+
+        // What the pad refuses before anything is sent (client side: nothing reaches the server).
+        val onClosed = { gttMayExist = true }
+        fun restore() {
+            pad.setField(T.ORDER_FIELD_QUANTITY, qty0.ifEmpty { "1" })
+            pad.setField(T.ORDER_FIELD_SL_PRICE, price0)
+            pad.setField(T.ORDER_FIELD_TRIGGER_PRICE, trigger0)
+        }
+        fun tryField(name: String, id: String, value: String, expect: Regex) {
+            invalidTap(name, expect, problems, onClosed) {
+                pad.setField(id, value).ok && pad.value(id).let { if (value.isEmpty()) it.isNullOrBlank() else it == value }
+            }
+            restore()
+        }
+        tryField("GTT · Quantity 0", T.ORDER_FIELD_QUANTITY, "0", Regex("zero|empty", RegexOption.IGNORE_CASE))
+        tryField("GTT · Quantity empty", T.ORDER_FIELD_QUANTITY, "", Regex("empty|zero", RegexOption.IGNORE_CASE))
+        tryField("GTT · Price empty", T.ORDER_FIELD_SL_PRICE, "", Regex("price|empty", RegexOption.IGNORE_CASE))
+        tryField("GTT · Price 0", T.ORDER_FIELD_SL_PRICE, "0", Regex("zero|price", RegexOption.IGNORE_CASE))
+        tryField("GTT · Trigger Price empty", T.ORDER_FIELD_TRIGGER_PRICE, "", Regex("trig|empty", RegexOption.IGNORE_CASE))
+        tryField("GTT · Trigger Price 0", T.ORDER_FIELD_TRIGGER_PRICE, "0", Regex("zero|trig", RegexOption.IGNORE_CASE))
+    }
+
+    // GT-02 ---------------------------------------------------------------------------------------
+
+    private fun gttCreate(seg: OrderSeg) {
+        val script = seg.queries.first()
+        // No funds read and no trip to the Watchlist: the order cannot be triggered, because the trigger is far from the
+        // price (never nearer than 1.4x above or 0.6x below, beyond a day's price band) and the GTT is cancelled at once.
+        knownAvailable?.let { note("funds seen on a pad in this run: Avail. Margin ${fmt(it)}") }
+        val base = openGttTab()
+        gttBase = base
+        val refused = mutableListOf<String>()
+        // A trigger the price cannot reach today: far above for "Greater than", far below for "Less than". The server may
+        // refuse an unrealistic one, so a nearer one is tried next, never one that could be reached.
+        for ((greater, factor) in listOf(true to 3.0, true to 1.6, false to 0.4)) {
+            openGttPad(seg)
+            val ltp = pad.ltp(seg.exchange) ?: fail("The GTT pad shows no ${seg.exchange} price to place the trigger against")
+            val tick = pad.tickSize() ?: 0.05
+            val trigger = Math.round(ltp * factor / tick) * tick
+            val safe = trigger > 0 && (if (greater) trigger >= ltp * 1.4 else trigger <= ltp * 0.6)
+            if (!safe) {
+                closeGttPad()
+                refused += "trigger ${fmt(trigger)} is too close to the price ${fmt(ltp)} to be safe"
+                continue
+            }
+            if (!gttChoose(T.GTT_CONDITION, if (greater) 1 else 0) && !(greater && gttCondition().contains("Greater", ignoreCase = true))) {
+                closeGttPad()
+                fail("The condition could not be set to ${if (greater) "Greater than" else "Less than"}", Cause.AUTOMATION)
+            }
+            if (!pad.setField(T.ORDER_FIELD_SL_PRICE, fmt(trigger)).ok || !pad.setField(T.ORDER_FIELD_TRIGGER_PRICE, fmt(trigger)).ok) {
+                closeGttPad()
+                fail("The price and trigger could not be entered", Cause.AUTOMATION)
+            }
+            val label = "${if (greater) ">" else "<"} ${fmt(trigger)} (price ${fmt(ltp)})"
+            shot("gtt_create_${if (greater) "above" else "below"}")
+            clearMessage()
+            if (!pad.tapOrderButton()) {
+                closeGttPad()
+                fail("The CREATE GTT ORDER button could not be tapped", Cause.AUTOMATION)
+            }
+            var message: String? = null
+            waitUntil(LOAD) {
+                message = pad.message()
+                !pad.isOpen() || message != null
+            }
+            if (pad.isOpen()) {
+                refused += "$label refused: '${message.orEmpty().take(80)}'"
+                closeGttPad()
+                continue
+            }
+            // The pad closes on success and on a server refusal alike: the list is what tells them apart.
+            val now = openGttTab()
+            val index = if (now > base) gttRowIndex(script, trigger, trigger) else -1
+            if (index >= 0) {
+                gttMade = GttMade(script, trigger, trigger, if (greater) ">" else "<")
+                note("GTT created: $label; the GTT list went from $base to $now: '${gttRows()[index].replace(Regex("""\s+"""), " ").take(80)}'")
+                return
+            }
+            refused += "$label: the pad closed but the GTT list shows $now (was $base)"
+            if (now > base) gttMayExist = true
+        }
+        fail("No GTT order was created: ${refused.joinToString("; ")}", Cause.UNCONFIRMED)
+    }
+
+    private fun closeGttPad() {
+        if (pad.isOpen() && !flow.closeWithBack(T.ORDER_WINDOW_SCREEN)) fail("The GTT pad did not close on Back")
+    }
+
+    // GT-03 ---------------------------------------------------------------------------------------
+
+    private fun gttOpenSheet(made: GttMade) {
+        openGttTab()
+        val index = gttRowIndex(made.script, made.price, made.trigger)
+        if (index < 0) fail("The GTT order (${fmt(made.price)} / ${fmt(made.trigger)}) is not in the GTT list; rows: ${gttRows().take(3).joinToString(" | ") { it.replace(Regex("""\s+"""), " ").take(50) }}")
+        val tap = engine.tapAt(T.GTT_ROW, index)
+        if (!tap.ok) fail("The GTT row could not be tapped: ${tap.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.GTT_SHEET_MODIFY) && engine.isPresent(T.GTT_SHEET_CANCEL) }) {
+            fail("Tapping the GTT row did not open the sheet with MODIFY and CANCEL")
+        }
+    }
+
+    private fun gttModify(seg: OrderSeg) {
+        val made = gttMade ?: notTested("No GTT order was created, so there is nothing to modify.")
+        gttOpenSheet(made)
+        val open = engine.tap(T.GTT_SHEET_MODIFY)
+        if (!open.ok) fail("MODIFY could not be tapped: ${open.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { pad.isOpen() && pad.has(T.ORDER_SUBMIT_BUTTON) }) fail("MODIFY did not open the GTT pad")
+        pause(500)
+        val problems = mutableListOf<String>()
+        val hidden = engine.suppressKeyboard(true)
+        try {
+            fun need(ok: Boolean, what: String) {
+                if (!ok) problems += what
+            }
+            need(gttSubmitSays("MODIFY"), "the pad's button does not say MODIFY GTT ORDER")
+            val price = pad.value(T.ORDER_FIELD_SL_PRICE)?.toDoubleOrNull()
+            val trigger = pad.value(T.ORDER_FIELD_TRIGGER_PRICE)?.toDoubleOrNull()
+            need(price != null && kotlin.math.abs(price - made.price) < 0.005, "the Price box reads '${pad.value(T.ORDER_FIELD_SL_PRICE)}', not the order's ${fmt(made.price)}")
+            need(trigger != null && kotlin.math.abs(trigger - made.trigger) < 0.005, "the Trigger Price box reads '${pad.value(T.ORDER_FIELD_TRIGGER_PRICE)}', not the order's ${fmt(made.trigger)}")
+            need(gttCondition().contains(if (made.condition == ">") "Greater" else "Less", ignoreCase = true), "the condition reads '${gttCondition()}', not the order's ${made.condition}")
+            note("modify pad filled with price ${pad.value(T.ORDER_FIELD_SL_PRICE)}, trigger ${pad.value(T.ORDER_FIELD_TRIGGER_PRICE)}, condition ${gttCondition()}")
+            // An invalid change is refused here too, before anything is sent.
+            val qty0 = pad.value(T.ORDER_FIELD_QUANTITY).orEmpty().ifEmpty { "1" }
+            invalidTap("Modify · Quantity empty", Regex("empty|zero", RegexOption.IGNORE_CASE), problems, { gttMayExist = true }) {
+                pad.setField(T.ORDER_FIELD_QUANTITY, "").ok && pad.value(T.ORDER_FIELD_QUANTITY).isNullOrBlank()
+            }
+            pad.setField(T.ORDER_FIELD_QUANTITY, qty0)
+            if (problems.isNotEmpty()) {
+                closeGttPad()
+                fail(problems.joinToString("; "), Cause.UNCONFIRMED)
+            }
+            // The trigger moves further from the price, so the order still cannot be reached.
+            val tick = pad.tickSize() ?: 0.05
+            val next = Math.round(made.trigger * (if (made.condition == ">") 1.1 else 0.9) / tick) * tick
+            if (!pad.setField(T.ORDER_FIELD_SL_PRICE, fmt(next)).ok || !pad.setField(T.ORDER_FIELD_TRIGGER_PRICE, fmt(next)).ok) {
+                closeGttPad()
+                fail("The new price and trigger could not be entered", Cause.AUTOMATION)
+            }
+            shot("gtt_modify")
+            clearMessage()
+            if (!pad.tapOrderButton()) {
+                closeGttPad()
+                fail("The MODIFY GTT ORDER button could not be tapped", Cause.AUTOMATION)
+            }
+            var message: String? = null
+            waitUntil(LOAD) {
+                message = pad.message()
+                !pad.isOpen() || message != null
+            }
+            if (pad.isOpen()) {
+                val said = message.orEmpty().take(80)
+                closeGttPad()
+                fail("The modification was refused: '$said'")
+            }
+            openGttTab()
+            if (!waitUntil(LOAD) { gttRowIndex(made.script, next, next) >= 0 }) {
+                fail("After MODIFY the GTT list does not show the new price and trigger ${fmt(next)}; rows: ${gttRows().take(3).joinToString(" | ") { it.replace(Regex("""\s+"""), " ").take(50) }}")
+            }
+            note("modified: price and trigger ${fmt(made.trigger)} → ${fmt(next)}, shown in the GTT list")
+            made.price = next
+            made.trigger = next
+        } finally {
+            if (hidden) engine.suppressKeyboard(false)
+        }
+    }
+
+    // GT-04 ---------------------------------------------------------------------------------------
+
+    /** Cancels this run's GTT order from the list: CANCEL on its sheet, then the dialog. With [declineFirst] No is tried first. */
+    private fun gttCancelOnce(made: GttMade, declineFirst: Boolean) {
+        gttOpenSheet(made)
+        if (!engine.tap(T.GTT_SHEET_CANCEL).ok) fail("CANCEL could not be tapped", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.GTT_CANCEL_YES) && engine.isPresent(T.GTT_CANCEL_NO) }) fail("CANCEL did not ask for confirmation")
+        if (!pad.hasLabel("cancel this GTT order")) note("the confirmation text was not readable")
+        if (declineFirst) {
+            if (!engine.tap(T.GTT_CANCEL_NO).ok) fail("No could not be tapped", Cause.AUTOMATION)
+            if (!waitUntil(UI + 2_000) { !engine.isPresent(T.GTT_CANCEL_YES) }) fail("No did not close the confirmation")
+            if (gttRowIndex(made.script, made.price, made.trigger) < 0 && openGttTab() >= 0 && gttRowIndex(made.script, made.price, made.trigger) < 0) {
+                fail("After No the GTT order is no longer in the list: it must be kept")
+            }
+            note("No kept the order in the list")
+            gttOpenSheet(made)
+            if (!engine.tap(T.GTT_SHEET_CANCEL).ok) fail("CANCEL could not be tapped the second time", Cause.AUTOMATION)
+            if (!waitUntil(LOAD) { engine.isPresent(T.GTT_CANCEL_YES) }) fail("CANCEL did not ask for confirmation the second time")
+        }
+        if (!engine.tap(T.GTT_CANCEL_YES).ok) fail("Yes could not be tapped", Cause.AUTOMATION)
+        waitUntil(LOAD) { !engine.isPresent(T.GTT_CANCEL_YES) }
+        openGttTab()
+        if (!waitUntil(LOAD) { gttRowIndex(made.script, made.price, made.trigger) < 0 }) {
+            fail("After Yes the GTT order is still in the list")
+        }
+        made.cancelled = true
+    }
+
+    private fun gttCancel(seg: OrderSeg) {
+        val made = gttMade ?: notTested("No GTT order was created, so there is nothing to cancel.")
+        gttCancelOnce(made, declineFirst = true)
+        val base = gttBase
+        val now = tabCount(T.ORDERS_TAB_GTT)
+        if (base != null && now != null && now != base) fail("After the cancel the GTT list holds $now orders; it held $base before this run")
+        note("cancelled: the GTT list is back to ${now ?: "?"}")
+    }
+
+    /** Whatever happened above: a GTT of this run that is still listed is cancelled; what could not be is reported. */
+    private fun gttSweep(lastId: String) {
+        val base = gttBase ?: return
+        var problem: String? = null
+        try {
+            var now = openGttTab()
+            var guard = 0
+            val script = gttMade?.script ?: modules.orders.gttScript
+            while (now > base && guard++ < 3) {
+                val made = gttMade
+                val index = gttRowIndex(script, made?.price, made?.trigger).takeIf { it >= 0 } ?: gttRowIndex(script, null, null)
+                if (index < 0) break
+                val row = GttMade(script, made?.price ?: 0.0, made?.trigger ?: 0.0, made?.condition ?: ">")
+                // Match the row that is there, whatever its values.
+                gttValues.find(gttRows()[index])?.let {
+                    row.price = it.groupValues[1].replace(",", "").toDoubleOrNull() ?: row.price
+                    row.trigger = it.groupValues[2].replace(",", "").toDoubleOrNull() ?: row.trigger
+                }
+                gttCancelOnce(row, declineFirst = false)
+                now = tabCount(T.ORDERS_TAB_GTT) ?: now
+            }
+            if (now > base) problem = "the GTT list holds $now orders, $base before the run"
+        } catch (e: CaseEnd) {
+            problem = e.message
+        }
+        val step = flow.step(lastId)
+        val text = if (problem == null) "restored: no GTT order of this run is left" else "FAILED: $problem; cancel it by hand"
+        step.cleanup = listOfNotNull(step.cleanup, text).joinToString("; ")
+        if (problem != null) gttLeft = true
+    }
+
+    private var gttLeft = false
+
+    /**
+     * Runs the GTT cases and the sweep, all on the Orders screen: no watchlist, no normal order pad, no instrument added
+     * to a watchlist. Returns a result only when the run has to end.
+     */
+    private fun runGtt(seg: OrderSeg): AutomationRunResult? {
+        runCase("ow_gtt_pad", recoverAfter = false) { gttPadCase(seg) }?.let { return it }
+        runCase("ow_gtt_create", recoverAfter = false) { gttCreate(seg) }?.let { return it }
+        runCase("ow_gtt_modify", recoverAfter = false) { gttModify(seg) }?.let { return it }
+        runCase("ow_gtt_cancel", recoverAfter = false) { gttCancel(seg) }?.let { return it }
+        try {
+            gttSweep("ow_gtt_cancel")
+        } catch (_: Stopped) {
+            return flow.step("ow_gtt_cancel").let(stopped)
+        }
+        return null
+    }
+
+    // ── Basket orders (Orders > Basket) ────────────────────────────────────────────────────────
+    //
+    // Create a basket, add the instrument, modify the scrip, rename the basket, execute it and delete it. No order pad
+    // checks here: the pad is only the way the app adds a scrip to a basket (ADD BUY) and edits one (MODIFY), and neither
+    // sends an order. EXECUTE does send the basket's orders to the exchange, so it only happens while the pad shows
+    // Avail. Margin 0.00 and a margin shortfall (the exchange refuses them); the orders that stay pending are cancelled.
+
+    private class BasketMade(var name: String, val script: String)
+
+    private var basketMade: BasketMade? = null
+    private var basketBase: Int? = null
+    private var basketLeft = false
+
+    /** What the margin strip of the basket's modify pad said: whether an EXECUTE may be sent. */
+    private var basketGate: OrderPad.Gate? = null
+
+    /** The basket test's own instrument (an NSE stock), apart from the order and GTT instruments. */
+    private val basketSegment: OrderSeg by lazy {
+        OrderSeg(
+            "basket", "NSE", T.SEARCH_TAB_STOCKS, "Stocks", listOf(modules.orders.basketScript), "ow_basket_seg_unused", null, null,
+            enabled = true, placeOrders = false,
+        ) { l, q -> exchangeOf(l) == "NSE" && scripType(l) == "EQ" && baseName(nameOf(l)).equals(q, ignoreCase = true) }
+    }
+
+    private fun basketRows(): List<String> = engine.groupedLabelsOf(T.BASKET_ROW)
+
+    private fun basketRowIndex(name: String): Int = basketRows().indexOfFirst { tokens(it).firstOrNull().equals(name, ignoreCase = true) }
+
+    private fun squash(label: String) = label.replace(Regex("""\s+"""), " ").take(80)
+
+    /** Orders > Basket: the number in the tab's title once the list has drawn. */
+    private fun openBasketTab(): Int {
+        openOrdersTab(T.ORDERS_TAB_BASKET)
+        waitUntil(LOAD) { tabCount(T.ORDERS_TAB_BASKET) != null }
+        waitUntil(UI + 2_000) { engine.isPresent(T.BASKET_ROW) || engine.isPresent(T.BASKET_NEW_BUTTON) }
+        return tabCount(T.ORDERS_TAB_BASKET) ?: fail("The Basket count could not be read on the Orders tab")
+    }
+
+    /** From the list into the basket [made]. */
+    private fun openBasket(made: BasketMade) {
+        openBasketTab()
+        val index = basketRowIndex(made.name)
+        if (index < 0) fail("The basket '${made.name}' is not in the list; rows: ${basketRows().take(3).joinToString(" | ") { squash(it) }}")
+        val tap = engine.tapAt(T.BASKET_ROW, index)
+        if (!tap.ok) fail("The basket row could not be tapped: ${tap.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_ADD_SCRIPS) }) fail("Tapping the basket did not open its detail screen")
+        pause(500)
+    }
+
+    /** Back from the detail screen to the Basket list. */
+    private fun leaveBasket() {
+        if (engine.isPresent(T.BASKET_ADD_SCRIPS) || engine.isPresent(T.BASKET_EXECUTE_SLIDER)) {
+            engine.pressBack()
+            waitUntil(UI + 2_000) { !engine.isPresent(T.BASKET_ADD_SCRIPS) }
+        }
+    }
+
+    // BK-01 ---------------------------------------------------------------------------------------
+
+    private fun basketCreate() {
+        val base = openBasketTab()
+        basketBase = base
+        val link = engine.tapAndConfirm(T.BASKET_NEW_BUTTON, listOf(T.BASKET_CREATE_BUTTON), UI + 2_000, retryAfterMs = UI + 2_000)
+        alive()
+        if (!link.ok) fail("New Basket did not open the create sheet: ${link.detail}")
+        // An empty name is refused: the sheet stays open.
+        if (!engine.tap(T.BASKET_CREATE_BUTTON).ok) fail("Create could not be tapped", Cause.AUTOMATION)
+        pause(1_000)
+        if (!engine.isPresent(T.BASKET_CREATE_BUTTON)) fail("Create with an empty name closed the sheet; it must be refused")
+        note("an empty name is refused (the sheet stays open)")
+        val name = "QA" + java.text.SimpleDateFormat("HHmmss", java.util.Locale.US).format(java.util.Date())
+        val typed = engine.enterText(T.BASKET_NAME_INPUT, name)
+        if (!typed.ok) {
+            engine.pressBack()
+            fail("The basket name could not be typed: ${typed.detail}", Cause.AUTOMATION)
+        }
+        if (!engine.tap(T.BASKET_CREATE_BUTTON).ok) fail("Create could not be tapped", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { !engine.isPresent(T.BASKET_CREATE_BUTTON) }) fail("Create did not close the sheet (a duplicate name shows only a snackbar)")
+        if (!waitUntil(LOAD) { basketRowIndex(name) >= 0 }) fail("The new basket '$name' is not in the list")
+        basketMade = BasketMade(name, basketSegment.queries.first())
+        note("basket '$name' created; the Basket count went ${base} → ${tabCount(T.ORDERS_TAB_BASKET) ?: "?"}: '${squash(basketRows()[basketRowIndex(name)])}'")
+    }
+
+    // BK-02 ---------------------------------------------------------------------------------------
+
+    private fun basketAdd() {
+        val made = basketMade ?: notTested("No basket was created, so there is nothing to add a scrip to.")
+        val seg = basketSegment
+        openBasket(made)
+        if (!engine.isPresent(T.BASKET_DELETE_EMPTY_BUTTON)) note("the new basket is not empty (no Delete Basket footer)")
+        val search = engine.tapAndConfirm(T.BASKET_ADD_SCRIPS, listOf(T.SEARCH_SCREEN), UI + 2_000, retryAfterMs = UI + 2_000)
+        alive()
+        if (!search.ok) fail("Add Scrips did not open the instrument search: ${search.detail}")
+        val typed = engine.enterText(T.SEARCH_SCRIP_INPUT, made.script)
+        if (!typed.ok) fail("Could not type '${made.script}' in the search: ${typed.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { resultRows().any { seg.accept(it, made.script) } }) fail("Searching '${made.script}' showed no ${seg.exchange} result", Cause.API)
+        val index = resultRows().indexOfFirst { seg.accept(it, made.script) }
+        if (!engine.tapAt(T.SEARCH_RESULT_ROW, index).ok) fail("The search result could not be opened", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_ADD_BUY_BUTTON) }) fail("The result's sheet shows no ADD BUY")
+        if (!engine.isPresent(T.BASKET_ADD_SELL_BUTTON)) note("the sheet shows no ADD SELL")
+        if (!engine.tap(T.BASKET_ADD_BUY_BUTTON).ok) fail("ADD BUY could not be tapped", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { pad.isOpen() && pad.has(T.ORDER_SUBMIT_BUTTON) }) fail("ADD BUY did not open the pad")
+        val hidden = engine.suppressKeyboard(true)
+        try {
+            pad.waitForFunds(LOAD)
+            val gate = pad.gate()
+            basketGate = gate
+            note("the add pad shows: ${gate.why}")
+            // Adding a scrip sends nothing, but the button on this pad is the one that sends orders elsewhere: it is only
+            // tapped while the pad itself shows that an order would be refused.
+            if (!gate.ok) {
+                closePad()
+                notTested("The add pad does not show Avail. Margin 0.00 with a shortfall (${gate.why}), so its order button is not tapped.")
+            }
+            if (!pad.submitIs(true)) {
+                closePad()
+                fail("The add pad's button is not BUY ORDER")
+            }
+            shot("basket_add")
+            if (!pad.tapOrderButton()) {
+                closePad()
+                fail("The pad's button could not be tapped", Cause.AUTOMATION)
+            }
+            if (!waitUntil(LOAD) { !pad.isOpen() }) fail("The scrip was not added: the pad stayed open (${pad.message().orEmpty().ifEmpty { "no message" }})")
+        } finally {
+            if (hidden) engine.suppressKeyboard(false)
+        }
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_SCRIP_ROW) }) fail("The basket detail shows no scrip after ADD BUY; the app is on '${screenName()}'")
+        val row = engine.groupedLabelsOf(T.BASKET_SCRIP_ROW).firstOrNull().orEmpty()
+        if (!row.uppercase().contains(made.script.uppercase())) fail("The scrip row reads '${squash(row)}', not ${made.script}")
+        note("scrip added: '${squash(row)}'; Required Margin ${engine.labelsOf(T.BASKET_MARGIN_REQUIRED).firstOrNull().orEmpty()}")
+    }
+
+    // BK-03 ---------------------------------------------------------------------------------------
+
+    private fun basketModify() {
+        val made = basketMade ?: notTested("No basket was created, so there is nothing to modify.")
+        if (!engine.isPresent(T.BASKET_SCRIP_ROW)) openBasket(made)
+        if (!engine.isPresent(T.BASKET_SCRIP_ROW)) notTested("The basket has no scrip to modify.")
+        if (!engine.tapAt(T.BASKET_SCRIP_ROW, 0).ok) fail("The scrip row could not be tapped", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_SHEET_MODIFY_BUTTON) }) fail("Tapping the scrip did not open a sheet with MODIFY")
+        if (!engine.tap(T.BASKET_SHEET_MODIFY_BUTTON).ok) fail("MODIFY could not be tapped", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { pad.isOpen() && pad.has(T.ORDER_SUBMIT_BUTTON) }) fail("MODIFY did not open the pad")
+        val hidden = engine.suppressKeyboard(true)
+        try {
+            pad.waitForFunds(LOAD)
+            val gate = pad.gate()
+            basketGate = gate
+            note("the modify pad shows: ${gate.why}; quantity ${pad.value(T.ORDER_FIELD_QUANTITY)}")
+            if (!gate.ok) {
+                closePad()
+                notTested("The modify pad does not show Avail. Margin 0.00 with a shortfall (${gate.why}), so its order button is not tapped.")
+            }
+            val typed = pad.setField(T.ORDER_FIELD_QUANTITY, "2")
+            if (!typed.ok || pad.value(T.ORDER_FIELD_QUANTITY) != "2") {
+                closePad()
+                fail("The new quantity could not be entered: ${typed.detail}", Cause.AUTOMATION)
+            }
+            shot("basket_modify")
+            if (!pad.tapOrderButton()) {
+                closePad()
+                fail("The pad's button could not be tapped", Cause.AUTOMATION)
+            }
+            if (!waitUntil(LOAD) { !pad.isOpen() }) fail("The change was not saved: the pad stayed open (${pad.message().orEmpty().ifEmpty { "no message" }})")
+        } finally {
+            if (hidden) engine.suppressKeyboard(false)
+        }
+        if (!waitUntil(LOAD) { engine.groupedLabelsOf(T.BASKET_SCRIP_ROW).any { Regex("""\b2\b""").containsMatchIn(it) } }) {
+            fail("After MODIFY the scrip row does not show quantity 2: '${squash(engine.groupedLabelsOf(T.BASKET_SCRIP_ROW).firstOrNull().orEmpty())}'")
+        }
+        note("modified: quantity 1 → 2 on the scrip row; Required Margin ${engine.labelsOf(T.BASKET_MARGIN_REQUIRED).firstOrNull().orEmpty()}")
+    }
+
+    // BK-04 ---------------------------------------------------------------------------------------
+
+    /** Edit Basket (a long-press on a scrip): rename the basket and save. */
+    private fun basketEdit() {
+        val made = basketMade ?: notTested("No basket was created, so there is nothing to edit.")
+        if (!engine.isPresent(T.BASKET_SCRIP_ROW)) openBasket(made)
+        val press = engine.longTap(T.BASKET_SCRIP_ROW)
+        if (!press.ok) fail("The long-press on the scrip row failed: ${press.detail}", Cause.AUTOMATION)
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_EDIT_NAME_INPUT) }) fail("A long-press on the scrip did not open Edit Basket")
+        val renamed = (made.name + "X").take(24)
+        val typed = engine.enterText(T.BASKET_EDIT_NAME_INPUT, renamed)
+        if (!typed.ok) {
+            engine.pressBack()
+            fail("The new name could not be typed: ${typed.detail}", Cause.AUTOMATION)
+        }
+        if (!engine.tap(T.BASKET_EDIT_SAVE_BUTTON).ok) fail("Save could not be tapped", Cause.AUTOMATION)
+        // Save renames and returns; where it lands is not fixed, so the list is the check.
+        pause(Timeouts.SETTLE * 3)
+        var guard = 0
+        while (guard++ < 3 && (engine.isPresent(T.BASKET_EDIT_NAME_INPUT) || engine.isPresent(T.BASKET_ADD_SCRIPS))) {
+            engine.pressBack()
+            pause(UI)
+        }
+        openBasketTab()
+        if (!waitUntil(LOAD) { basketRowIndex(renamed) >= 0 }) fail("After Save the list shows no basket named '$renamed'; rows: ${basketRows().take(3).joinToString(" | ") { squash(it) }}")
+        note("renamed '${made.name}' → '$renamed' and saved")
+        made.name = renamed
+    }
+
+    // BK-05 ---------------------------------------------------------------------------------------
+
+    private fun basketExecute() {
+        val made = basketMade ?: notTested("No basket was created, so there is nothing to execute.")
+        val gate = basketGate
+        if (gate == null || !gate.ok) {
+            notTested("EXECUTE sends the basket's orders, so it is only slid while a pad showed Avail. Margin 0.00 with a shortfall (${gate?.why ?: "no pad was read"}).")
+        }
+        val before = readOrderCounts()
+        openBasket(made)
+        if (!waitUntil(UI + 2_000) { engine.isPresent(T.BASKET_EXECUTE_SLIDER) }) fail("The basket detail shows no EXECUTE slider")
+        val slid = engine.slideAcross(T.BASKET_EXECUTE_SLIDER)
+        if (!slid.ok) fail("The EXECUTE slider could not be slid: ${slid.detail}", Cause.AUTOMATION)
+        // Executing sends the basket and returns to the list; the row's chip turns EXECUTED when the list reloads.
+        val left = waitUntil(LOAD) { !engine.isPresent(T.BASKET_EXECUTE_SLIDER) && engine.isPresent(T.BASKET_ROW) }
+        if (!left) fail("The slide did not execute the basket: the detail screen stayed open (the knob may not have reached the end)")
+        val executed = waitUntil(LOAD) { basketRows().getOrNull(basketRowIndex(made.name))?.contains("EXECUTED", ignoreCase = true) == true }
+        note(if (executed) "the basket shows EXECUTED" else "the basket row did not turn EXECUTED within ${LOAD / 1000} s (the orders may have been refused)")
+        pause(2_000)
+        val after = readOrderCounts()
+        if (before.trades != null && after.trades != null && after.trades > before.trades) {
+            fail("Trade Book grew from ${before.trades} to ${after.trades}: an order of the basket was EXECUTED", Cause.APP,
+                "Check the account at once: the margin gate should have kept the orders from being accepted.")
+        }
+        note("Order Book ${before.book ?: "?"} → ${after.book ?: "?"}; Pending ${before.pending ?: "?"} → ${after.pending ?: "?"}; Trade Book unchanged")
+        // Whatever is pending from the basket is cancelled on the Pending tab.
+        cleanPendingAbove(before.pending ?: 0, listOf(made.script))
+    }
+
+    // BK-06 ---------------------------------------------------------------------------------------
+
+    private fun basketDelete() {
+        val made = basketMade ?: notTested("No basket was created, so there is nothing to delete.")
+        openBasket(made)
+        if (!engine.isPresent(T.BASKET_SCRIP_ROW)) {
+            // An empty basket's footer is Delete Basket itself.
+            if (!engine.tap(T.BASKET_DELETE_EMPTY_BUTTON).ok) fail("Delete Basket could not be tapped", Cause.AUTOMATION)
+        } else {
+            if (!engine.longTap(T.BASKET_SCRIP_ROW).ok) fail("The long-press on the scrip row failed", Cause.AUTOMATION)
+            if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_DELETE_BUTTON) }) fail("A long-press on the scrip did not open Edit Basket")
+            if (!engine.tap(T.BASKET_DELETE_BUTTON).ok) fail("Delete Basket could not be tapped", Cause.AUTOMATION)
+        }
+        // There is no confirmation: the app returns to the list.
+        if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_NEW_BUTTON) || engine.isPresent(T.BASKET_ROW) }) fail("Delete Basket did not return to the Basket list")
+        if (!waitUntil(LOAD) { basketRowIndex(made.name) < 0 }) fail("The basket '${made.name}' is still in the list after Delete Basket")
+        val base = basketBase
+        val now = tabCount(T.ORDERS_TAB_BASKET)
+        if (base != null && now != null && now != base) fail("After the delete the Basket count is $now, it was $base before the run")
+        basketMade = null
+        note("basket deleted; the Basket count is back to ${now ?: "?"}")
+    }
+
+    /** Whatever happened above: a basket of this run that is still listed is deleted; what could not be is reported. */
+    private fun basketSweep(lastId: String) {
+        val made = basketMade ?: return
+        var problem: String? = null
+        try {
+            basketDelete()
+        } catch (e: CaseEnd) {
+            problem = e.message
+        }
+        val step = flow.step(lastId)
+        val text = if (problem == null) "restored: the basket '${made.name}' is deleted" else "FAILED: $problem; delete '${made.name}' by hand"
+        step.cleanup = listOfNotNull(step.cleanup, text).joinToString("; ")
+        if (problem != null) basketLeft = true
+    }
+
+    /** Runs the basket cases and the sweep, all on the Orders side. Returns a result only when the run has to end. */
+    private fun runBasket(): AutomationRunResult? {
+        runCase("ow_basket_create", recoverAfter = false) { basketCreate() }?.let { return it }
+        runCase("ow_basket_add", recoverAfter = false) { basketAdd() }?.let { return it }
+        runCase("ow_basket_modify", recoverAfter = false) { basketModify() }?.let { return it }
+        runCase("ow_basket_edit", recoverAfter = false) { basketEdit() }?.let { return it }
+        runCase("ow_basket_execute", recoverAfter = false) { basketExecute() }?.let { return it }
+        runCase("ow_basket_delete", recoverAfter = false) { basketDelete() }?.let { return it }
+        try {
+            basketSweep("ow_basket_delete")
+        } catch (_: Stopped) {
+            return flow.step("ow_basket_delete").let(stopped)
+        }
+        return null
+    }
+
     // ── Orders: Pending, Order Book ────────────────────────────────────────────────────────────
 
+    /**
+     * Closes what a case can leave open on the Orders side (the GTT pad, the instrument search, the row's sheet, the cancel
+     * confirmation) with its own control, without going to the Watchlist: a case that follows on the Orders screen then
+     * starts from it instead of from a trip through the Watchlist.
+     */
+    private fun leaveOrderOverlays() {
+        repeat(4) {
+            alive()
+            when {
+                engine.isPresent(T.GTT_CANCEL_NO) -> engine.tap(T.GTT_CANCEL_NO)
+                engine.isPresent(T.ORDER_WINDOW_SCREEN) -> flow.closeWithBack(T.ORDER_WINDOW_SCREEN)
+                engine.isPresent(T.SEARCH_SCREEN) -> flow.closeWithBack(T.SEARCH_SCREEN)
+                engine.isPresent(T.GTT_SHEET_MODIFY) -> engine.pressBack()
+                engine.isPresent(T.BASKET_CREATE_BUTTON) || engine.isPresent(T.BASKET_ADD_BUY_BUTTON) ||
+                    engine.isPresent(T.BASKET_SHEET_MODIFY_BUTTON) -> engine.pressBack()
+                // The basket's own screens replace the Orders screen: Back returns to it.
+                engine.isPresent(T.BASKET_ADD_SCRIPS) || engine.isPresent(T.BASKET_EXECUTE_SLIDER) ||
+                    engine.isPresent(T.BASKET_DELETE_BUTTON) -> engine.pressBack()
+                else -> return
+            }
+            pause(UI)
+        }
+    }
+
     private fun openOrders() {
+        leaveOrderOverlays()
         if (!engine.isPresent(T.ORDERBOOK_SCREEN)) {
             val open = engine.tapAndConfirm(T.BOTTOMNAV_ORDER_TAB, listOf(T.ORDERBOOK_SCREEN), LOAD, retryAfterMs = LOAD)
             alive()
@@ -2888,8 +3631,36 @@ class WatchlistSuite(
         }
     }
 
-    private fun tabCount(id: String): Int? =
-        engine.labelsOf(id).firstNotNullOfOrNull { Regex("""\((\d+)\)""").find(it)?.groupValues?.get(1)?.toInt() }
+    /** The six Orders tabs, left to right. The strip scrolls sideways: only the ones near the screen are in the tree. */
+    private val ordersTabs = listOf(
+        T.ORDERS_TAB_PENDING, T.ORDERS_TAB_ORDER_BOOK, T.ORDERS_TAB_TRADE_BOOK,
+        T.ORDERS_TAB_BASKET, T.ORDERS_TAB_GTT, T.ORDERS_TAB_SIP,
+    )
+
+    /**
+     * Brings an Orders tab into the tree. The strip is a scrollable TabBar, and its scroll view is not the scrollable
+     * the accessibility tree reports (a scroll action on the nearest scrollable above it swipes the tab BODY instead, to
+     * the next tab). What does move the strip is a tab selected: the TabBar scrolls the selected tab into view. So the
+     * tab nearest the wanted one is tapped, which builds its neighbours, until the wanted one is there.
+     */
+    private fun revealOrdersTab(id: String): Boolean {
+        val want = ordersTabs.indexOf(id)
+        repeat(5) {
+            if (engine.isPresent(id)) return true
+            val present = ordersTabs.filter { engine.isPresent(it) }
+            if (present.isEmpty()) return false
+            val edge = if (want > ordersTabs.indexOf(present.last())) present.last() else present.first()
+            engine.tap(edge)
+            pause(Timeouts.SETTLE * 3)
+        }
+        return engine.isPresent(id)
+    }
+
+    /** The number in a tab's title (`GTT (1)`), bringing the tab into the tree first when it is off screen. */
+    private fun tabCount(id: String): Int? {
+        if (!engine.isPresent(id)) revealOrdersTab(id)
+        return engine.labelsOf(id).firstNotNullOfOrNull { Regex("""\((\d+)\)""").find(it)?.groupValues?.get(1)?.toInt() }
+    }
 
     private fun readOrderCounts(): OrderCounts {
         openOrders()
@@ -2899,13 +3670,15 @@ class WatchlistSuite(
 
     private fun openOrdersTab(id: String) {
         openOrders()
+        // GTT and SIP sit past the right edge of the strip: selecting the tab next to them scrolls the strip.
+        if (!revealOrdersTab(id)) fail("The Orders tab '$id' did not appear on the tab strip after selecting its neighbour", Cause.AUTOMATION)
         val tap = engine.tap(id)
         if (!tap.ok) fail("The Orders tab '$id' could not be tapped: ${tap.detail}", Cause.AUTOMATION)
         pause(Timeouts.SETTLE * 2)
     }
 
-    private fun automationRow(): String? =
-        engine.onScreenLines().firstOrNull { l -> l.length <= 40 && orderNames.any { l.trim().startsWith(it, ignoreCase = true) } }
+    private fun automationRow(names: List<String> = orderNames): String? =
+        engine.onScreenLines().firstOrNull { l -> l.length <= 40 && names.any { l.trim().startsWith(it, ignoreCase = true) } }
 
     /** Cancels the pending order shown on [row]: long-press, Cancel Order, Yes. */
     private fun cancelPending(row: String): String? {
@@ -2921,7 +3694,11 @@ class WatchlistSuite(
     }
 
     private fun pendingClean() {
-        val base = orderBase?.pending ?: 0
+        cleanPendingAbove(orderBase?.pending ?: 0, orderNames)
+    }
+
+    /** Cancels the pending orders of [names] on Orders > Pending until its count is back to [base]. */
+    private fun cleanPendingAbove(base: Int, names: List<String>) {
         openOrdersTab(T.ORDERS_TAB_PENDING)
         var now = tabCount(T.ORDERS_TAB_PENDING) ?: fail("The Pending count could not be read")
         if (now <= base) {
@@ -2932,15 +3709,15 @@ class WatchlistSuite(
         var cancelled = 0
         repeat(now - base + 2) {
             if (now <= base) return@repeat
-            val row = automationRow()
-                ?: fail("Pending holds ${now - base} more order(s) than before but none of them is an ${orderNames.joinToString("/")} order, so none was cancelled")
+            val row = automationRow(names)
+                ?: fail("Pending holds ${now - base} more order(s) than before but none of them is an ${names.joinToString("/")} order, so none was cancelled")
             cancelPending(row)?.let { fail("Cancelling '$row': $it", Cause.AUTOMATION) }
             cancelled++
             openOrdersTab(T.ORDERS_TAB_PENDING)
             waitUntil(LOAD) { (tabCount(T.ORDERS_TAB_PENDING) ?: now) < now }
             now = tabCount(T.ORDERS_TAB_PENDING) ?: now
         }
-        if (now > base) fail("After cancelling $cancelled order(s) Pending still shows $now (it was $base before the run)")
+        if (now > base) fail("After cancelling $cancelled order(s) Pending still shows $now (it was $base before)")
         note("$cancelled pending order(s) cancelled; Pending is back to $now")
     }
 
@@ -3031,6 +3808,8 @@ class WatchlistSuite(
             problems += "the watchlist '${orderListName.orEmpty()}' holds $count instrument(s) instead of $start"
         }
         for ((key, s) in orderSessions) if (s.removed == false) problems += "the ${key.uppercase()} instrument was not removed"
+        if (gttLeft) problems += "a GTT order of this run could not be cancelled"
+        if (basketLeft) problems += "a basket of this run could not be deleted"
         cleanup = if (problems.isEmpty()) {
             if (orderCleared.isEmpty()) "restored" else "the full watchlist was cleared on request (removed: ${orderCleared.joinToString(", ")})"
         } else "FAILED: ${problems.joinToString("; ")}"
@@ -3056,15 +3835,18 @@ class WatchlistSuite(
             }
             return null
         }
-        // What the order lists hold before anything is sent, to compare against afterwards.
-        try {
-            currentCase = null
-            orderBase = readOrderCounts()
-            recover()
-        } catch (e: CaseEnd) {
-            note("setup: could not read the order counts (${e.message})")
-        } catch (_: Stopped) {
-            return flow.step(ORDER_CASES.first().id).let(stopped)
+        // With no exchange selected (only the GTT test) no order is sent and no watchlist is touched: nothing to compare.
+        val exchanges = orderSegments.any { it.enabled }
+        if (exchanges) {
+            // What the order lists hold before anything is sent, to compare against afterwards.
+            try {
+                currentCase = null
+                orderBase = readOrderCounts()
+            } catch (e: CaseEnd) {
+                note("setup: could not read the order counts (${e.message})")
+            } catch (_: Stopped) {
+                return flow.step(ORDER_CASES.first().id).let(stopped)
+            }
         }
         for (seg in orderSegments) {
             if (!seg.enabled) {
@@ -3082,9 +3864,26 @@ class WatchlistSuite(
             }
             finishSegment(seg, seg.sellId ?: seg.padId)?.let { return it }
         }
-        runCase("ow_pending_clean") { pendingClean() }?.let { return it }
-        runCase("ow_orderbook") { orderBookCheck() }?.let { return it }
-        runCase("ow_state_restored") { orderStateRestored() }?.let { return it }
+        // The GTT test: Orders > GTT only, whatever the exchanges above did.
+        if (modules.orders.gtt) {
+            runGtt(gttSegment)?.let { return it }
+        } else {
+            skipOrderSteps(GTT_IDS, "The GTT test is off in the Order placement settings")
+        }
+        // The basket test: Orders > Basket, its own instrument.
+        if (modules.orders.basket) runBasket()?.let { return it }
+        else skipOrderSteps(BASKET_IDS, "The basket test is off in the Order placement settings")
+        if (!exchanges) {
+            skipOrderSteps(
+                listOf("ow_pending_clean", "ow_orderbook", "ow_state_restored"),
+                "No exchange is selected in the Order placement settings, so no order was sent and no watchlist was used",
+            )
+            return null
+        }
+        // Both are on the Orders screen: no trip to the Watchlist between them (the last case goes there itself).
+        runCase("ow_pending_clean", recoverAfter = false) { pendingClean() }?.let { return it }
+        runCase("ow_orderbook", recoverAfter = false) { orderBookCheck() }?.let { return it }
+        runCase("ow_state_restored", recoverAfter = orderSessions.isNotEmpty()) { orderStateRestored() }?.let { return it }
         return null
     }
 }

@@ -148,11 +148,10 @@ class AutomationResult {
   int get failedSteps =>
       steps.where((s) => s.status == StepStatus.failed).length;
 
-  AutomationStep? get firstFailure =>
-      steps.cast<AutomationStep?>().firstWhere(
-        (s) => s!.status == StepStatus.failed,
-        orElse: () => null,
-      );
+  AutomationStep? get firstFailure => steps.cast<AutomationStep?>().firstWhere(
+    (s) => s!.status == StepStatus.failed,
+    orElse: () => null,
+  );
 
   String get verdict {
     if (passed) return 'PASSED';
@@ -194,7 +193,8 @@ class AutomationResult {
       failureMessage: map['failureMessage'] as String?,
       steps: rawSteps,
       screenshots: shots,
-      screenshotUnavailableReason: map['screenshotUnavailableReason'] as String?,
+      screenshotUnavailableReason:
+          map['screenshotUnavailableReason'] as String?,
       videoPath: map['videoPath'] as String?,
       recordingStartedAtMs: (map['recordingStartedAtMs'] as num?)?.toInt(),
       recordingNote: map['recordingNote'] as String?,

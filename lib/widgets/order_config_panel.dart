@@ -27,8 +27,17 @@ class _OrderConfigPanelState extends State<OrderConfigPanel> {
           key: TextEditingController(text: widget.config.of(key).script),
       };
 
+  late final TextEditingController _gttScript = TextEditingController(
+    text: widget.config.gttScript,
+  );
+  late final TextEditingController _basketScript = TextEditingController(
+    text: widget.config.basketScript,
+  );
+
   @override
   void dispose() {
+    _gttScript.dispose();
+    _basketScript.dispose();
     for (final c in _scripts.values) {
       c.dispose();
     }
@@ -42,29 +51,100 @@ class _OrderConfigPanelState extends State<OrderConfigPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
+    // Collapsed until opened: the module list stays short, and the line under the title says what is set.
     return Container(
       key: const ValueKey<String>('order_config_panel'),
       margin: const EdgeInsets.only(left: 40, bottom: 8),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Order settings', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 2),
-          Text(
-            'Untick an exchange to leave it out. "Place orders" is only offered for NSE and BSE and still needs '
-            'Avail. Margin 0.00 on the pad.',
+      child: Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const ValueKey<String>('order_config_header'),
+          initiallyExpanded: false,
+          dense: true,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          title: Text('Order settings', style: theme.textTheme.titleSmall),
+          subtitle: Text(
+            widget.config.summary,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(color: muted),
           ),
-          for (final key in OrderConfig.keys) ...[
-            const SizedBox(height: 6),
-            _row(key, theme),
+          children: [
+            Text(
+              'Untick an exchange to leave it out. "Place orders" is only offered for NSE and BSE and still needs '
+              'Avail. Margin 0.00 on the pad.',
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            ),
+            for (final key in OrderConfig.keys) ...[
+              const SizedBox(height: 6),
+              _row(key, theme),
+            ],
+            const Divider(height: 20),
+            Text('GTT orders', style: theme.textTheme.titleSmall),
+            SwitchListTile(
+              key: const ValueKey<String>('order_gtt_switch'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Test GTT orders'),
+              subtitle: const Text(
+                'From Orders > GTT only: create one order with a trigger that cannot be reached, modify it, cancel it. '
+                'No watchlist and no order pad are used.',
+              ),
+              value: widget.config.gtt,
+              onChanged: widget.enabled
+                  ? (v) => widget.onChanged(widget.config.withGtt(v))
+                  : null,
+            ),
+            TextField(
+              key: const ValueKey<String>('order_gtt_script'),
+              controller: _gttScript,
+              enabled: widget.enabled && widget.config.gtt,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'GTT instrument (NSE stock)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (raw) =>
+                  widget.onChanged(widget.config.withGttScript(raw)),
+            ),
+            const Divider(height: 20),
+            Text('Basket orders', style: theme.textTheme.titleSmall),
+            SwitchListTile(
+              key: const ValueKey<String>('order_basket_switch'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Test basket orders'),
+              subtitle: const Text(
+                'From Orders > Basket: create a basket, add the instrument, modify the scrip, execute it (only while '
+                'Avail. Margin is 0.00) and cancel what stays pending.',
+              ),
+              value: widget.config.basket,
+              onChanged: widget.enabled
+                  ? (v) => widget.onChanged(widget.config.withBasket(v))
+                  : null,
+            ),
+            TextField(
+              key: const ValueKey<String>('order_basket_script'),
+              controller: _basketScript,
+              enabled: widget.enabled && widget.config.basket,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Basket instrument (NSE stock)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (raw) =>
+                  widget.onChanged(widget.config.withBasketScript(raw)),
+            ),
           ],
-        ],
+        ),
       ),
     );
   }

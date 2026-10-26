@@ -111,6 +111,9 @@ class AutomationEngine private constructor(
             )
             engine.clearAppData = request.clearData
             active = engine
+            // A floating Stop over the target app, so a run can be stopped without going back to this tool.
+            val stopOverlay = StopOverlay(service)
+            stopOverlay.show { stop() }
 
             val thread = Thread({
                 try {
@@ -166,6 +169,7 @@ class AutomationEngine private constructor(
                         ),
                     )
                 } finally {
+                    stopOverlay.hide()
                     engine.endRecording()
                     active = null
                     worker = null
@@ -1326,6 +1330,18 @@ class AutomationEngine private constructor(
             AccessibilityNodeFinder.labelOf(n)?.lowercase()?.lines()?.any { it.trim() == wanted } == true
         }
         return (exact.ifEmpty { nodes }).minWithOrNull(compareBy({ it.second.height() }, { it.second.top }))?.second
+    }
+
+    /**
+     * Slides the knob of the slide-to-confirm control tagged [identifier] from its left end to its right end (the knob
+     * starts about a tenth of the track in from the left). True when the gesture was carried out; whether the control
+     * accepted it is for the caller to see.
+     */
+    fun slideAcross(identifier: String): ActionOutcome {
+        val b = boundsOfId(identifier) ?: return ActionOutcome(false, "no slider '$identifier' is on screen")
+        if (b.width() < 200) return ActionOutcome(false, "the slider '$identifier' is only ${b.width()} px wide")
+        val ok = service.swipeAcross(b.left + b.width() * 0.10f, b.right - b.width() * 0.02f, b.exactCenterY())
+        return if (ok) ActionOutcome(true, "slid '$identifier' across") else ActionOutcome(false, "the slide gesture on '$identifier' was not carried out")
     }
 
     /** Screen bounds of the node with [identifier], or null. */

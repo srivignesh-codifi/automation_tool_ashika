@@ -197,7 +197,9 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
       return 'Summary zip saved to ${run.zipFolder}: '
           '${run.zipPath.split('/').last}';
     }
-    return run.zipError.isEmpty ? null : 'Summary zip not saved: ${run.zipError}';
+    return run.zipError.isEmpty
+        ? null
+        : 'Summary zip not saved: ${run.zipError}';
   }
 
   @override

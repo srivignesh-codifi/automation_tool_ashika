@@ -126,7 +126,8 @@ class AutomationStep {
 
   String get causeLabel => switch (cause) {
     'app_defect' => 'Application defect',
-    'unconfirmed' => 'Needs review (expected content not found in readable text)',
+    'unconfirmed' =>
+      'Needs review (expected content not found in readable text)',
     'automation' => 'Automation / locator',
     'accessibility' => 'Accessibility limitation',
     'api_data' => 'API / data dependency',

@@ -19,7 +19,10 @@ void main() {
         expect(c.of(k).enabled, isFalse, reason: k);
         expect(c.of(k).place, isFalse, reason: k);
       }
-      expect(c.summary, 'NSE IDEA (orders) · MCX CRUDEOIL');
+      expect(
+        c.summary,
+        'NSE IDEA (orders) · MCX CRUDEOIL · GTT IDEA · Basket IDEA',
+      );
     },
   );
 
@@ -73,6 +76,33 @@ void main() {
     },
   );
 
+  test(
+    'the GTT option is on by default, kept through changes, and read back',
+    () {
+      var c = OrderConfig.defaults();
+      expect(c.gtt, isTrue);
+      c = c.withGtt(false);
+      expect(c.summary, 'NSE IDEA (orders) · MCX CRUDEOIL · Basket IDEA');
+      c = c.withSegment('bse', c.of('bse').copyWith(enabled: true));
+      expect(
+        c.gtt,
+        isFalse,
+        reason: 'changing an exchange keeps the GTT choice',
+      );
+      expect(OrderConfig.fromJson(c.toJson()).gtt, isFalse);
+      expect(
+        OrderConfig.fromJson(<String, Object?>{'gtt': 'maybe'}).gtt,
+        isTrue,
+      );
+      expect(c.gttScript, 'IDEA');
+      c = c.withGttScript(' sbin ');
+      expect(c.gttScript, 'SBIN');
+      expect(c.withGttScript('').gttScript, 'IDEA', reason: 'never empty');
+      expect(OrderConfig.fromJson(c.toJson()).gttScript, 'SBIN');
+      expect(c.withGtt(true).summary, contains('GTT SBIN'));
+    },
+  );
+
   test('instrument names are upper case, safe and never empty', () {
     expect(OrderConfig.cleanScript('idea', 'X'), 'IDEA');
     expect(OrderConfig.cleanScript('M&M-EQ', 'X'), 'M&M-EQ');
@@ -111,6 +141,20 @@ void main() {
         find.byKey(const ValueKey<String>('order_config_panel')),
         findsOneWidget,
       );
+      expect(
+        find.text('NSE IDEA (orders) · MCX CRUDEOIL · GTT IDEA · Basket IDEA'),
+        findsOneWidget,
+        reason: 'collapsed: the summary line',
+      );
+      expect(
+        find.byKey(const ValueKey<String>('order_seg_nse')),
+        findsNothing,
+        reason: 'collapsed until opened',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('order_config_header')),
+      );
+      await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey<String>('order_place_mcx')),
         findsNothing,
@@ -173,12 +217,12 @@ void main() {
       );
       expect(find.text('Short.'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey<String>('module_read_more')),
+        find.byKey(const ValueKey<String>('read_more_link')),
         findsOneWidget,
         reason: 'only the long one',
       );
       expect(find.text(long), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey<String>('module_read_more')));
+      await tester.tap(find.byKey(const ValueKey<String>('read_more_link')));
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(
@@ -189,6 +233,83 @@ void main() {
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsNothing);
+    },
+  );
+
+  testWidgets('the GTT sub-module has its own switch and instrument', (
+    tester,
+  ) async {
+    const modules = <AutomationModule>[
+      AutomationModule(id: 'order_placement', label: 'Order placement'),
+    ];
+    var config = OrderConfig.defaults();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => SingleChildScrollView(
+              child: ModulePicker(
+                modules: modules,
+                selected: const <String>{'order_placement'},
+                onChanged: (_) {},
+                orderConfig: config,
+                onOrderConfigChanged: (next) => setState(() => config = next),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('order_config_header')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('order_gtt_script')),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('order_gtt_script')),
+      'sbin',
+    );
+    await tester.pump();
+    expect(config.gttScript, 'SBIN');
+    expect(
+      config.of('nse').script,
+      'IDEA',
+      reason: 'the NSE order instrument is separate',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('order_gtt_switch')),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('order_gtt_switch')));
+    await tester.pump();
+    expect(config.gtt, isFalse);
+  });
+
+  test(
+    'the basket option is on by default, has its own instrument, and is kept',
+    () {
+      var c = OrderConfig.defaults();
+      expect(c.basket, isTrue);
+      expect(c.basketScript, 'IDEA');
+      c = c.withBasketScript(' relaxo ').withGttScript('sbin');
+      expect(c.basketScript, 'RELAXO');
+      expect(c.gttScript, 'SBIN', reason: 'the GTT instrument is separate');
+      expect(c.withBasketScript('').basketScript, 'IDEA');
+      c = c
+          .withBasket(false)
+          .withSegment('bse', c.of('bse').copyWith(enabled: true));
+      expect(
+        c.basket,
+        isFalse,
+        reason: 'changing an exchange keeps the basket choice',
+      );
+      final back = OrderConfig.fromJson(c.toJson());
+      expect(back.basket, isFalse);
+      expect(back.basketScript, 'RELAXO');
+      expect(back.gttScript, 'SBIN');
+      expect(
+        OrderConfig.fromJson(<String, Object?>{'basket': 1}).basket,
+        isTrue,
+      );
     },
   );
 }

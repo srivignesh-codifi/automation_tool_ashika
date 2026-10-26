@@ -168,9 +168,6 @@ class AutomationConfigInfo {
           modules: <AutomationModule>[
             AutomationModule(id: 'login', label: 'Login'),
             AutomationModule(id: 'watchlist', label: 'Watchlist'),
-            AutomationModule(id: 'watchlist_search', label: 'Search and add'),
-            AutomationModule(id: 'watchlist_edit', label: 'Edit watchlist'),
-            AutomationModule(id: 'watchlist_settings', label: 'Manage Watchlist'),
             AutomationModule(id: 'order_placement', label: 'Order placement'),
             AutomationModule(id: 'orders', label: 'Orders'),
             AutomationModule(id: 'dashboard', label: 'Dashboard'),

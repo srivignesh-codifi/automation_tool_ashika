@@ -34,7 +34,13 @@ class OrderSegmentConfig {
 ///
 /// The default places orders on NSE only, with IDEA, and checks the MCX pad with CRUDEOIL.
 class OrderConfig {
-  const OrderConfig(this.segments);
+  const OrderConfig(
+    this.segments, {
+    this.gtt = true,
+    this.gttScript = 'IDEA',
+    this.basket = true,
+    this.basketScript = 'IDEA',
+  });
 
   /// In the order the module runs them.
   static const List<String> keys = <String>['nse', 'bse', 'nfo', 'bfo', 'mcx'];
@@ -73,6 +79,44 @@ class OrderConfig {
 
   final Map<String, OrderSegmentConfig> segments;
 
+  /// Also create, modify and cancel a GTT order on the NSE instrument (a trigger that cannot be reached, cancelled at
+  /// the end), from Orders > GTT.
+  final bool gtt;
+
+  /// The instrument the GTT test uses (an NSE stock), set apart from the NSE order settings.
+  final String gttScript;
+
+  /// Also test a basket from Orders > Basket: create one, add the instrument, modify the scrip, execute it (only while
+  /// the pad shows Avail. Margin 0.00) and cancel what is left pending.
+  final bool basket;
+
+  /// The instrument the basket test adds.
+  final String basketScript;
+
+  OrderConfig _copy({
+    Map<String, OrderSegmentConfig>? segments,
+    bool? gtt,
+    String? gttScript,
+    bool? basket,
+    String? basketScript,
+  }) => OrderConfig(
+    segments ?? this.segments,
+    gtt: gtt ?? this.gtt,
+    gttScript: gttScript ?? this.gttScript,
+    basket: basket ?? this.basket,
+    basketScript: basketScript ?? this.basketScript,
+  );
+
+  OrderConfig withGtt(bool value) => _copy(gtt: value);
+
+  OrderConfig withGttScript(String raw) =>
+      _copy(gttScript: cleanScript(raw, 'IDEA'));
+
+  OrderConfig withBasket(bool value) => _copy(basket: value);
+
+  OrderConfig withBasketScript(String raw) =>
+      _copy(basketScript: cleanScript(raw, 'IDEA'));
+
   OrderSegmentConfig of(String key) =>
       segments[key] ?? OrderConfig.defaults().segments[key]!;
 
@@ -92,7 +136,7 @@ class OrderConfig {
         ? segment
         : segment.copyWith(place: false);
     next[key] = fixed.enabled ? fixed : fixed.copyWith(place: false);
-    return OrderConfig(next);
+    return _copy(segments: next);
   }
 
   /// Reads a saved or sent map; anything missing or odd is the default for that exchange.
@@ -120,11 +164,27 @@ class OrderConfig {
         ),
       );
     }
-    return OrderConfig(out);
+    return OrderConfig(
+      out,
+      gtt: raw['gtt'] is bool ? raw['gtt'] as bool : true,
+      gttScript: cleanScript(
+        raw['gttScript'] is String ? raw['gttScript'] as String : '',
+        'IDEA',
+      ),
+      basket: raw['basket'] is bool ? raw['basket'] as bool : true,
+      basketScript: cleanScript(
+        raw['basketScript'] is String ? raw['basketScript'] as String : '',
+        'IDEA',
+      ),
+    );
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
     for (final key in keys) key: of(key).toJson(),
+    'gtt': gtt,
+    'gttScript': gttScript,
+    'basket': basket,
+    'basketScript': basketScript,
   };
 
   /// "NSE IDEA (orders) · MCX CRUDEOIL", for a line under the module.
@@ -133,6 +193,8 @@ class OrderConfig {
       final s = of(k);
       return '${labels[k]} ${s.script}${s.place ? ' (orders)' : ''}';
     }).toList();
+    if (gtt) on.add('GTT $gttScript');
+    if (basket) on.add('Basket $basketScript');
     return on.isEmpty ? 'no exchange selected' : on.join(' · ');
   }
 }

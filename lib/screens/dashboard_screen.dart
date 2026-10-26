@@ -96,10 +96,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _openSetup() async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) => SetupScreen(
-          automation: widget.automation,
-          storage: widget.storage,
-        ),
+        builder: (_) =>
+            SetupScreen(automation: widget.automation, storage: widget.storage),
       ),
     );
     await _refresh();
@@ -332,8 +330,7 @@ class _SetupCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final steps = <String>[
-      if (!targetInstalled)
-        'Install $targetPackage on this device.',
+      if (!targetInstalled) 'Install $targetPackage on this device.',
       if (!accessibilityReady)
         'Enable Automation Tool under Settings > Accessibility > '
             'Installed apps.',

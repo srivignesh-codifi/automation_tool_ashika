@@ -212,7 +212,8 @@ void main() {
     );
 
     final html = reports.buildHtml(result);
-    expect(html, isNot(contains('<script>')));
+    // The only script is the report's own checklist filter; the untrusted text is escaped, never run.
+    expect(html, isNot(contains('<script>alert')));
     expect(html, contains('&lt;script&gt;'));
     expect(html, contains('&quot;x&quot;'));
     // No external requests: everything inline.
@@ -456,9 +457,8 @@ void main() {
     expect(
       fallback.last.modules.map((m) => m.id),
       <String>[
-        'login', 'watchlist', 'watchlist_search', 'watchlist_edit',
-        'watchlist_settings', 'order_placement', 'orders', 'dashboard', 'portfolio',
-        'profile',
+        'login', 'watchlist', 'order_placement', 'orders', 'dashboard',
+        'portfolio', 'profile',
       ],
     );
   });
@@ -493,7 +493,7 @@ void main() {
     await tester.tap(toggle);
     await tester.pump();
     expect(direct, isTrue);
-    expect(ModuleField.summary(modules, selected, directLogin: direct), 'All modules (10) · direct login only');
+    expect(ModuleField.summary(modules, selected, directLogin: direct), 'All modules (7) · direct login only');
 
     // With Login unticked there is nothing to make direct: the switch is off-limits and not mentioned.
     await tester.tap(find.byKey(const ValueKey<String>('module_login')));
@@ -523,13 +523,13 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Modules to test (10 of 10)'), findsOneWidget);
+    expect(find.text('Modules to test (7 of 7)'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('module_orders')));
     await tester.pump();
     expect(selected, isNot(contains('orders')));
-    expect(selected.length, 9);
-    expect(find.text('Modules to test (9 of 10)'), findsOneWidget);
+    expect(selected.length, 6);
+    expect(find.text('Modules to test (6 of 7)'), findsOneWidget);
 
     await tester.tap(find.text('None'));
     await tester.pump();
@@ -538,7 +538,7 @@ void main() {
 
     await tester.tap(find.text('All'));
     await tester.pump();
-    expect(selected.length, 10);
+    expect(selected.length, 7);
   });
 
   testWidgets('the modules field summarises the choice and opens a bottom sheet', (
@@ -559,25 +559,25 @@ void main() {
         ),
       ),
     );
-    expect(find.text('All modules (10)'), findsOneWidget);
+    expect(find.text('All modules (7)'), findsOneWidget);
     expect(find.byType(CheckboxListTile), findsNothing);
 
-    await tester.tap(find.text('All modules (10)'));
+    await tester.tap(find.text('All modules (7)'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsOneWidget);
-    expect(find.byType(CheckboxListTile), findsNWidgets(10));
+    expect(find.byType(CheckboxListTile), findsNWidgets(7));
 
-    await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_edit')));
+    await tester.tap(find.byKey(const ValueKey<String>('module_orders')));
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey<String>('module_watchlist_search')));
+    await tester.tap(find.byKey(const ValueKey<String>('module_profile')));
     await tester.pump();
-    expect(selected.length, 8);
+    expect(selected.length, 5);
 
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsNothing);
     expect(
-      find.text('8 of 10: Login, Watchlist, Manage Watchlist, Order placement, Orders, Dashboard, Portfolio, Profile'),
+      find.text('5 of 7: Login, Watchlist, Order placement, Dashboard, Portfolio'),
       findsOneWidget,
     );
     expect(

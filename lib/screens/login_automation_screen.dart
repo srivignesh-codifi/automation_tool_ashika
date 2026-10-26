@@ -8,6 +8,7 @@ import '../services/report_service.dart';
 import '../services/secure_storage_service.dart';
 import '../widgets/credential_field.dart';
 import '../widgets/module_picker.dart';
+import '../widgets/read_more.dart';
 import '../widgets/status_indicator.dart';
 import 'report_screen.dart';
 import 'setup_screen.dart';
@@ -317,7 +318,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             recordScreen: recordScreen,
             clearData: _clearData,
             loginDirectOnly: _directLogin && _modules.contains('login'),
-            orderConfig: _modules.contains('order_placement') ? _orderConfig : null,
+            orderConfig: _modules.contains('order_placement')
+                ? _orderConfig
+                : null,
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules
@@ -434,6 +437,40 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
 
     return Scaffold(
       appBar: AppBar(title: const Text('Run Automation')),
+      // The two actions of a run stay in view whatever the form above has scrolled to.
+      bottomNavigationBar: Material(
+        elevation: 8,
+        color: theme.colorScheme.surface,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: FilledButton.icon(
+                    key: const ValueKey<String>('start_button'),
+                    onPressed: _running ? null : _start,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text('Start ${_app.displayName}'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey<String>('stop_button'),
+                    onPressed: _running ? _stop : null,
+                    icon: const Icon(Icons.stop),
+                    label: const Text('Stop'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -511,7 +548,8 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                       }
                     : null,
                 orderConfig: _orderConfig,
-                onOrderConfigChanged: _app.modules.any((m) => m.id == 'order_placement')
+                onOrderConfigChanged:
+                    _app.modules.any((m) => m.id == 'order_placement')
                     ? (next) {
                         setState(() => _orderConfig = next);
                         _saveChoices();
@@ -566,9 +604,11 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
               title: Text(
                 'Remember ${_app.userIdLabel}, ${_app.secret.label} and OTP',
               ),
-              subtitle: const Text(
-                'Stored in the Android Keystore. Only useful for the OTP if '
-                'your test account accepts the same one each time.',
+              subtitle: const ReadMoreText(
+                title: 'Remember credentials',
+                text:
+                    'Stored in the Android Keystore. Only useful for the OTP if '
+                    'your test account accepts the same one each time.',
               ),
             ),
             SwitchListTile(
@@ -578,10 +618,12 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                   ? null
                   : (value) => setState(() => _clearData = value),
               title: const Text("Clear the app's data first"),
-              subtitle: const Text(
-                'Gives every run a fresh start through Settings. Turn it off only '
-                "if this phone's Settings cannot be driven; then clear the app's "
-                'data and log out by hand before you start.',
+              subtitle: const ReadMoreText(
+                title: "Clear the app's data first",
+                text:
+                    'Gives every run a fresh start through Settings. Turn it off only '
+                    "if this phone's Settings cannot be driven; then clear the app's "
+                    'data and log out by hand before you start.',
               ),
             ),
             SwitchListTile(
@@ -591,11 +633,13 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                   ? null
                   : (value) => setState(() => _recordScreen = value),
               title: const Text('Record the screen'),
-              subtitle: const Text(
-                'Saves a video of the whole run next to the report. Android '
-                'asks to share the screen each time; the tool taps "Share '
-                'screen" for you (tap it yourself if it stays). The video '
-                'shows everything on screen, so use a test account.',
+              subtitle: const ReadMoreText(
+                title: 'Record the screen',
+                text:
+                    'Saves a video of the whole run next to the report. Android '
+                    'asks to share the screen each time; the tool taps "Share '
+                    'screen" for you (tap it yourself if it stays). The video '
+                    'shows everything on screen, so use a test account.',
               ),
             ),
             Align(
@@ -610,25 +654,14 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
 
             const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _running ? null : _start,
-              icon: const Icon(Icons.play_arrow),
-              label: Text('Start ${_app.displayName} Automation'),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _app.runSummary,
+            ReadMoreText(
+              title: '${_app.displayName} run',
+              text: _app.runSummary,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _running ? _stop : null,
-              icon: const Icon(Icons.stop),
-              label: const Text('Stop Automation'),
-            ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _busy ? null : _checkTargetApp,
               icon: const Icon(Icons.search),

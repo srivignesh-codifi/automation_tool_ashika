@@ -223,6 +223,48 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * A horizontal drag from ([fromX], [y]) to ([toX], [y]) over [durationMs], for a slide-to-confirm button: the knob
+     * only completes when it is carried the whole way, so the gesture has to be slow and straight.
+     */
+    fun swipeAcross(fromX: Float, toX: Float, y: Float, durationMs: Long = 700L): Boolean {
+        if (fromX < 0 || toX < 0 || y < 0) return false
+        val path = Path().apply {
+            moveTo(fromX, y)
+            lineTo(toX, y)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        val latch = CountDownLatch(1)
+        var completed = false
+        val dispatched = try {
+            dispatchGesture(
+                gesture,
+                object : GestureResultCallback() {
+                    override fun onCompleted(description: GestureDescription?) {
+                        completed = true
+                        latch.countDown()
+                    }
+
+                    override fun onCancelled(description: GestureDescription?) {
+                        latch.countDown()
+                    }
+                },
+                null,
+            )
+        } catch (_: Throwable) {
+            false
+        }
+        if (!dispatched) return false
+        return try {
+            latch.await(4, TimeUnit.SECONDS) && completed
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
+    /**
      * A vertical drag that ends with the finger held still, so the page stops where the finger stops instead of flinging
      * on (a drag released at speed flings and overshoots, which made the page bob). The first stroke moves, the second
      * holds the end point.
