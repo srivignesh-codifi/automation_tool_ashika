@@ -1,4 +1,6 @@
 import '../models/order_config.dart';
+import '../models/market_session.dart';
+import '../models/profile_config.dart';
 import 'package:flutter/services.dart';
 
 import '../models/automation_result.dart';
@@ -210,6 +212,7 @@ class AutomationEvent {
   });
 
   /// One of: automation_started, step_started, step_passed, step_failed,
+  /// automation_paused, automation_resumed, automation_module_skipped,
   /// automation_completed, automation_stopped.
   final String name;
   final String runId;
@@ -384,6 +387,8 @@ class AutomationService {
     bool clearData = true,
     bool loginDirectOnly = false,
     OrderConfig? orderConfig,
+    ProfileConfig? profileConfig,
+    MarketSession marketSession = MarketSession.bod,
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
@@ -396,6 +401,8 @@ class AutomationService {
       'clearData': clearData,
       'loginDirectOnly': loginDirectOnly,
       'orderConfig': orderConfig?.toJson(),
+      'profileConfig': profileConfig?.toJson(),
+      'marketSession': marketSession.wire,
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;
@@ -453,6 +460,23 @@ class AutomationService {
 
   Future<bool> stopAutomation() async {
     final result = await _invoke<bool>('stopAutomation');
+    return result ?? false;
+  }
+
+  /// Pauses the running test: the action in flight finishes, the next waits.
+  Future<bool> pauseAutomation() async {
+    final result = await _invoke<bool>('pauseAutomation');
+    return result ?? false;
+  }
+
+  /// Skips the module that is running; the run goes on with the next one.
+  Future<bool> skipModule() async {
+    final result = await _invoke<bool>('skipModule');
+    return result ?? false;
+  }
+
+  Future<bool> resumeAutomation() async {
+    final result = await _invoke<bool>('resumeAutomation');
     return result ?? false;
   }
 

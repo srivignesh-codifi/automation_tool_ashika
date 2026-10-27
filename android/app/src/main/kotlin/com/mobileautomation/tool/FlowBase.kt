@@ -54,8 +54,16 @@ abstract class FlowBase(
     /** The step in progress; a load check is recorded against it. */
     private var activeStep: AutomationStepResult? = null
 
+    /** The run's paused time when each step began, to say in the step how long it was paused. */
+    private val pausedAtBegin = HashMap<String, Long>()
+
+    /** The step begun last: tells which module a skip belongs to. */
+    protected var lastStarted: AutomationStepResult? = null
+
     internal fun begin(step: AutomationStepResult) {
         activeStep = step
+        lastStarted = step
+        pausedAtBegin[step.id] = engine.pausedMs()
         step.start()
         engine.emit(
             "step_started",
@@ -93,7 +101,21 @@ abstract class FlowBase(
      * with `status: "skipped"`, so the event vocabulary stays the six documented
      * names while the UI can still tell the two apart.
      */
+    /** Called after each step has ended (passed, failed or skipped). */
+    protected open fun afterStep(step: AutomationStepResult) {}
+
+    /** Called once as the run's result is completed, whatever ended it. */
+    protected open fun beforeComplete() {}
+
     protected fun emitStep(step: AutomationStepResult) {
+        afterStep(step)
+        pausedAtBegin.remove(step.id)?.let { before ->
+            val paused = engine.pausedMs() - before
+            if (paused >= 1_000L) {
+                step.note = listOfNotNull(step.note, "paused by the tester for ${paused / 1000} s (its time includes the pause)")
+                    .joinToString("; ")
+            }
+        }
         engine.emit(
             if (step.status == StepStatus.FAILED) "step_failed" else "step_passed",
             mapOf(
@@ -102,8 +124,8 @@ abstract class FlowBase(
                 "name" to step.name,
                 "status" to step.status.wire,
                 "durationMs" to step.durationMs,
-                "note" to step.note,
-                "reason" to step.failureReason,
+                "note" to Redactor.apply(step.note),
+                "reason" to Redactor.apply(step.failureReason),
             ),
         )
     }
@@ -174,6 +196,13 @@ abstract class FlowBase(
     ): AutomationRunResult = abort(step, reasonFor(outcome, what, timeoutMs) + extra)
 
     protected fun stopped(step: AutomationStepResult): AutomationRunResult {
+        if (engine.skipping) {
+            // The operator skipped the module: this step ends NOT TESTED and the run goes on (see skipCurrentModule).
+            if (step.status == StepStatus.PENDING || step.status == StepStatus.RUNNING) {
+                skipAs(step, "not_tested", "skipped by the tester")
+            }
+            return result
+        }
         val reason = if (engine.serviceGone) {
             "The accessibility service was turned off while the run was in progress."
         } else {
@@ -195,6 +224,7 @@ abstract class FlowBase(
     }
 
     private fun complete(): AutomationRunResult {
+        beforeComplete()
         StepApi.finalize(steps)
         result.finishedAtMs = System.currentTimeMillis()
         return result
@@ -241,7 +271,7 @@ abstract class FlowBase(
         scrollPages: Int = AutomationConfig.Timeouts.TAB_MAX_PAGES,
     ): LoadCheck {
         val ids = AutomationConfig.Ids
-        val start = android.os.SystemClock.elapsedRealtime()
+        val start = engine.clock()
         val deadline = start + budgetMs
         var pages = 1
         var empty = 0
@@ -250,7 +280,7 @@ abstract class FlowBase(
         var stillLoading = 0
         var scrolled = 0
         while (true) {
-            val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            val remaining = (deadline - engine.clock()).coerceAtLeast(0L)
             val clear = engine.waitUntil(remaining) { engine.countOf(ids.UI_LOADING) == 0 }
             empty = maxOf(empty, engine.countOf(ids.UI_EMPTY))
             errors = maxOf(errors, engine.countOf(ids.UI_ERROR))
@@ -266,7 +296,7 @@ abstract class FlowBase(
             // Sections scrolled into view start their own fetch on the next frame.
             if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) break
         }
-        val elapsed = android.os.SystemClock.elapsedRealtime() - start
+        val elapsed = engine.clock() - start
         var back = 0
         while (back < scrolled + 2 && engine.scrollPage(forward = false)) back++
         engine.sleep(AutomationConfig.Timeouts.SETTLE)

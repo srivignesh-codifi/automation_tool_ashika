@@ -114,6 +114,7 @@ class LoginAutomationFlow(
     private val postLoginIds = listOf(Ids.HOME_SCREEN, Ids.WATCHLIST_SCREEN, Ids.RISK_DISCLOSURE_DIALOG)
 
     fun run(clientId: String, otp: String, mpin: String): AutomationRunResult {
+        Redactor.secrets = listOf(clientId)
         val info = engine.launcher.inspect(engine.targetPackage)
         result = AutomationRunResult(
             runId = engine.runId,
@@ -1240,7 +1241,7 @@ class LoginAutomationFlow(
      * reachable again.
      */
     private fun checkPageLoads(budgetMs: Long): LoadCheck {
-        val start = android.os.SystemClock.elapsedRealtime()
+        val start = engine.clock()
         val deadline = start + budgetMs
         var pages = 1
         var empty = 0
@@ -1248,7 +1249,7 @@ class LoginAutomationFlow(
         var settled = true
         var stillLoading = 0
         while (true) {
-            val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            val remaining = (deadline - engine.clock()).coerceAtLeast(0L)
             val clear = engine.waitUntil(remaining) { engine.countOf(Ids.UI_LOADING) == 0 }
             empty = maxOf(empty, engine.countOf(Ids.UI_EMPTY))
             errors = maxOf(errors, engine.countOf(Ids.UI_ERROR))
@@ -1263,7 +1264,7 @@ class LoginAutomationFlow(
             // Sections scrolled into view start their own fetch on the next frame.
             if (!engine.sleep(AutomationConfig.Timeouts.SETTLE)) break
         }
-        val elapsed = android.os.SystemClock.elapsedRealtime() - start
+        val elapsed = engine.clock() - start
         var back = 0
         while (back < AutomationConfig.Timeouts.TAB_MAX_PAGES + 2 && engine.scrollPage(forward = false)) back++
         engine.sleep(AutomationConfig.Timeouts.SETTLE)
@@ -1315,8 +1316,8 @@ class LoginAutomationFlow(
                 "name" to step.name,
                 "status" to step.status.wire,
                 "durationMs" to step.durationMs,
-                "note" to step.note,
-                "reason" to step.failureReason,
+                "note" to Redactor.apply(step.note),
+                "reason" to Redactor.apply(step.failureReason),
             ),
         )
     }

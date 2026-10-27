@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/order_config.dart';
 
 /// The settings of the Order placement module, shown under it on the module page: for each exchange whether its order
-/// pad is opened and checked, which instrument opens it, and (NSE and BSE only) whether orders are placed there.
+/// pad is opened and checked, which instrument opens it, and whether orders are placed there; and which kinds of order
+/// are placed.
 class OrderConfigPanel extends StatefulWidget {
   const OrderConfigPanel({
     required this.config,
@@ -77,14 +78,36 @@ class _OrderConfigPanelState extends State<OrderConfigPanel> {
           ),
           children: [
             Text(
-              'Untick an exchange to leave it out. "Place orders" is only offered for NSE and BSE and still needs '
-              'Avail. Margin 0.00 on the pad.',
+              'Untick an exchange to leave it out. "Place orders" sends real orders on a live account: on every '
+              'exchange an order is only sent while the pad shows Avail. Margin 0.00 and a margin above it, so the '
+              'exchange refuses it; otherwise it is skipped.',
               style: theme.textTheme.bodySmall?.copyWith(color: muted),
             ),
             for (final key in OrderConfig.keys) ...[
               const SizedBox(height: 6),
               _row(key, theme),
             ],
+            const Divider(height: 20),
+            Text('Orders placed', style: theme.textTheme.titleSmall),
+            Text(
+              'On each exchange with "Place orders" on. Untick a kind to leave it out; it is listed as skipped.',
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            ),
+            _kinds(
+              theme,
+              'Order types (BUY and SELL, MIS)',
+              OrderConfig.orderTypes,
+            ),
+            _kinds(
+              theme,
+              'Products (a Limit BUY each; NFO, BFO and MCX offer NRML only)',
+              OrderConfig.products,
+            ),
+            _kinds(
+              theme,
+              'Advanced Options (a Limit BUY each; Disclosed Qty on NSE, BSE and MCX)',
+              OrderConfig.advanced,
+            ),
             const Divider(height: 20),
             Text('GTT orders', style: theme.textTheme.titleSmall),
             SwitchListTile(
@@ -149,10 +172,39 @@ class _OrderConfigPanelState extends State<OrderConfigPanel> {
     );
   }
 
+  Widget _kinds(ThemeData theme, String title, List<OrderKind> kinds) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: theme.textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final kind in kinds)
+                FilterChip(
+                  key: ValueKey<String>('order_kind_${kind.id}'),
+                  visualDensity: VisualDensity.compact,
+                  label: Text(kind.label),
+                  selected: widget.config.places(kind.id),
+                  onSelected: widget.enabled
+                      ? (v) =>
+                            widget.onChanged(widget.config.withKind(kind.id, v))
+                      : null,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _row(String key, ThemeData theme) {
     final segment = widget.config.of(key);
     final label = OrderConfig.labels[key]!;
-    final canPlace = OrderConfig.placeable.contains(key);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -191,20 +243,19 @@ class _OrderConfigPanelState extends State<OrderConfigPanel> {
             ),
           ],
         ),
-        if (canPlace)
-          Padding(
-            padding: const EdgeInsets.only(left: 48),
-            child: SwitchListTile(
-              key: ValueKey<String>('order_place_$key'),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: Text('Place orders on $label'),
-              value: segment.place && segment.enabled,
-              onChanged: widget.enabled && segment.enabled
-                  ? (v) => _update(key, segment.copyWith(place: v))
-                  : null,
-            ),
+        Padding(
+          padding: const EdgeInsets.only(left: 48),
+          child: SwitchListTile(
+            key: ValueKey<String>('order_place_$key'),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: Text('Place orders on $label'),
+            value: segment.place && segment.enabled,
+            onChanged: widget.enabled && segment.enabled
+                ? (v) => _update(key, segment.copyWith(place: v))
+                : null,
           ),
+        ),
       ],
     );
   }

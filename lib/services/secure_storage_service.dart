@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/order_config.dart';
+import '../models/market_session.dart';
+import '../models/profile_config.dart';
 
 /// Storage for the UAT test credentials the operator types into the tool.
 ///
@@ -33,6 +35,8 @@ class SecureStorageService {
   static const String _kModulesOff = 'tool_modules_off';
   static const String _kDirectLogin = 'tool_login_direct';
   static const String _kOrderConfig = 'tool_order_config';
+  static const String _kProfileConfig = 'tool_profile_config';
+  static const String _kMarketSession = 'tool_market_session';
 
   /// Ashika's keys predate the second app and stay as they were, so an operator
   /// who saved credentials keeps them. Every other app gets suffixed keys.
@@ -79,6 +83,15 @@ class SecureStorageService {
   Future<void> saveDirectLogin(bool value, {required String appId}) =>
       _write('${_kDirectLogin}_$appId', value ? 'true' : 'false');
 
+  /// BOD or live trade time; BOD until the operator chooses otherwise.
+  Future<MarketSession> readMarketSession({required String appId}) async =>
+      MarketSession.fromWire(await _read('${_kMarketSession}_$appId'));
+
+  Future<void> saveMarketSession(
+    MarketSession value, {
+    required String appId,
+  }) => _write('${_kMarketSession}_$appId', value.wire);
+
   /// The Order placement settings of [appId]: which exchanges, which instruments, where orders are placed. The default
   /// (NSE with IDEA, orders on NSE only; MCX with CRUDEOIL) until the operator changes it.
   Future<OrderConfig> readOrderConfig({required String appId}) async {
@@ -93,6 +106,22 @@ class SecureStorageService {
 
   Future<void> saveOrderConfig(OrderConfig value, {required String appId}) =>
       _write('${_kOrderConfig}_$appId', jsonEncode(value.toJson()));
+
+  /// The Profile settings of [appId]: which Profile checks run. Every check until the operator changes it.
+  Future<ProfileConfig> readProfileConfig({required String appId}) async {
+    final raw = await _read('${_kProfileConfig}_$appId');
+    if (raw == null) return ProfileConfig.defaults();
+    try {
+      return ProfileConfig.fromJson(jsonDecode(raw));
+    } on FormatException {
+      return ProfileConfig.defaults();
+    }
+  }
+
+  Future<void> saveProfileConfig(
+    ProfileConfig value, {
+    required String appId,
+  }) => _write('${_kProfileConfig}_$appId', jsonEncode(value.toJson()));
 
   /// Whether the first-launch permission setup was finished. Not a secret; it
   /// only lives here because this is the tool's one small store.

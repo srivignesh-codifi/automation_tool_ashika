@@ -6,6 +6,8 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
@@ -51,6 +53,10 @@ class AutomationEngine private constructor(
         val loginDirectOnly: Boolean = false,
         /** Order placement module settings, as sent by the tool's module page (see [OrderPlan.fromMap]); null = defaults. */
         val orderConfig: Map<*, *>? = null,
+        /** Profile module settings: `{"off": [step ids]}` for the checks switched off; null = every check. */
+        val profileConfig: Map<*, *>? = null,
+        /** "bod" (before the market opens, the default) or "live" (trading hours: the feed is measured). */
+        val marketSession: String = "bod",
     )
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
@@ -99,6 +105,15 @@ class AutomationEngine private constructor(
                 TargetApp.Secret.PASSWORD -> if (request.password.isBlank()) return "Password is required."
             }
 
+            if (AutomationAccessibilityService.connected() == null &&
+                AutomationAccessibilityService.ensureEnabled(context)
+            ) {
+                // Just put back in the enabled list: give Android a moment to bind it.
+                val until = SystemClock.elapsedRealtime() + 2_500L
+                while (AutomationAccessibilityService.connected() == null && SystemClock.elapsedRealtime() < until) {
+                    Thread.sleep(100L)
+                }
+            }
             val service = AutomationAccessibilityService.connected()
                 ?: return "The Automation Tool accessibility service is not running. " +
                     "Enable it in Settings > Accessibility and try again."
@@ -113,9 +128,11 @@ class AutomationEngine private constructor(
             active = engine
             // A floating Stop over the target app, so a run can be stopped without going back to this tool.
             val stopOverlay = StopOverlay(service)
-            stopOverlay.show { stop() }
+            overlay = stopOverlay
+            stopOverlay.show(onStop = { stop() }, onPauseToggle = { togglePause() }, onSkip = { skipModule() })
 
             val thread = Thread({
+                engine.workerThread = Thread.currentThread()
                 try {
                     if (request.recordScreen) engine.beginRecording()
                     val result = when (app) {
@@ -129,7 +146,12 @@ class AutomationEngine private constructor(
                         )
                         TargetApp.TRADION -> TradionAutomationFlow(
                             engine,
-                            ModuleSelection(AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly, OrderPlan.fromMap(request.orderConfig)),
+                            ModuleSelection(
+                                AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly,
+                                OrderPlan.fromMap(request.orderConfig),
+                                profileOff = (request.profileConfig?.get("off") as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty(),
+                                liveMarket = request.marketSession == "live",
+                            ),
                         ).run(
                             userId = request.clientId,
                             password = request.password,
@@ -170,6 +192,8 @@ class AutomationEngine private constructor(
                     )
                 } finally {
                     stopOverlay.hide()
+                    overlay = null
+                    engine.hideNotice()
                     engine.endRecording()
                     active = null
                     worker = null
@@ -184,6 +208,39 @@ class AutomationEngine private constructor(
             worker = thread
             thread.start()
             return null
+        }
+
+        private var overlay: StopOverlay? = null
+
+        /** Pauses the running test. True when it was running and is now paused. */
+        fun pause(): Boolean = setPaused(true)
+
+        /** Resumes a paused test. True when it was paused and now runs again. */
+        fun resume(): Boolean = setPaused(false)
+
+        fun isPaused(): Boolean = active?.paused == true
+
+        /** Skips the module that is running and goes on with the next one. */
+        fun skipModule(): Boolean {
+            val engine = active ?: return false
+            if (engine.requestSkip()) return true
+            engine.showNotice("Skip works once sign-in is done and a module is running.")
+            Handler(Looper.getMainLooper()).postDelayed({ engine.hideNotice() }, 2_500L)
+            return false
+        }
+
+        /** Pauses a running test or resumes a paused one; returns whether it is now paused. */
+        fun togglePause(): Boolean {
+            val engine = active ?: return false
+            setPaused(!engine.paused)
+            return engine.paused
+        }
+
+        private fun setPaused(on: Boolean): Boolean {
+            val engine = active ?: return false
+            val changed = engine.setPaused(on)
+            overlay?.showPaused(engine.paused)
+            return changed
         }
 
         /** Requests cancellation. Returns true when a run was actually active. */
@@ -226,7 +283,106 @@ class AutomationEngine private constructor(
     // ── Engine state ────────────────────────────────────────────────────────
 
     @Volatile
-    var cancelled: Boolean = false
+    private var stopRequested: Boolean = false
+
+    /**
+     * True when the run must unwind: stopped by the operator, or the current module is being skipped ([skipping]).
+     * Every wait and loop already ends on it, so a skip leaves the module exactly as a stop would, and the flow then
+     * carries on with the next module instead of ending.
+     */
+    var cancelled: Boolean
+        get() = stopRequested || skipping
+        set(value) {
+            stopRequested = value
+        }
+
+    /** The operator asked to skip the module that is running; cleared by the flow once it has moved on. */
+    @Volatile
+    var skipping: Boolean = false
+        private set
+
+    /** Set by the flow while a module that may be skipped is running (not during sign-in). */
+    @Volatile
+    var skipAllowed: Boolean = false
+
+    /** Skips the module that is running. False when nothing may be skipped now. */
+    fun requestSkip(): Boolean {
+        if (!skipAllowed || stopRequested || skipping) return false
+        skipping = true
+        if (paused) setPaused(false)
+        emit("automation_module_skipped")
+        return true
+    }
+
+    /** Called by the flow once the skipped module has been left. */
+    fun endSkip() {
+        skipping = false
+    }
+
+    // ── Pause ───────────────────────────────────────────────────────────────
+
+    /** The run's own thread: only it is held while paused (the overlay and the service callbacks never are). */
+    @Volatile
+    var workerThread: Thread? = null
+
+    @Volatile
+    var paused: Boolean = false
+        private set
+
+    private var pausedAtMs = 0L
+    private var pausedTotalMs = 0L
+
+    /** How many times the run was paused. */
+    @Volatile
+    var pauseCount: Int = 0
+        private set
+
+    /**
+     * The run's clock: elapsed real time minus the time spent paused, so it stands still while the run is paused and
+     * no wait, deadline or load time counts the pause.
+     */
+    @Synchronized
+    fun clock(): Long {
+        val now = SystemClock.elapsedRealtime()
+        return now - pausedTotalMs - if (paused) now - pausedAtMs else 0L
+    }
+
+    /** Total time spent paused so far. */
+    @Synchronized
+    fun pausedMs(): Long {
+        val now = SystemClock.elapsedRealtime()
+        return pausedTotalMs + if (paused) now - pausedAtMs else 0L
+    }
+
+    /** Pauses or resumes the run. The action in flight finishes; the next one waits. True when the state changed. */
+    fun setPaused(on: Boolean): Boolean {
+        synchronized(this) {
+            if (on == paused || stopRequested) return false
+            val now = SystemClock.elapsedRealtime()
+            if (on) {
+                pausedAtMs = now
+                pauseCount++
+            } else {
+                pausedTotalMs += now - pausedAtMs
+            }
+            paused = on
+        }
+        emit(if (on) "automation_paused" else "automation_resumed", mapOf("pausedMs" to pausedMs()))
+        return true
+    }
+
+    /** Blocks the run's thread while the run is paused; returns at once on any other thread, or when stopped. */
+    private fun holdWhilePaused() {
+        if (!paused || Thread.currentThread() !== workerThread) return
+        while (paused && !cancelled) {
+            try {
+                Thread.sleep(100L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+        }
+    }
 
     @Volatile
     var serviceGone: Boolean = false
@@ -328,6 +484,8 @@ class AutomationEngine private constructor(
      * asks again on every run and the prompt would otherwise cover it.
      */
     private fun targetRoot(): AccessibilityNodeInfo? {
+        // Every read of the app goes through here, so a pause takes hold before the next action.
+        holdWhilePaused()
         // Checked across all windows: the prompt is drawn over the target app
         // while the system still reports the app as the active window, and
         // while it is up, coordinate taps land on the prompt instead.
@@ -464,7 +622,7 @@ class AutomationEngine private constructor(
         timeoutMs: Long = AutomationConfig.Timeouts.SETTINGS_SCREEN,
         find: (AccessibilityNodeInfo) -> T?,
     ): T? {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         var misses = 0
         var scrolls = 0
         while (true) {
@@ -483,7 +641,7 @@ class AutomationEngine private constructor(
                     if (scrolled) scrolls++
                 }
             }
-            if (SystemClock.elapsedRealtime() >= deadline) return null
+            if (clock() >= deadline) return null
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return null
         }
     }
@@ -561,7 +719,7 @@ class AutomationEngine private constructor(
      * cancelled, or the target app stops being the readable foreground window.
      */
     fun waitForAny(identifiers: List<String>, timeoutMs: Long): WaitOutcome {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         var nullRootSinceMs = 0L
         var lastIdentifiers: List<String> = emptyList()
         var lastReadable = false
@@ -588,7 +746,7 @@ class AutomationEngine private constructor(
                 if (promptVisible) {
                     nullRootSinceMs = 0L
                 } else if (everSawTarget) {
-                    val now = SystemClock.elapsedRealtime()
+                    val now = clock()
                     if (nullRootSinceMs == 0L) {
                         nullRootSinceMs = now
                     } else if (now - nullRootSinceMs >= AutomationConfig.FOREIGN_WINDOW_ABORT_MS) {
@@ -597,7 +755,7 @@ class AutomationEngine private constructor(
                 }
             }
 
-            if (SystemClock.elapsedRealtime() >= deadline) {
+            if (clock() >= deadline) {
                 return WaitOutcome.TimedOut(lastIdentifiers, lastReadable)
             }
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return WaitOutcome.Cancelled
@@ -609,14 +767,14 @@ class AutomationEngine private constructor(
      * signal that it reached the foreground after a launch.
      */
     fun waitForTargetWindow(timeoutMs: Long): Boolean {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         while (true) {
             if (cancelled) return false
             if (targetRoot() != null) {
                 everSawTarget = true
                 return true
             }
-            if (SystemClock.elapsedRealtime() >= deadline) return false
+            if (clock() >= deadline) return false
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return false
         }
     }
@@ -645,6 +803,39 @@ class AutomationEngine private constructor(
         return anchor.isSelected || AccessibilityNodeFinder.resolveClickable(anchor)?.isSelected == true
     }
 
+    /**
+     * True while Android's own biometric prompt is in front (System UI is the active window). The target app cannot
+     * be read then, so a wait that sees nothing is the prompt waiting for a finger, not the app having gone.
+     */
+    fun biometricPromptInFront(): Boolean =
+        service.rootNode()?.packageName?.toString() == "com.android.systemui"
+
+    /**
+     * The message of an Android permission prompt in front of the target app (e.g. "Allow Tradion to take pictures and
+     * record video?"), or null when there is none. Only notification prompts are answered by the engine; any other is
+     * left to a person.
+     */
+    fun permissionPromptMessage(): String? {
+        val prompt = service.windowRootOf(AutomationConfig.PERMISSION_CONTROLLER_PACKAGES) ?: return null
+        return AccessibilityNodeFinder.byIdentifier(prompt, AutomationConfig.SystemIds.PERMISSION_MESSAGE)?.text?.toString()
+            ?: "a permission prompt"
+    }
+
+    /**
+     * True when the control tagged [identifier] (or a node inside it) reports itself disabled: a button whose action is
+     * switched off. Read from the tag's own subtree, because the clickable resolved for a tap may be an ancestor.
+     */
+    fun isDisabled(identifier: String): Boolean {
+        val anchor = findNow(identifier) ?: return false
+        fun walk(node: AccessibilityNodeInfo?, depth: Int): Boolean {
+            if (node == null || depth > 6) return false
+            if (!node.isEnabled) return true
+            for (i in 0 until node.childCount) if (walk(node.getChild(i), depth + 1)) return true
+            return false
+        }
+        return walk(anchor, 0)
+    }
+
     /** The first of [identifiers] currently present, if any. */
     fun firstPresent(identifiers: List<String>): String? {
         val root = targetRoot() ?: return null
@@ -664,6 +855,13 @@ class AutomationEngine private constructor(
         val node = findNow(identifier) ?: return null
         return (node.text ?: node.contentDescription)?.toString()
     }
+
+    private val notice by lazy { NoticeOverlay(service) }
+
+    /** Shows a banner over the target app for the person watching the run (it takes no touches). */
+    fun showNotice(text: String) = notice.show(text)
+
+    fun hideNotice() = notice.hide()
 
     /** Every label under nodes carrying [identifier]; see [AccessibilityNodeFinder.labelsOf]. */
     fun labelsOf(identifier: String): List<String> =
@@ -811,15 +1009,15 @@ class AutomationEngine private constructor(
     fun screenTexts(limit: Int = 12): List<String> = AccessibilityNodeFinder.visibleTexts(targetRoot(), limit)
 
     /** Identifiers on screen right now, for failure messages. */
-    fun visibleIdentifiers(): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot())
+    fun visibleIdentifiers(limit: Int = 25): List<String> = AccessibilityNodeFinder.collectIdentifiers(targetRoot(), limit)
 
     /** Polls until [identifier] has left the screen. False on timeout or cancel. */
     fun waitForGone(identifier: String, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         while (true) {
             if (cancelled) return false
             if (targetRoot() != null && !isPresent(identifier)) return true
-            if (SystemClock.elapsedRealtime() >= deadline) return false
+            if (clock() >= deadline) return false
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return false
         }
     }
@@ -849,7 +1047,7 @@ class AutomationEngine private constructor(
         longPress: Boolean = false,
         stopOn: List<String> = emptyList(),
     ): ActionOutcome {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         var taps = 0
         var lastTap: ActionOutcome? = null
         var nextTapAt = 0L
@@ -872,7 +1070,7 @@ class AutomationEngine private constructor(
                         expect.joinToString(" or ") { "'$it'" } + ".",
                 )
             }
-            val now = SystemClock.elapsedRealtime()
+            val now = clock()
             if (now >= nextTapAt && isPresent(identifier)) {
                 val outcome = if (longPress) longTap(identifier) else tap(identifier)
                 if (outcome.ok) {
@@ -920,11 +1118,11 @@ class AutomationEngine private constructor(
 
     /** [waitUntil] with its own poll interval: a short one for a change that arrives within a fraction of a second. */
     fun waitUntil(timeoutMs: Long, pollMs: Long, condition: () -> Boolean): Boolean {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         while (true) {
             if (cancelled) return false
             if (condition()) return true
-            if (SystemClock.elapsedRealtime() >= deadline) return false
+            if (clock() >= deadline) return false
             if (!sleep(pollMs)) return false
         }
     }
@@ -956,13 +1154,15 @@ class AutomationEngine private constructor(
         return isPresent(identifier)
     }
 
-    /** Interruptible sleep. Returns false when the run was cancelled. */
+    /** Interruptible sleep. Returns false when the run was cancelled. Time spent paused does not count. */
     fun sleep(millis: Long): Boolean {
-        val end = SystemClock.elapsedRealtime() + millis
-        while (SystemClock.elapsedRealtime() < end) {
+        holdWhilePaused()
+        val end = clock() + millis
+        while (clock() < end) {
             if (cancelled) return false
+            holdWhilePaused()
             try {
-                Thread.sleep(minOf(60L, end - SystemClock.elapsedRealtime()).coerceAtLeast(1L))
+                Thread.sleep(minOf(60L, end - clock()).coerceAtLeast(1L))
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 return false
@@ -1484,6 +1684,49 @@ class AutomationEngine private constructor(
     fun switchStateOfId(identifier: String): Boolean? =
         findNow(identifier)?.let { AccessibilityNodeFinder.resolveCheckable(it) }?.isChecked
 
+    /**
+     * The on / off switch on the same row as the text [label], for a switch that carries no identifier (an older
+     * build): of the checkable nodes on screen, the one whose vertical centre is nearest the label's, within a row.
+     */
+    private fun switchBesideText(label: String): AccessibilityNodeInfo? {
+        val root = targetRoot() ?: return null
+        val anchor = AccessibilityNodeFinder.byTextContaining(root, label) ?: return null
+        val at = Rect().also { anchor.getBoundsInScreen(it) }
+        val switches = mutableListOf<AccessibilityNodeInfo>()
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.addLast(root to 0)
+        var scanned = 0
+        while (queue.isNotEmpty() && ++scanned <= AutomationConfig.MAX_NODES_PER_SCAN) {
+            val (node, depth) = queue.removeFirst()
+            if (node.isCheckable) switches += node
+            if (depth >= AutomationConfig.MAX_TREE_DEPTH) continue
+            for (i in 0 until node.childCount) {
+                val child = try {
+                    node.getChild(i)
+                } catch (_: Throwable) {
+                    null
+                } ?: continue
+                queue.addLast(child to depth + 1)
+            }
+        }
+        val reach = maxOf(at.height() * 2, 120)
+        return switches
+            .map { it to Rect().also { r -> it.getBoundsInScreen(r) }.centerY() }
+            .filter { (_, y) -> kotlin.math.abs(y - at.centerY()) <= reach }
+            .minByOrNull { (_, y) -> kotlin.math.abs(y - at.centerY()) }
+            ?.first
+    }
+
+    /** Whether the switch beside [label] is on; null when no switch is found there. */
+    fun switchStateBesideText(label: String): Boolean? = switchBesideText(label)?.isChecked
+
+    /** Taps the switch beside [label]. */
+    fun tapSwitchBesideText(label: String): ActionOutcome {
+        val node = switchBesideText(label) ?: return ActionOutcome(false, "no switch found beside '$label'")
+        return if (clickResolved(node)) ActionOutcome(true, "tapped the switch beside '$label'")
+        else ActionOutcome(false, "found the switch beside '$label' but could not tap it")
+    }
+
     /** Taps the control whose whole label is [label] and that lies lowest on screen (the footer button, not the app bar title of the same name). */
     fun tapLowestExactText(label: String): ActionOutcome {
         val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
@@ -1498,9 +1741,10 @@ class AutomationEngine private constructor(
     /** Long-presses the row whose label contains [part] (the Pending list's rows carry no identifier). */
     fun longTapText(part: String): ActionOutcome {
         val root = targetRoot() ?: return ActionOutcome(false, "the target application window is not readable")
-        val anchor = AccessibilityNodeFinder.byTextContaining(root, part)
-            ?: return ActionOutcome(false, "no row labelled '$part' is on screen")
-        val node = AccessibilityNodeFinder.resolveLongClickable(anchor)
+        val anchors = AccessibilityNodeFinder.allByTextContaining(root, part)
+        if (anchors.isEmpty()) return ActionOutcome(false, "no row labelled '$part' is on screen")
+        // The first node with the text can be a notification or a heading: the first one that takes a long-press is the row.
+        val node = anchors.firstNotNullOfOrNull { AccessibilityNodeFinder.resolveLongClickable(it) }
             ?: return ActionOutcome(false, "'$part' advertises no long-press")
         val ok = try {
             node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
@@ -1603,12 +1847,12 @@ class AutomationEngine private constructor(
      * identifier of its own, so there is nothing else to wait on.
      */
     fun waitAndTap(identifier: String, fallbackTexts: List<String>, timeoutMs: Long): ActionOutcome {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        val deadline = clock() + timeoutMs
         while (true) {
             if (cancelled) return ActionOutcome(false, "cancelled")
             val outcome = tap(identifier, fallbackTexts)
             if (outcome.ok) return outcome
-            if (SystemClock.elapsedRealtime() >= deadline) return outcome
+            if (clock() >= deadline) return outcome
             if (!sleep(AutomationConfig.POLL_INTERVAL_MS)) return ActionOutcome(false, "cancelled")
         }
     }

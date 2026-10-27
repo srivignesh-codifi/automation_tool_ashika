@@ -22,7 +22,7 @@ object AppModules {
         AppModule(
             "login", "Login",
             "Login page checks: Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, " +
-                "Confirm OTP button, Enable 2FA. Signing in itself always runs. \"Direct login only\" skips the " +
+                "Confirm OTP button, Enable 2FA (the biometric enrolment itself is always checked). Signing in itself always runs. \"Direct login only\" skips the " +
                 "Guest, Unblock, Join Now, Forgot Password and Switch Account detours.",
             listOf(
                 "guest_user_checked", "unblock_account_checked", "join_now_checked",
@@ -46,9 +46,11 @@ object AppModules {
             "The order pad and the order book, on a LIVE account. Choose below which exchanges to open the pad for and " +
                 "which instrument to use (by default NSE with IDEA, and MCX with CRUDEOIL). Each takes an empty user watchlist " +
                 "(a full one is cleared: every instrument in it is removed), adds the instrument and checks the pad's fields, " +
-                "order types and validation messages. Orders (Regular Market / Limit, CO, BO, AMO, BUY and SELL) are placed only " +
-                "where \"Place orders\" is on (NSE and BSE only; NSE by default), and only while the pad itself shows Avail. " +
-                "Margin 0.00 and a margin shortfall, so the exchange refuses them; with any other margin they are skipped. " +
+                "order types, Advanced Options (Validity, Disclosed Quantity) and validation messages. Orders are placed only " +
+                "where \"Place orders\" is on (any exchange; NSE by default): every order type BUY and SELL (Market, Limit, SL, " +
+                "SL-M, CO, BO, AMO), a Limit BUY per product (NRML, CNC, MTF), and a Limit BUY with Validity IOC and one with a " +
+                "Disclosed Quantity; the kinds can be switched off below. Each is sent only while the pad itself shows Avail. " +
+                "Margin 0.00 and a margin shortfall, so the exchange refuses it; with any other margin it is skipped. " +
                 "The GTT sub-module (its own switch and instrument) creates a GTT order from Orders > GTT (a trigger that cannot be reached), modifies it and cancels it, " +
                 "all on the Orders screen: no watchlist and no order pad. The basket sub-module (its own switch and instrument) " +
                 "creates a basket from Orders > Basket, adds the instrument, modifies the scrip, renames the basket, executes it " +
@@ -84,8 +86,12 @@ object AppModules {
         ),
         AppModule(
             "profile", "Profile",
-            "Account and Trade Settings load.",
-            listOf("profile_account_loaded", "profile_trade_settings_loaded"),
+            "Both tabs, every row. Account: profile details, Switch Account sheet, Funds, Add Funds, Exchange Messages, " +
+                "Markets Status, Customer Support, Rate Our App and the company / version details. Trade Settings: the " +
+                "Fixed header, Notification, Order preview and Dark theme switches and the font size (each changed and " +
+                "restored), Security Settings, order preferences and Accessibility Settings. Nothing is switched, paid or " +
+                "submitted; TOTP, Freeze and Developer Console are checked but not tapped.",
+            ProfileSuite.ALL_IDS,
         ),
     )
 
@@ -145,16 +151,17 @@ object AppModules {
 class OrderSegmentPlan(
     /** Open the order pad of this exchange's instrument and check it. */
     val enabled: Boolean,
-    /** Also place orders (NSE and BSE only; the margin gate still applies). */
+    /** Also place orders there (any exchange; the margin gate still applies to every one). */
     val place: Boolean,
     /** The instrument to search for and open the pad of: IDEA, CRUDEOIL, ... */
     val script: String,
 )
 
 /**
- * The Order placement settings of a run: for each exchange whether its pad is checked, whether orders are placed there
- * (only NSE and BSE ever can be), and which instrument is used. The default places on NSE only, with IDEA, and checks
- * the MCX pad with CRUDEOIL.
+ * The Order placement settings of a run: for each exchange whether its pad is checked, whether orders are placed there,
+ * and which instrument is used; and which kinds of order are placed (order types, products, Advanced Options). The
+ * default places on NSE only, with IDEA, and checks the MCX pad with CRUDEOIL. On any exchange an order is only sent
+ * while the pad shows Avail. Margin 0.00 and a margin above it (OrderPad.Gate).
  */
 class OrderPlan(
     private val segments: Map<String, OrderSegmentPlan>,
@@ -166,13 +173,28 @@ class OrderPlan(
     val basket: Boolean = true,
     /** The NSE stock the basket test adds. */
     val basketScript: String = "IDEA",
+    /** The kinds of order (see [KINDS]) the operator switched off; the others are placed. */
+    val placeOff: Set<String> = emptySet(),
 ) {
 
     fun of(key: String): OrderSegmentPlan = segments[key] ?: DEFAULT.segments.getValue(key)
 
+    /** Whether orders of [kind] (an id of [KINDS]) are placed. */
+    fun places(kind: String): Boolean = kind !in placeOff
+
     companion object {
         val KEYS = listOf("nse", "bse", "nfo", "bfo", "mcx")
-        private val PLACEABLE = setOf("nse", "bse")
+
+        /**
+         * The kinds of order the module can place, as the Order settings name them: order types (BUY and SELL), the
+         * products other than MIS (a Limit BUY each; MIS is the product of the order types), and the Advanced Options
+         * (a Limit BUY with Validity IOC, one with a Disclosed Quantity).
+         */
+        val KINDS = listOf(
+            "market", "limit", "sl", "slm", "co", "bo", "amo",
+            "nrml", "cnc", "mtf",
+            "ioc", "disclosed",
+        )
 
         val DEFAULT = OrderPlan(
             mapOf(
@@ -201,14 +223,14 @@ class OrderPlan(
                 val enabled = (m["enabled"] as? Boolean) ?: default.enabled
                 out[key] = OrderSegmentPlan(
                     enabled = enabled,
-                    // Orders are never placed outside NSE and BSE, whatever was sent.
-                    place = enabled && key in PLACEABLE && ((m["place"] as? Boolean) ?: default.place),
+                    place = enabled && ((m["place"] as? Boolean) ?: default.place),
                     script = script.ifEmpty { default.script },
                 )
             }
             val basket = (raw["basket"] as? Boolean) ?: true
             val basketScript = (raw["basketScript"] as? String).orEmpty().uppercase().filter { it.isLetterOrDigit() || it == '&' || it == '-' }.take(24).ifEmpty { "IDEA" }
-            return OrderPlan(out, gtt, gttScript, basket, basketScript)
+            val placeOff = (raw["placeOff"] as? List<*>).orEmpty().filterIsInstance<String>().filter { it in KINDS }.toSet()
+            return OrderPlan(out, gtt, gttScript, basket, basketScript, placeOff)
         }
     }
 }
@@ -224,6 +246,10 @@ class ModuleSelection(
     val directLogin: Boolean = false,
     /** Order placement module settings: which exchanges, which instruments, where orders are placed. */
     val orders: OrderPlan = OrderPlan.DEFAULT,
+    /** Profile module settings: the ids of the Profile checks the operator switched off. */
+    val profileOff: Set<String> = emptySet(),
+    /** Run in live market hours: the market-data feed is measured over the whole run (default: BOD, not measured). */
+    val liveMarket: Boolean = false,
 ) {
 
     fun isOn(id: String): Boolean = selected == null || id in selected
@@ -231,6 +257,9 @@ class ModuleSelection(
     fun label(id: String): String = all.firstOrNull { it.id == id }?.label ?: id
 
     fun stepIds(id: String): List<String> = all.firstOrNull { it.id == id }?.stepIds.orEmpty()
+
+    /** The module that owns [stepId], or null. */
+    fun moduleOf(stepId: String): String? = all.firstOrNull { stepId in it.stepIds }?.id
 
     val onLabels: List<String> get() = all.filter { isOn(it.id) }.map { it.label }
 

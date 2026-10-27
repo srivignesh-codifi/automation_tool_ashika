@@ -30,6 +30,8 @@ class AutomationResult {
     this.recordingNote,
     this.modulesRun = const <String>[],
     this.modulesSkipped = const <String>[],
+    this.sessionBreaks = const <SessionBreak>[],
+    this.feed,
   });
 
   final String runId;
@@ -70,6 +72,14 @@ class AutomationResult {
   final List<String> modulesRun;
   final List<String> modulesSkipped;
 
+  /// Each time the target app's session expired mid-run (HTTP 401), where,
+  /// which API, and whether the run signed in again and resumed.
+  final List<SessionBreak> sessionBreaks;
+
+  /// The market-data feed over the run: `mode` is `live` (measured) or `bod`
+  /// (not measured). Null for a run that did not report it.
+  final Map<String, Object?>? feed;
+
   bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
 
   /// Seconds into the video at which [step] began, or null when it is not
@@ -108,6 +118,8 @@ class AutomationResult {
     recordingNote: recordingNote,
     modulesRun: modulesRun,
     modulesSkipped: modulesSkipped,
+    sessionBreaks: sessionBreaks,
+    feed: feed,
   );
 
   DateTime? get startedAt => startedAtMs == null
@@ -200,6 +212,17 @@ class AutomationResult {
       recordingNote: map['recordingNote'] as String?,
       modulesRun: _strings(map['modulesRun']),
       modulesSkipped: _strings(map['modulesSkipped']),
+      sessionBreaks: map['sessionBreaks'] is List
+          ? (map['sessionBreaks'] as List)
+                .whereType<Map<Object?, Object?>>()
+                .map(SessionBreak.fromMap)
+                .toList(growable: false)
+          : const <SessionBreak>[],
+      feed: map['feed'] is Map
+          ? Map<String, Object?>.from(
+              (map['feed'] as Map).map((k, v) => MapEntry(k.toString(), v)),
+            )
+          : null,
     );
   }
 
@@ -232,6 +255,8 @@ class AutomationResult {
     'recordingNote': recordingNote,
     'modulesRun': modulesRun,
     'modulesSkipped': modulesSkipped,
+    'sessionBreaks': sessionBreaks.map((b) => b.toJson()).toList(),
+    'feed': feed,
   };
 
   static List<String> _strings(Object? raw) => raw is List
@@ -372,5 +397,55 @@ class ApiSummary {
       'failed': signInsFailed,
     },
     'problems': problems,
+  };
+}
+
+/// One session expiry during a run: the step it interrupted, the API the app
+/// reported as refused (HTTP 401), and what the run did next.
+class SessionBreak {
+  const SessionBreak({
+    required this.number,
+    required this.stepId,
+    required this.stepName,
+    this.code,
+    required this.context,
+    required this.screen,
+    required this.api,
+    this.atMs,
+    required this.outcome,
+  });
+
+  final int number;
+  final String stepId;
+  final String stepName;
+  final String? code;
+  final String context;
+  final String screen;
+  final String api;
+  final int? atMs;
+  final String outcome;
+
+  factory SessionBreak.fromMap(Map<Object?, Object?> map) => SessionBreak(
+    number: (map['number'] as num?)?.toInt() ?? 0,
+    stepId: (map['stepId'] as String?) ?? 'unknown',
+    stepName: (map['stepName'] as String?) ?? 'unknown',
+    code: map['code'] as String?,
+    context: (map['context'] as String?) ?? '',
+    screen: (map['screen'] as String?) ?? '',
+    api: (map['api'] as String?) ?? '',
+    atMs: (map['atMs'] as num?)?.toInt(),
+    outcome: (map['outcome'] as String?) ?? '',
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'number': number,
+    'stepId': stepId,
+    'stepName': stepName,
+    'code': code,
+    'context': context,
+    'screen': screen,
+    'api': api,
+    'atMs': atMs,
+    'outcome': outcome,
   };
 }

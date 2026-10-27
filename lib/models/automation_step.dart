@@ -74,6 +74,8 @@ class AutomationStep {
     this.evidence,
     this.recommendation,
     this.cleanup,
+    this.unauthorized,
+    this.reruns = 0,
   });
 
   final String id;
@@ -112,6 +114,15 @@ class AutomationStep {
   final String? evidence;
   final String? recommendation;
   final String? cleanup;
+
+  /// The calls the target app reported as refused (HTTP 401 / session
+  /// expired) while this step ran. Highlighted in every report.
+  final String? unauthorized;
+
+  /// Times the step was run again after the tool signed in again.
+  final int reruns;
+
+  bool get hadUnauthorized => unauthorized != null && unauthorized!.isNotEmpty;
 
   /// The cause in the report's fixed vocabulary.
   String get causeTag => switch (cause) {
@@ -170,6 +181,7 @@ class AutomationStep {
     'not_confirmed' => 'NOT CONFIRMED',
     'not_checked' => 'NOT CHECKED',
     'skipped' => 'SKIPPED',
+    'unauthorized' => '401 UNAUTHORIZED',
     _ => '',
   };
 
@@ -207,6 +219,8 @@ class AutomationStep {
       evidence: evidence,
       recommendation: recommendation,
       cleanup: cleanup,
+      unauthorized: unauthorized,
+      reruns: reruns,
       id: id,
       name: name,
       status: status ?? this.status,
@@ -242,6 +256,8 @@ class AutomationStep {
       evidence: map['evidence'] as String?,
       recommendation: map['recommendation'] as String?,
       cleanup: map['cleanup'] as String?,
+      unauthorized: map['unauthorized'] as String?,
+      reruns: (map['reruns'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -268,5 +284,7 @@ class AutomationStep {
     'evidence': evidence,
     'recommendation': recommendation,
     'cleanup': cleanup,
+    'unauthorized': unauthorized,
+    'reruns': reruns,
   };
 }

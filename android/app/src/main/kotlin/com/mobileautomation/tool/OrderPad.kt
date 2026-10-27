@@ -94,8 +94,8 @@ class OrderPad(private val engine: AutomationEngine) {
      */
     fun settledGate(timeoutMs: Long): Gate {
         var g = gate()
-        val end = android.os.SystemClock.elapsedRealtime() + timeoutMs
-        while (!g.ok && android.os.SystemClock.elapsedRealtime() < end) {
+        val end = engine.clock() + timeoutMs
+        while (!g.ok && engine.clock() < end) {
             if (!engine.sleep(600)) break
             g = gate()
         }

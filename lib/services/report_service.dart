@@ -384,6 +384,9 @@ class ReportService {
     }
     out.writeln();
 
+    // ── Session expiry (HTTP 401) ────────────────────────────────────────
+    _writeUnauthorized(out, result);
+
     // ── Failure ───────────────────────────────────────────────────────────
     final failure = result.firstFailure;
     if (failure != null) {
@@ -461,6 +464,8 @@ class ReportService {
         )
         ..writeln();
     }
+
+    _writeFeed(out, result);
 
     // ── Slowest steps ─────────────────────────────────────────────────────
     final timed = result.steps.where((s) => (s.durationMs ?? 0) > 0).toList()
@@ -563,6 +568,213 @@ class ReportService {
   }
 
   // ── Text report helpers ─────────────────────────────────────────────────
+
+  /// The 401s first: every session expiry (where, which API, what the run did)
+  /// and every step during which the app reported a refused call.
+  static void _writeUnauthorized(StringBuffer out, AutomationResult result) {
+    final steps = result.steps.where((s) => s.hadUnauthorized).toList();
+    if (result.sessionBreaks.isEmpty && steps.isEmpty) return;
+    _heading(out, '!!! SESSION EXPIRED / HTTP 401 !!!');
+    for (final b in result.sessionBreaks) {
+      final at = b.atMs == null
+          ? ''
+          : ' at ${_clock24.format(DateTime.fromMillisecondsSinceEpoch(b.atMs!))}';
+      out
+        ..writeln(
+          '  #${b.number}$at  ${b.code == null ? '' : '${b.code} '}${b.stepName}',
+        )
+        ..writeln('      while   ${b.context} (back on the ${b.screen} screen)')
+        ..writeln('      API     ${b.api}')
+        ..writeln('      then    ${b.outcome}');
+    }
+    if (steps.isNotEmpty) {
+      out.writeln('  Steps where a call was refused:');
+      for (final s in steps) {
+        final rerun = s.reruns > 0 ? '  [run again ${s.reruns}x]' : '';
+        out.writeln(
+          '  >>> 401  ${s.code == null ? '' : '${s.code} '}${s.name}  (${s.status.label})$rerun',
+        );
+        out.writeln('           ${s.unauthorized}');
+      }
+    }
+    out.writeln();
+  }
+
+  /// The market-data feed (websocket) over the run, in its own section: for a
+  /// live-trade-time run what it did, for a BOD run that it was not measured.
+  static void _writeFeed(StringBuffer out, AutomationResult result) {
+    final feed = result.feed;
+    if (feed == null) return;
+    _heading(out, 'LIVE FEED (WEBSOCKET)');
+    if (feed['mode'] != 'live') {
+      _kv(out, 'Session', 'BOD');
+      out
+        ..writeln('  ${feed['note'] ?? 'The live feed was not measured.'}')
+        ..writeln();
+      return;
+    }
+    for (final line in _feedLines(feed)) {
+      _kv(out, line.$1, line.$2);
+    }
+    final drops = _feedDrops(feed);
+    if (drops.isEmpty) {
+      out.writeln(
+        '  Disconnected      never: the feed stayed connected for the whole test',
+      );
+    } else {
+      out.writeln('  Where it disconnected:');
+      for (final d in drops) {
+        out.writeln('    >>> ${d.$1}  ${d.$2}  · during: ${d.$3}');
+      }
+    }
+    final problems = _feedList(
+      feed['problems'],
+    ).where((p) => !p.startsWith('feed dropped at')).toList();
+    if (problems.isNotEmpty) {
+      out.writeln('  Problems:');
+      for (final p in problems) {
+        out.writeln('    !! $p');
+      }
+    }
+    final events = _feedEvents(feed);
+    if (events.isNotEmpty) {
+      out.writeln(
+        '  Events (connects, disconnections, errors), with the step running:',
+      );
+      for (final e in events) {
+        out.writeln(
+          '    ${e.$1}  ${e.$3 ? 'ERROR ' : ''}${e.$2}${e.$4 == null ? '' : '  · ${e.$4}'}',
+        );
+      }
+    }
+    out
+      ..writeln(
+        '  From what Tradion reports about its own feed socket (ws_feed_status), '
+        'read after every step; not network traffic.',
+      )
+      ..writeln();
+  }
+
+  /// (clock, cause, step) of each time the feed was lost.
+  static List<(String, String, String)> _feedDrops(Map<String, Object?> f) {
+    final raw = f['disconnections'];
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map((d) {
+      final at = (d['atMs'] as num?)?.toInt();
+      return (
+        at == null
+            ? '--:--:--'
+            : _clock24.format(DateTime.fromMillisecondsSinceEpoch(at)),
+        d['cause']?.toString() ?? 'disconnected',
+        d['step']?.toString() ?? 'before the first step',
+      );
+    }).toList();
+  }
+
+  static List<String> _feedList(Object? raw) =>
+      raw is List ? raw.map((e) => e.toString()).toList() : const <String>[];
+
+  static String _feedMs(Object? raw) => raw is num ? _ms(raw.toInt()) : '—';
+
+  static List<(String, String)> _feedLines(Map<String, Object?> f) {
+    String n(String k) => (f[k] as num?)?.toInt().toString() ?? '0';
+    final connected = f['connectedAtEnd'];
+    return [
+      ('Session', 'Live trade time'),
+      (
+        'Verdict',
+        f['verdict'] == 'OK'
+            ? 'OK: no feed problem was seen'
+            : 'PROBLEMS (below)',
+      ),
+      (
+        'Connected at end',
+        connected == true ? 'yes' : (connected == false ? 'NO' : 'unknown'),
+      ),
+      (
+        'Connections',
+        '${n('connects')} established of ${n('connectAttempts')} attempt(s); '
+            '${n('connectTimeouts')} timed out; ${n('loginRejects')} rejected',
+      ),
+      ('Disconnections', '${n('disconnects')} unplanned'),
+      (
+        'Subscriptions',
+        '${n('subscribedKeys')} instrument(s) at the end; ${n('unackedKeys')} '
+            'never acknowledged; ${n('ackTimeouts')} ack timeout(s); '
+            '${n('silentKeys')} silent',
+      ),
+      (
+        'Ticks',
+        '${n('ticks')} received; longest gap ${_feedMs(f['maxTickGapMs'])}',
+      ),
+      (
+        'Heartbeats',
+        '${n('heartbeatsSent')} sent; ${n('heartbeatsMissing')} unanswered; '
+            'slowest round trip ${_feedMs(f['maxRttMs'])}',
+      ),
+      (
+        'Stale / errors',
+        '${n('staleDetections')} stale feed(s); ${n('malformedFrames')} '
+            'malformed frame(s); ${n('errorEvents')} error event(s)',
+      ),
+      (
+        'Timings',
+        'connect → login ack ${_feedMs(f['connectToAckMs'])}; '
+            'ack → first tick ${_feedMs(f['ackToFirstTickMs'])}',
+      ),
+      (
+        'Readings',
+        '${n('samples')} (one after every step); ${n('unreadSamples')} could not be read',
+      ),
+    ];
+  }
+
+  /// (clock, phase, error, step) of each recorded feed event.
+  static List<(String, String, bool, String?)> _feedEvents(
+    Map<String, Object?> f,
+  ) {
+    final raw = f['events'];
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map((e) {
+      final at = (e['atMs'] as num?)?.toInt();
+      return (
+        at == null
+            ? '--:--:--'
+            : _clock24.format(DateTime.fromMillisecondsSinceEpoch(at)),
+        e['phase']?.toString() ?? '',
+        e['error'] == true,
+        e['step']?.toString(),
+      );
+    }).toList();
+  }
+
+  static String _feedHtml(Map<String, Object?>? feed) {
+    if (feed == null) return '';
+    if (feed['mode'] != 'live') {
+      return '<h2>Live feed (websocket)</h2><p class="muted">BOD session: '
+          '${_esc(feed['note']?.toString() ?? 'the live feed was not measured.')}</p>';
+    }
+    final ok = feed['verdict'] == 'OK';
+    final rows = _feedLines(feed)
+        .map((l) => '<tr><td>${_esc(l.$1)}</td><td>${_esc(l.$2)}</td></tr>')
+        .join();
+    final problems = _feedList(
+      feed['problems'],
+    ).where((p) => !p.startsWith('feed dropped at')).toList();
+    final events = _feedEvents(feed);
+    final drops = _feedDrops(feed);
+    final dropBlock = drops.isEmpty
+        ? '<p><strong>Disconnected: never</strong>: the feed stayed connected for the whole test.</p>'
+        : '<p><strong>Where it disconnected</strong></p><ul>${drops.map((d) => '<li><code>${_esc(d.$1)}</code> <strong>${_esc(d.$2)}</strong> · during ${_esc(d.$3)}</li>').join()}</ul>';
+    return '<div class="feed-box${ok ? '' : ' bad'}">'
+        '<h2>Live feed (websocket) — ${ok ? 'OK' : 'PROBLEMS'}</h2>'
+        '<table class="meta">$rows</table>'
+        '$dropBlock'
+        '${problems.isEmpty ? '' : '<ul>${problems.map((p) => '<li><strong>${_esc(p)}</strong></li>').join()}</ul>'}'
+        '${events.isEmpty ? '' : '<p><strong>Events</strong> (with the step that was running)</p><ul class="paths">${events.map((e) => '<li><code>${_esc(e.$1)}</code> ${e.$3 ? '<strong>ERROR</strong> ' : ''}${_esc(e.$2)}${e.$4 == null ? '' : ' · ${_esc(e.$4!)}'}</li>').join()}</ul>'}'
+        '<p class="muted">From what Tradion reports about its own feed socket, read after every step; not network traffic.</p>'
+        '</div>';
+  }
 
   static void _heading(StringBuffer out, String title) {
     out
@@ -929,9 +1141,9 @@ class ReportService {
         step.outcomeLabel,
       ].whereType<String>().join(' ').toLowerCase();
       rows.write('''
-      <tr class="${step.status.wire}" data-module="${_esc(moduleLabelOf(step))}" data-status="${step.status.wire}" data-text="${_esc(haystack)}">
+      <tr class="${step.status.wire}${step.hadUnauthorized ? ' unauth' : ''}" data-module="${_esc(moduleLabelOf(step))}" data-status="${step.status.wire}" data-text="${_esc(haystack)}">
         <td class="glyph">${step.status.glyph}</td>
-        <td class="name">${_esc(step.name)}</td>
+        <td class="name">${step.hadUnauthorized ? '<span class="pill unauthorized">401</span> ' : ''}${_esc(step.name)}</td>
         <td class="status"><span class="pill ${step.status.wire}">${step.skipKind != null || step.isCase ? _esc(step.outcomeLabel) : step.status.label}</span></td>
         <td class="time">${step.startedAt == null ? '—' : _esc(_stamp.format(step.startedAt!))}</td>
         <td class="time">${step.finishedAt == null ? '—' : _esc(_stamp.format(step.finishedAt!))}</td>
@@ -1007,6 +1219,20 @@ $moduleChips
   <p class="muted">Inferred from what the screen shows, not from network traffic: a load passes when the
   app's spinners clear in time with no error screen (over $_slowSeconds s is SLOW); a change is CONFIRMED when it
   was re-read afterwards and matched; sign-in when the next screen followed.</p>
+''';
+
+    final unauthSteps = result.steps.where((s) => s.hadUnauthorized).toList();
+    final unauthBlock = result.sessionBreaks.isEmpty && unauthSteps.isEmpty
+        ? ''
+        : '''
+  <div class="unauth-box">
+    <h2>Session expired / HTTP 401</h2>
+    ${result.sessionBreaks.map((b) => '<p><strong>#${b.number}</strong> ${b.atMs == null ? '' : _esc(_clock24.format(DateTime.fromMillisecondsSinceEpoch(b.atMs!)))} · '
+              '<strong>${_esc('${b.code == null ? '' : '${b.code} '}${b.stepName}')}</strong><br>'
+              'While ${_esc(b.context)} (back on the ${_esc(b.screen)} screen)<br>'
+              'API: <code>${_esc(b.api)}</code><br>Then: ${_esc(b.outcome)}</p>').join('\n    ')}
+    ${unauthSteps.isEmpty ? '' : '<p><strong>Steps where a call was refused</strong> (highlighted in the checklist):</p><ul>${unauthSteps.map((s) => '<li>${_esc('${s.code == null ? '' : '${s.code} '}${s.name}')} — <code>${_esc(s.unauthorized!)}</code>${s.reruns > 0 ? ' (run again after signing in)' : ''}</li>').join()}</ul>'}
+  </div>
 ''';
 
     final failure = result.firstFailure;
@@ -1155,6 +1381,13 @@ $moduleChips
   .pill.ok, .pill.confirmed { color:var(--pass); }
   .pill.error, .pill.timeout, .pill.not_confirmed { color:var(--fail); }
   .pill.slow, .pill.empty, .pill.not_checked { color:var(--skip); }
+  .pill.unauthorized { color:#fff; background:#c62828; border-color:#c62828; font-weight:700; }
+  tr.unauth td { background:rgba(198,40,40,.12); }
+  .feed-box { border:2px solid #2e7d32; border-radius:10px; padding:4px 16px; margin:16px 0; }
+  .feed-box.bad { border-color:#c62828; }
+  .unauth-box { border:2px solid #c62828; border-radius:10px; padding:4px 16px; margin:16px 0;
+                background:rgba(198,40,40,.08); }
+  .unauth-box h2 { color:#c62828; }
   td.time a { color:inherit; text-decoration:none; border-bottom:1px dotted var(--muted); }
   .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
   .toolbar input { flex:1 1 220px; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
@@ -1190,8 +1423,10 @@ $moduleChips
     <tr><td>Duration</td><td>${result.duration == null ? '—' : _esc(_formatDuration(result.duration!))}</td></tr>
   </table>
 
+$unauthBlock
 $recording
 $apiBlock
+${_feedHtml(result.feed)}
 $moduleBlock  <h2>Checklist</h2>
 $toolbar  <div class="scroll">
   <table class="steps">

@@ -31,12 +31,15 @@ object StepApi {
     const val NOT_CHECKED = "not_checked"
     const val SKIPPED = "skipped"
 
+    /** The server answered HTTP 401 / "Session Expired" while the step ran, as reported by the target app. */
+    const val UNAUTHORIZED = "unauthorized"
+
     /** A read that took this long is flagged slow even though it finished. */
     const val SLOW_MS = 5_000L
 
     private val AUTH_IDS = setOf(
         "login_tapped", "password_submitted", "otp_submitted",
-        "continue_tapped", "mpin_submitted", "logged_out",
+        "continue_tapped", "mpin_submitted", "logged_out", "biometric_confirmed",
     )
     private val WRITE_IDS = setOf(
         "watchlist_edit_saved", "watchlist_edit_restored",
@@ -61,6 +64,7 @@ object StepApi {
         SLOW -> 2
         TIMEOUT -> 3
         ERROR -> 4
+        UNAUTHORIZED -> 5
         else -> -1
     }
 
@@ -109,6 +113,15 @@ object StepApi {
      */
     fun finalize(steps: List<AutomationStepResult>) {
         for (step in steps) {
+            // A 401 outranks whatever the step's own checks found: it is the first thing the report must show.
+            val unauthorized = step.unauthorized
+            if (unauthorized != null) {
+                val after = step.apiDetail?.let { "; run again after signing in: $it" }.orEmpty()
+                step.apiKind = step.apiKind ?: kindOf(step.id) ?: READ
+                step.apiStatus = UNAUTHORIZED
+                step.apiDetail = "HTTP 401 / session expired: $unauthorized$after"
+                continue
+            }
             step.apiKind = step.apiKind ?: kindOf(step.id)
             val kind = step.apiKind ?: continue
             if (step.apiStatus != null) {

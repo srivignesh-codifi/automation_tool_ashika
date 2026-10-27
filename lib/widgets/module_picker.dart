@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/order_config.dart';
+import '../models/profile_config.dart';
 import '../services/automation_service.dart';
 import 'order_config_panel.dart';
+import 'profile_config_panel.dart';
 import 'read_more.dart';
 
 /// The checklist of modules a run covers. All of them start selected; the
@@ -17,6 +19,8 @@ class ModulePicker extends StatelessWidget {
     this.onDirectLoginChanged,
     this.orderConfig,
     this.onOrderConfigChanged,
+    this.profileConfig,
+    this.onProfileConfigChanged,
     super.key,
   });
 
@@ -28,6 +32,10 @@ class ModulePicker extends StatelessWidget {
   /// The Order placement settings, shown under that module when [onOrderConfigChanged] is given.
   final OrderConfig? orderConfig;
   final ValueChanged<OrderConfig>? onOrderConfigChanged;
+
+  /// The Profile module settings (which of its checks run), shown under it when [onProfileConfigChanged] is given.
+  final ProfileConfig? profileConfig;
+  final ValueChanged<ProfileConfig>? onProfileConfigChanged;
 
   /// "Direct login only": the Login module signs in straight through and skips its detours (Guest User, Unblock
   /// Account, Join Now, Forgot Password, Switch Account). Shown under Login when [onDirectLoginChanged] is given.
@@ -115,6 +123,14 @@ class ModulePicker extends StatelessWidget {
               onChanged: onOrderConfigChanged!,
               enabled: enabled && selected.contains('order_placement'),
             ),
+          if (module.id == 'profile' &&
+              profileConfig != null &&
+              onProfileConfigChanged != null)
+            ProfileConfigPanel(
+              config: profileConfig!,
+              onChanged: onProfileConfigChanged!,
+              enabled: enabled && selected.contains('profile'),
+            ),
         ],
         Padding(
           padding: const EdgeInsets.only(top: 4),
@@ -143,6 +159,8 @@ class ModuleField extends StatelessWidget {
     this.onDirectLoginChanged,
     this.orderConfig,
     this.onOrderConfigChanged,
+    this.profileConfig,
+    this.onProfileConfigChanged,
     super.key,
   });
 
@@ -154,6 +172,8 @@ class ModuleField extends StatelessWidget {
   final ValueChanged<bool>? onDirectLoginChanged;
   final OrderConfig? orderConfig;
   final ValueChanged<OrderConfig>? onOrderConfigChanged;
+  final ProfileConfig? profileConfig;
+  final ValueChanged<ProfileConfig>? onProfileConfigChanged;
 
   /// "All modules (8)", "None: ...", or "3 of 8: Login, Orders, Profile".
   static String summary(
@@ -188,6 +208,8 @@ class ModuleField extends StatelessWidget {
               onDirectLoginChanged: onDirectLoginChanged,
               orderConfig: orderConfig,
               onOrderConfigChanged: onOrderConfigChanged,
+              profileConfig: profileConfig,
+              onProfileConfigChanged: onProfileConfigChanged,
             )
           : null,
       child: InputDecorator(
@@ -218,10 +240,13 @@ Future<void> showModuleSheet(
   ValueChanged<bool>? onDirectLoginChanged,
   OrderConfig? orderConfig,
   ValueChanged<OrderConfig>? onOrderConfigChanged,
+  ProfileConfig? profileConfig,
+  ValueChanged<ProfileConfig>? onProfileConfigChanged,
 }) {
   var current = Set<String>.of(selected);
   var currentDirect = directLogin;
   var currentOrders = orderConfig;
+  var currentProfile = profileConfig;
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -260,6 +285,13 @@ Future<void> showModuleSheet(
                             : (next) {
                                 setSheetState(() => currentOrders = next);
                                 onOrderConfigChanged(next);
+                              },
+                        profileConfig: currentProfile,
+                        onProfileConfigChanged: onProfileConfigChanged == null
+                            ? null
+                            : (next) {
+                                setSheetState(() => currentProfile = next);
+                                onProfileConfigChanged(next);
                               },
                       ),
                     ),
