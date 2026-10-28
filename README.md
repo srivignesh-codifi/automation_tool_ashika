@@ -1,12 +1,13 @@
 # Mobile Automation Tool
 
-On-device test automation for Android Flutter applications. Two apps are
+On-device test automation for Android Flutter applications. Three apps are
 supported, picked on the tool's **Run Automation** screen:
 
 | App | Package | Login | Regression pass |
 | --- | --- | --- | --- |
 | **Ashika** | `com.codifi.dhanush` | Client ID → OTP → MPIN → Skip Biometric | 60 steps: watchlist and search, load check of every tab of Home, Research, Portfolio and Orders, logout |
 | **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 116 steps: login side paths (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, Login with OTP, Confirm OTP button, Enable 2FA), watchlist (27 independent test cases WL-01..WL-41: landing, switching, Predefined, indices / funds panel, instrument sheet with Chart / Alert / Op.Chain / BUY-SELL order pad, More Details, search by category, green-tick add / remove, Edit rename / reorder / delete of a test instrument, Manage Watchlist view / sort / filter / Clear), Dashboard (index dropdown, Trading tab selected, Option Chain per segment, Research calls, Trading Ideas tabs / search / menu / filters, Futures View All with sort and Buy / Sell, FII / DII, Customize, Scanners tabs / segments / search / sort / scrip sheet with Buy / Sell, then the Investment tab: Alerts (a test alert is created, searched and deleted), IPO, Reports, ETF (every tab), Pledge, Back Office, Other request, Top Sectors, every Scanners tab of Equity / Futures / Options / Commodity, Customize), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
+| **iTrade** | `com.codifi.itrade` | Same as Tradion | The whole Tradion pass (`TradionAutomationFlow` with `TargetApp.ITRADE`; `AppModules.ITRADE` = every Tradion module): see section 1a. Needs an iTrade build carrying Tradion's identifiers (`tradion_mobile/docs/AUTOMATION_SEMANTICS.md`) |
 
 Sections 2–18 describe the shared tool and, unless a section says otherwise,
 Ashika's flow; Tradion's is in section 1a. Everything runs on a single Android
@@ -383,8 +384,9 @@ cd /Users/srivigneshbalaji/Projects/ClientView/test/mobile_automation_tool
 ./build.sh apk gitc "what changed"   # also commit with a message (asks first)
 ```
 
-What it does, in order: `flutter pub get`, then `flutter analyze` and `flutter test`
-(a failure stops here, before any file is touched; `--skip-checks` to bypass); bumps the
+What it does, in order: `flutter pub get`, then `flutter analyze lib` (tests are not run
+or analyzed during a build; run `flutter test` separately when needed. An analysis
+failure stops here, before any file is touched; `--skip-checks` bypasses analysis); bumps the
 patch and build number in `pubspec.yaml` (`1.0.0+1` → `1.0.1+2`) and writes
 `lib/build_info.dart` (the dashboard shows "Version … · built …", which tells you which
 build is installed); `flutter clean` + `pub get` (`--no-clean` to skip); builds with
@@ -840,10 +842,10 @@ step to its place in it.
 * **Summary zip.** When a run finishes, the tool also writes
   `<app>_<ddMMyyyy>_<HHmm>.zip` (for example `ashika_23102026_0810.zip`) with the text report, the video and the failed-step
   screenshots (`screenshots/`, as 720-px-wide JPEGs under the report's names
-  with `.jpg`; the full-size PNGs stay in the app's folder) and copies it to
-  `Downloads/Automation Tool Reports/` on the phone, with no tap needed. The run
-  screen and report screen say where it went, or why not. A copy stays in the
-  app's `reports/` folder. Code: `SummaryZip.kt`.
+  with `.jpg`; the full-size PNGs stay in the app's folder). The zip remains in
+  the app's private `reports/` folder for **Send to admin** and is no longer
+  copied automatically to public Downloads. **Download Reports** remains an
+  explicit action for the HTML, JSON and text files. Code: `SummaryZip.kt`.
 * Code: `ScreenRecorder.kt` (MediaProjection in a `mediaProjection` foreground
   service), the `requestScreenRecording` method in `MainActivity.kt`, and
   `beginRecording` / `endRecording` in `AutomationEngine.kt`.

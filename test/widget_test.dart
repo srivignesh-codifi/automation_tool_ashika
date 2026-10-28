@@ -8,6 +8,7 @@ import 'package:mobile_automation_tool/constants/automation_ids.dart';
 import 'package:mobile_automation_tool/models/automation_result.dart';
 import 'package:mobile_automation_tool/models/automation_step.dart';
 import 'package:mobile_automation_tool/models/test_run.dart';
+import 'package:mobile_automation_tool/screens/login_automation_screen.dart';
 import 'package:mobile_automation_tool/screens/setup_screen.dart';
 import 'package:mobile_automation_tool/services/secure_storage_service.dart';
 import 'package:mobile_automation_tool/widgets/module_picker.dart';
@@ -69,20 +70,38 @@ void main() {
     expect(AutomationChecklist.steps.last.id, 'logged_out');
   });
 
-  test('the app picker offers Ashika and Tradion with their own credentials', () {
-    final targets = const AutomationConfigInfo.fallback().targets;
-    expect(targets.map((t) => t.id), <String>['ashika', 'tradion']);
+  test('the app picker offers every app with its own credentials', () {
+    expect(
+      const AutomationConfigInfo.fallback().targets.map((t) => t.id),
+      <String>['ashika', 'tradion', 'itrade'],
+    );
+    expect(
+      const AutomationConfigInfo.fallback().defaultTargetPackage,
+      'com.codifi.dhanush',
+    );
+    const targets = AutomationConfigInfo.knownTargets;
+    expect(targets.map((t) => t.id), <String>['ashika', 'tradion', 'itrade']);
 
     final ashika = targets.first;
     expect(ashika.packageName, 'com.codifi.dhanush');
     expect(ashika.secret, TargetSecret.mpin);
     expect(ashika.userIdLabel, 'Client ID');
 
-    final tradion = targets.last;
+    final tradion = targets.firstWhere((t) => t.id == 'tradion');
     expect(tradion.packageName, 'com.codifi.rmoney');
     expect(tradion.secret, TargetSecret.password);
     expect(tradion.userIdLabel, 'User ID');
     expect(tradion.runSummary, contains('never places or changes an order'));
+
+    final itrade = targets.firstWhere((t) => t.id == 'itrade');
+    expect(itrade.packageName, 'com.codifi.itrade');
+    expect(itrade.secret, TargetSecret.password);
+    expect(itrade.userIdLabel, 'User ID');
+    expect(itrade.runSummary, contains('never places or changes an order'));
+    expect(
+      itrade.modules.map((m) => m.id),
+      tradion.modules.map((m) => m.id),
+    );
   });
 
   test('the secret kind decodes from the platform shape, defaulting to MPIN', () {
@@ -452,10 +471,10 @@ void main() {
     expect(config.targets.single.modules.map((m) => m.id), <String>['login']);
     expect(config.targets.single.modules.single.description, 'd');
 
-    final fallback = const AutomationConfigInfo.fallback().targets;
+    const fallback = AutomationConfigInfo.knownTargets;
     expect(fallback.first.modules.map((m) => m.id), contains('watchlist'));
     expect(
-      fallback.last.modules.map((m) => m.id),
+      fallback.firstWhere((t) => t.id == 'tradion').modules.map((m) => m.id),
       <String>[
         'login', 'watchlist', 'order_placement', 'orders', 'dashboard',
         'portfolio', 'profile',
@@ -466,7 +485,9 @@ void main() {
   testWidgets('Direct login only sits under Login, follows it, and shows in the summary', (
     tester,
   ) async {
-    final modules = const AutomationConfigInfo.fallback().targets.last.modules;
+    final modules = AutomationConfigInfo.knownTargets
+        .firstWhere((t) => t.id == 'tradion')
+        .modules;
     var selected = modules.map((m) => m.id).toSet();
     var direct = false;
     await tester.pumpWidget(
@@ -506,7 +527,9 @@ void main() {
   testWidgets('the module picker starts full, unticks one and clears all', (
     tester,
   ) async {
-    final modules = const AutomationConfigInfo.fallback().targets.last.modules;
+    final modules = AutomationConfigInfo.knownTargets
+        .firstWhere((t) => t.id == 'tradion')
+        .modules;
     var selected = modules.map((m) => m.id).toSet();
     await tester.pumpWidget(
       MaterialApp(
@@ -544,7 +567,9 @@ void main() {
   testWidgets('the modules field summarises the choice and opens a bottom sheet', (
     tester,
   ) async {
-    final modules = const AutomationConfigInfo.fallback().targets.last.modules;
+    final modules = AutomationConfigInfo.knownTargets
+        .firstWhere((t) => t.id == 'tradion')
+        .modules;
     var selected = modules.map((m) => m.id).toSet();
     await tester.pumpWidget(
       MaterialApp(
@@ -805,6 +830,65 @@ void main() {
     expect(await File(run.textPath).exists(), isTrue);
   });
 
+  testWidgets('the app is picked from a dropdown that lists every app', (
+    tester,
+  ) async {
+    const channel = MethodChannel('app_picker_test');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'isTargetAppInstalled') {
+            return <String, Object?>{
+              'packageName': call.arguments['packageName'],
+              'installed': true,
+              'allowlisted': true,
+            };
+          }
+          return null; // no native config: the fallback lists every app
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LoginAutomationScreen(
+          automation: AutomationService(commands: channel),
+          reports: ReportService(),
+          storage: SecureStorageService(),
+        ),
+      ),
+    );
+    // The screen keeps a progress spinner turning while it checks the app, so
+    // it never settles: pump for fixed times instead.
+    await tester.pump(const Duration(seconds: 1));
+
+    final picker = find.byKey(const ValueKey<String>('app_picker'));
+    expect(picker, findsOneWidget);
+    expect(
+      find.descendant(of: picker, matching: find.text('Ashika')),
+      findsOneWidget,
+    );
+
+    await tester.tap(picker);
+    await tester.pump(const Duration(seconds: 1));
+    for (final package in <String>[
+      'com.codifi.dhanush',
+      'com.codifi.rmoney',
+      'com.codifi.itrade',
+    ]) {
+      expect(find.text(package), findsOneWidget);
+    }
+    await tester.tap(find.text('iTrade').last);
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(
+      find.descendant(of: picker, matching: find.text('iTrade')),
+      findsOneWidget,
+    );
+    // The package field follows the pick.
+    expect(find.text('com.codifi.itrade'), findsOneWidget);
+  });
+
   testWidgets('setup holds Finish back until the accessibility service is on', (
     tester,
   ) async {
@@ -814,6 +898,11 @@ void main() {
       find.widgetWithText(FilledButton, 'Finish setup'),
     );
     expect(button.onPressed, isNull);
+    // One status row per target app pushes the guidance above the fold once Finish is in view.
+    await tester.scrollUntilVisible(
+      find.text('1. Allow restricted settings'),
+      -200,
+    );
     expect(find.textContaining('Open Accessibility settings'), findsOneWidget);
     expect(find.text('1. Allow restricted settings'), findsOneWidget);
   });

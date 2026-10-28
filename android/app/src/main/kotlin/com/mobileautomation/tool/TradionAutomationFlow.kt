@@ -10,7 +10,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Regression pass for the Tradion app (`com.codifi.rmoney`).
+ * Regression pass for the Tradion app (`com.codifi.rmoney`) and every sibling
+ * build that carries the same identifiers (iTrade, ...: [TargetApp.Flow.TRADION]).
+ * [app] picks which. An app runs the modules [AppModules.of] gives it, and the
+ * steps of the others are not in its checklist; what it lacks inside a module is
+ * reported NOT APPLICABLE ([TargetApp.absent], [TargetApp.notApplicableCases]).
  *
  *   User ID -> Password -> OTP -> (risk disclosure, if raised) -> Watchlist
  *
@@ -49,11 +53,12 @@ import java.util.Locale
 class TradionAutomationFlow(
     engine: AutomationEngine,
     private val modules: ModuleSelection = ModuleSelection(AppModules.TRADION, null),
-) : FlowBase(engine, buildSteps()) {
+    private val app: TargetApp = TargetApp.TRADION,
+) : FlowBase(engine, buildSteps(app)) {
 
     init {
         // Lets the report show Login and Watchlist (and the rest) as separate results.
-        for (module in AppModules.TRADION) for (id in module.stepIds) step(id).module = module.id
+        for (module in AppModules.of(app)) for (id in module.stepIds) step(id).module = module.id
     }
 
     internal companion object {
@@ -75,7 +80,14 @@ class TradionAutomationFlow(
 
         fun s(id: String, name: String) = AutomationStepResult(id, name)
 
-        fun buildSteps(): List<AutomationStepResult> = listOf(
+        /** [app]'s checklist: Tradion's, less the steps of every Tradion module [app] does not have. */
+        fun buildSteps(app: TargetApp = TargetApp.TRADION): List<AutomationStepResult> {
+            val own = AppModules.of(app).map { it.id }.toSet()
+            val absent = AppModules.TRADION.filter { it.id !in own }.flatMap { it.stepIds }.toSet()
+            return allSteps().filter { it.id !in absent }
+        }
+
+        private fun allSteps(): List<AutomationStepResult> = listOf(
             s("target_app_installed", "Target application installed"),
             s("accessibility_enabled", "Accessibility permission enabled"),
             s("target_app_data_cleared", "Target application data cleared"),
@@ -181,7 +193,7 @@ class TradionAutomationFlow(
         this.password = password
         this.otp = otp
         Redactor.secrets = listOf(userId)
-        val info = startRun(TargetApp.TRADION.testName)
+        val info = startRun(app.testName)
         result.modulesRun = modules.onLabels
         result.modulesSkipped = modules.offLabels
 
@@ -291,7 +303,7 @@ class TradionAutomationFlow(
                     userIdScreen,
                     "'${entry.identifier}' located" + if (engine.notificationPromptsAllowed > 0) {
                         "; the app still asked for the notification permission (answered with Allow). " +
-                            "Install the current Tradion build: it skips that prompt when the tool launches it"
+                            "Install the current ${app.displayName} build: it skips that prompt when the tool launches it"
                     } else {
                         ""
                     },
@@ -343,6 +355,9 @@ class TradionAutomationFlow(
         else {
         // 5a — Guest User, Unblock Account, Join Now ------------------------------
         val guest = step("guest_user_checked")
+        if (app.lacks(TargetApp.Feature.GUEST_USER)) {
+            skipAs(guest, "not_applicable", "${app.displayName} has no Guest User link on its User ID page")
+        } else {
         begin(guest)
         conclude(
             guest,
@@ -354,9 +369,17 @@ class TradionAutomationFlow(
                 what = "The Guest User form",
             ),
         )?.let { return it }
+        }
 
         val unblock = step("unblock_account_checked")
         begin(unblock)
+        if (app.lacks(TargetApp.Feature.UNBLOCK_WITHOUT_USER_ID)) {
+            // This app opens the form only once the User ID field has text ("Please enter the User ID to unblock.").
+            // The real User ID is typed; step 6 types it again over it.
+            val typed = engine.enterText(T.USER_ID_INPUT, userId)
+            if (!typed.ok) return abort(unblock, "Could not enter the User ID before Unblock Account: ${typed.detail}")
+            if (!engine.sleep(Timeouts.SETTLE)) return stopped(unblock)
+        }
         // The User ID field on this form is read-only and prefilled, so only the
         // PAN field takes typing.
         conclude(
@@ -681,7 +704,15 @@ class TradionAutomationFlow(
         // The operator may skip the running module (the ⏭ button): it unwinds like a stop, its unfinished steps are
         // marked NOT TESTED, and the same function runs again, passing over every step that has ended.
         engine.skipAllowed = true
-        for (module in listOf(::runWatchlist, ::runOrderPlacement, ::runTabs, ::logout)) {
+        // The suites look their steps up by id, so a module the app does not have is not run at all.
+        val has = AppModules.of(app).map { it.id }.toSet()
+        val flowModules = listOfNotNull(
+            ::runWatchlist.takeIf { "watchlist" in has },
+            ::runOrderPlacement.takeIf { "order_placement" in has },
+            ::runTabs,
+            ::logout,
+        )
+        for (module in flowModules) {
             while (true) {
                 val end = module()
                 if (engine.skipping) {
@@ -726,7 +757,7 @@ class TradionAutomationFlow(
     }
 
     private fun missingTagHint(): String =
-        " If no identifier for it is listed, the installed Tradion build predates these login " +
+        " If no identifier for it is listed, the installed ${app.displayName} build predates these login " +
             "identifiers; build it with the current tradion_mobile sources."
 
     /**
@@ -794,15 +825,30 @@ class TradionAutomationFlow(
         if (engine.cancelled) return SideCheck("cancelled", stranded = true)
         if (!left) {
             return SideCheck(
-                "Join Now was tapped but Tradion stayed in front for ${Timeouts.JOIN_NOW_LEAVES / 1000} " +
+                "Join Now was tapped but ${app.displayName} stayed in front for ${Timeouts.JOIN_NOW_LEAVES / 1000} " +
                     "seconds. The registration link opens in the browser; there may be no browser to " +
                     "open it, or the link failed to launch.",
             )
         }
 
         if (!engine.sleep(2_000L)) return SideCheck("cancelled", stranded = true)
+        if (engine.targetInForeground()) {
+            // An in-app registration page (iTrade opens Join Now in its own WebView): Back returns to the login page.
+            val page = engine.firstPresent(listOf(T.WEB_VIEW_SCREEN))
+            if (engine.isPresent(T.USER_ID_SCREEN)) return SideCheck(null, note = "Join Now returned to the login page by itself")
+            engine.pressBack()
+            val back = engine.waitForAny(userIdScreenIds, Timeouts.SCREEN_CHANGE)
+            if (back !is WaitOutcome.Found) {
+                return SideCheck(reasonFor(back, "The User ID screen after leaving Join Now", Timeouts.SCREEN_CHANGE), stranded = true)
+            }
+            return SideCheck(
+                null,
+                note = "${app.displayName} opened its registration page in the app" +
+                    (if (page != null) " ('$page')" else "") + "; Back returned to the login page",
+            )
+        }
         engine.launcher.launch(engine.targetPackage)?.let {
-            return SideCheck("Tradion could not be brought back after Join Now: $it", stranded = true)
+            return SideCheck("${app.displayName} could not be brought back after Join Now: $it", stranded = true)
         }
         val back = engine.waitForAny(userIdScreenIds, Timeouts.APP_LAUNCH)
         if (back !is WaitOutcome.Found) {
@@ -813,7 +859,7 @@ class TradionAutomationFlow(
         }
         return SideCheck(
             null,
-            note = "Tradion handed over to the browser for registration (its page is outside what this " +
+            note = "${app.displayName} handed over to the browser for registration (its page is outside what this " +
                 "tool can read), then was brought back to the login page",
         )
     }
@@ -1024,6 +1070,19 @@ class TradionAutomationFlow(
             "orders_gtt_loaded" to T.ORDERS_TAB_GTT,
             "orders_sip_loaded" to T.ORDERS_TAB_SIP,
         ).map { (stepId, tab) -> TabStep(stepId, tab, strip = ordersTabIds) }
+            .filter { tab ->
+                val feature = when (tab.stepId) {
+                    "orders_gtt_loaded" -> TargetApp.Feature.ORDERS_GTT_TAB
+                    "orders_sip_loaded" -> TargetApp.Feature.ORDERS_SIP_TAB
+                    else -> null
+                }
+                val absent = feature != null && app.lacks(feature)
+                // Only once: the Orders page runs again after a session expiry or a skipped module.
+                if (absent && moduleOn("orders") && step(tab.stepId).status == StepStatus.PENDING) {
+                    skipAs(step(tab.stepId), "not_applicable", "${app.displayName}'s Orders has no such tab")
+                }
+                !absent
+            }
         if (!moduleOn("orders")) skipModule("orders") else {
         withPage(Page("Orders", T.BOTTOMNAV_ORDER_TAB, T.ORDERBOOK_SCREEN), orderTabs.map { it.stepId }) {
             for (tab in orderTabs) checkTab(tab, budget)?.let { return@withPage it }
@@ -1152,7 +1211,7 @@ class TradionAutomationFlow(
                 cause = "automation", evidence = engine.visibleIdentifiers().joinToString(", "),
             )
         }
-        engine.showNotice("Tradion asks to enable biometrics: touch the fingerprint sensor (or use the phone's PIN) when Android asks.")
+        engine.showNotice("${app.displayName} asks to enable biometrics: touch the fingerprint sensor (or use the phone's PIN) when Android asks.")
         try {
             val confirmed = engine.waitUntil(Timeouts.BIOMETRIC_CONFIRM) {
                 if (engine.firstPresent(signedIn) != null) return@waitUntil true
@@ -1325,7 +1384,7 @@ class TradionAutomationFlow(
         }
         sessionLosses++
         val api = calls.joinToString("; ") { it.text }.ifEmpty {
-            "not reported by the app (install a Tradion build that publishes '${T.API_UNAUTHORIZED}')"
+            "not reported by the app (install a ${app.displayName} build that publishes '${T.API_UNAUTHORIZED}')"
         }
         if (current.unauthorized == null) current.unauthorized = "session ended while $context; API: $api"
         val brk = SessionBreak(current, context, screen, api, System.currentTimeMillis())
@@ -1333,7 +1392,7 @@ class TradionAutomationFlow(
             pendingBreak = brk
             return result
         }
-        val reason = "SESSION EXPIRED (HTTP 401), $sessionLosses of $MAX_SESSION_LOSSES: Tradion returned to the " +
+        val reason = "SESSION EXPIRED (HTTP 401), $sessionLosses of $MAX_SESSION_LOSSES: ${app.displayName} returned to the " +
             "$screen screen while $context. API: $api. The run stops at the ${MAX_SESSION_LOSSES}rd session expiry. " +
             "This is a target-app / session failure, not a missing automation identifier: check why the server " +
             "refuses the token, and that the same account is not signed in elsewhere."
@@ -1344,7 +1403,7 @@ class TradionAutomationFlow(
         result.failureMessage = reason
         skipSteps(
             steps.filter { it.status == StepStatus.PENDING }.map { it.id },
-            "not run: Tradion's session expired (HTTP 401) $MAX_SESSION_LOSSES times",
+            "not run: ${app.displayName}'s session expired (HTTP 401) $MAX_SESSION_LOSSES times",
         )
         return finish()
     }
@@ -1381,14 +1440,14 @@ class TradionAutomationFlow(
         }
         if (engine.cancelled) return stopped(step)
         if (problem != null) {
-            val reason = "SESSION EXPIRED (HTTP 401): Tradion returned to the ${brk.screen} screen while ${brk.context}. " +
+            val reason = "SESSION EXPIRED (HTTP 401): ${app.displayName} returned to the ${brk.screen} screen while ${brk.context}. " +
                 "API: ${brk.api}. Signing in again failed: $problem."
             recordBreak(brk, "signing in again failed: $problem")
             if (step.status != StepStatus.SKIPPED) failAndContinue(step, reason)
             result.failureMessage = reason
             skipSteps(
                 steps.filter { it.status == StepStatus.PENDING }.map { it.id },
-                "not run: Tradion's session expired (HTTP 401) and signing in again failed",
+                "not run: ${app.displayName}'s session expired (HTTP 401) and signing in again failed",
             )
             return finish()
         }
@@ -1420,7 +1479,7 @@ class TradionAutomationFlow(
             // Biometrics were enabled for this user: a touch signs in again with no OTP. Otherwise fall back to the password.
             engine.showNotice(
                 "Session expired ($sessionLosses of $MAX_SESSION_LOSSES, HTTP 401). Touch the fingerprint sensor (or use " +
-                    "the PIN) to sign in to Tradion; in ${Timeouts.RELOGIN_BIOMETRIC / 1000} s the run switches to the password.",
+                    "the PIN) to sign in to ${app.displayName}; in ${Timeouts.RELOGIN_BIOMETRIC / 1000} s the run switches to the password.",
             )
             val touched = engine.waitUntil(Timeouts.RELOGIN_BIOMETRIC) { engine.firstPresent(signedIn) != null }
             if (engine.cancelled) return "stopped"
@@ -1471,7 +1530,7 @@ class TradionAutomationFlow(
         if (engine.firstPresent(otpScreenIds) != null) {
             // Still on the OTP screen: the app refused the run's OTP (or none was given).
             engine.showNotice(
-                "Session expired ($sessionLosses of $MAX_SESSION_LOSSES, HTTP 401). The run's OTP was not accepted: type a NEW OTP into Tradion " +
+                "Session expired ($sessionLosses of $MAX_SESSION_LOSSES, HTTP 401). The run's OTP was not accepted: type a NEW OTP into ${app.displayName} " +
                     "within ${Timeouts.RELOGIN_OTP / 60_000} min; the test resumes by itself.",
             )
             val entered = engine.waitUntil(Timeouts.RELOGIN_OTP) {
@@ -1483,7 +1542,7 @@ class TradionAutomationFlow(
         }
         if (engine.isPresent(T.BIOMETRIC_SCREEN)) {
             engine.tap(T.BIOMETRIC_ENABLE_BUTTON, listOf("Enable now"))
-            engine.showNotice("Confirm the biometric prompt in Tradion; the test resumes by itself.")
+            engine.showNotice("Confirm the biometric prompt in ${app.displayName}; the test resumes by itself.")
             if (!engine.waitUntil(Timeouts.BIOMETRIC_CONFIRM) { engine.firstPresent(signedIn) != null }) {
                 return "the biometric enrolment was not confirmed within ${Timeouts.BIOMETRIC_CONFIRM / 1000} seconds"
             }

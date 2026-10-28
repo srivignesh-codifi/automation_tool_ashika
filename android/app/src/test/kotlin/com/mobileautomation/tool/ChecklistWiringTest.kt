@@ -55,4 +55,28 @@ class ChecklistWiringTest {
         assertTrue("the checks on the sign-in path stay", "otp_confirm_button_checked" !in detours && "enable_2fa_checked" !in detours)
         assertTrue(detours.all { id -> checklist.any { it.id == id } })
     }
+    @Test
+    fun iTradeRunsEveryTradionModuleWithTheSameChecklist() {
+        assertEquals(AppModules.TRADION.map { it.id }, AppModules.of(TargetApp.ITRADE).map { it.id })
+        assertEquals(
+            TradionAutomationFlow.buildSteps().map { it.id },
+            TradionAutomationFlow.buildSteps(TargetApp.ITRADE).map { it.id },
+        )
+    }
+
+    @Test
+    fun aModuleTheAppLacksIsNeverOn() {
+        val selection = ModuleSelection(AppModules.ASHIKA, null)
+        assertTrue(selection.isOn("orders"))
+        assertTrue(listOf("login", "order_placement", "dashboard", "profile").none { selection.isOn(it) })
+    }
+    @Test
+    fun everyNotApplicableCaseIsAStepOfThatApp() {
+        for (app in TargetApp.values()) {
+            if (app == TargetApp.ASHIKA) continue
+            val ids = TradionAutomationFlow.buildSteps(app).map { it.id }.toSet()
+            val unknown = app.notApplicableCases.keys.filter { it !in ids }
+            assertTrue("${app.id} marks unknown cases not applicable: $unknown", unknown.isEmpty())
+        }
+    }
 }

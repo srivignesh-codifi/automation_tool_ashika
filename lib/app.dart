@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 
 import 'screens/dashboard_screen.dart';
 import 'screens/setup_screen.dart';
+import 'screens/sign_in_screen.dart';
+import 'services/auth_service.dart';
 import 'services/automation_service.dart';
 import 'services/report_service.dart';
 import 'services/secure_storage_service.dart';
+import 'theme/codifi_theme.dart';
 
 /// Root of the automation tool.
 ///
@@ -22,55 +25,41 @@ class _MobileAutomationToolAppState extends State<MobileAutomationToolApp> {
   final AutomationService _automation = AutomationService();
   final ReportService _reports = ReportService();
   final SecureStorageService _storage = SecureStorageService();
+  late final AuthService _auth = AuthService(_storage);
 
   @override
   Widget build(BuildContext context) {
+    // CodiFi's look is dark only, whatever the phone's setting.
     return MaterialApp(
-      title: 'Mobile Automation Tool',
+      title: 'CodiFi Automation',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: CodifiTheme.dark(),
+      themeMode: ThemeMode.dark,
       home: _StartupGate(
         automation: _automation,
         reports: _reports,
         storage: _storage,
-      ),
-    );
-  }
-
-  ThemeData _theme(Brightness brightness) {
-    return ThemeData(
-      useMaterial3: true,
-      brightness: brightness,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF2E5AAC),
-        brightness: brightness,
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46)),
+        auth: _auth,
       ),
     );
   }
 }
 
-/// Shows the permission setup before the dashboard at first launch, and again
-/// whenever the accessibility service has gone off (a reinstall switches it off).
+/// Asks the user to sign in, then shows the permission setup before the
+/// dashboard at first launch, and again whenever the accessibility service has
+/// gone off (a reinstall switches it off).
 class _StartupGate extends StatefulWidget {
   const _StartupGate({
     required this.automation,
     required this.reports,
     required this.storage,
+    required this.auth,
   });
 
   final AutomationService automation;
   final ReportService reports;
   final SecureStorageService storage;
+  final AuthService auth;
 
   @override
   State<_StartupGate> createState() => _StartupGateState();
@@ -78,11 +67,38 @@ class _StartupGate extends StatefulWidget {
 
 class _StartupGateState extends State<_StartupGate> {
   bool _checked = false;
+  AuthUser? _user;
+  bool _sessionRead = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _start());
+  }
+
+  Future<void> _start() async {
+    if (!mounted) return;
+    setState(() {
+      // Always request a fresh sign-in at launch so the report upload token is
+      // renewed from the built-in login reply instead of reusing an old token.
+      _user = null;
+      _sessionRead = true;
+    });
+  }
+
+  Future<void> _signedIn(AuthUser user) async {
+    setState(() => _user = user);
+    await _check();
+  }
+
+  Future<void> _signOut() async {
+    await widget.auth.signOut();
+    if (mounted) {
+      setState(() {
+        _user = null;
+        _checked = false;
+      });
+    }
   }
 
   Future<void> _check() async {
@@ -96,6 +112,10 @@ class _StartupGateState extends State<_StartupGate> {
             automation: widget.automation,
             storage: widget.storage,
             firstRun: true,
+            onLogout: () {
+              Navigator.of(context).pop();
+              _signOut();
+            },
           ),
         ),
       );
@@ -105,6 +125,9 @@ class _StartupGateState extends State<_StartupGate> {
 
   @override
   Widget build(BuildContext context) {
+    if (_sessionRead && _user == null) {
+      return SignInScreen(auth: widget.auth, onSignedIn: _signedIn);
+    }
     if (!_checked) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -112,6 +135,8 @@ class _StartupGateState extends State<_StartupGate> {
       automation: widget.automation,
       reports: widget.reports,
       storage: widget.storage,
+      user: _user,
+      onSignOut: _signOut,
     );
   }
 }

@@ -17,6 +17,7 @@ class SetupScreen extends StatefulWidget {
     required this.automation,
     required this.storage,
     this.firstRun = false,
+    this.onLogout,
     super.key,
   });
 
@@ -25,6 +26,7 @@ class SetupScreen extends StatefulWidget {
 
   /// Shown automatically at first launch: no back arrow, and a way to skip.
   final bool firstRun;
+  final VoidCallback? onLogout;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -145,10 +147,35 @@ class _SetupScreenState extends State<SetupScreen> with WidgetsBindingObserver {
               icon: const Icon(Icons.refresh),
               tooltip: 'Re-check',
             ),
+            if (widget.onLogout != null)
+              PopupMenuButton<String>(
+                tooltip: 'Account',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  if (value == 'logout') widget.onLogout!();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem<String>(
+                    value: 'logout',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.logout),
+                      title: Text('Logout'),
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
         body: ListView(
-          padding: const EdgeInsets.all(16),
+          // Edge-to-edge (Android 15+): the list ends above the navigation bar while
+          // the background still runs under it.
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            16 + MediaQuery.paddingOf(context).bottom,
+          ),
           children: [
             Text(
               'Allow these once, now, so nothing asks for permission in the '

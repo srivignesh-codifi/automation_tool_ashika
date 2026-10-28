@@ -153,13 +153,14 @@ class MainActivity : FlutterActivity() {
                 mapOf(
                     "allowedPackages" to AutomationConfig.ALLOWED_PACKAGES.toList(),
                     "defaultTargetPackage" to AutomationConfig.DEFAULT_TARGET_PACKAGE,
-                    "targets" to TargetApp.values().map {
+                    "targets" to AutomationConfig.OFFERED_APPS.map {
                         mapOf(
                             "id" to it.id,
                             "displayName" to it.displayName,
                             "packageName" to it.packageName,
                             "testName" to it.testName,
                             "secret" to it.secret.name.lowercase(),
+                            "flow" to it.flow.name.lowercase(),
                             "modules" to AppModules.toMaps(it),
                         )
                     },
@@ -241,22 +242,21 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    /** Zips a run's evidence and copies it to Downloads; see [SummaryZip]. */
+    /** Zips a run's evidence in app-private storage; see [SummaryZip]. */
     private fun buildSummaryZip(call: MethodCall, result: MethodChannel.Result) {
         val zipPath = call.argument<String>("zipPath")
-        val displayName = call.argument<String>("displayName")
         val entries = call.argument<List<*>>("entries").orEmpty().mapNotNull {
             val item = it as? Map<*, *>
             val path = item?.get("path") as? String
             val name = item?.get("name") as? String
             if (path == null || name == null) null else SummaryZip.Entry(path, name)
         }
-        if (zipPath == null || displayName == null) {
-            result.error("bad_zip_request", "zipPath and displayName are required.", null)
+        if (zipPath == null) {
+            result.error("bad_zip_request", "zipPath is required.", null)
             return
         }
         Thread {
-            val outcome = SummaryZip.build(applicationContext, File(zipPath), displayName, entries)
+            val outcome = SummaryZip.build(applicationContext, File(zipPath), entries)
             mainHandler.post { result.success(outcome.toMap()) }
         }.start()
     }

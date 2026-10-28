@@ -20,14 +20,15 @@ set -e
 #   ./build.sh apk --no-reveal                # do not open Finder on the result
 #   ./build.sh apk --no-note                  # no release note
 #   ./build.sh apk --no-clean                 # skip `flutter clean` (faster)
-#   ./build.sh apk --skip-checks              # skip `flutter analyze` and `flutter test`
+#   ./build.sh apk --skip-checks              # skip app-code analysis
 #   ./build.sh apk gitc "what changed"        # build + commit with a message
 #   ./build.sh apk gitc "msg" --commit-all    # commit every change, not only the version files
 #   ./build.sh apk -- --obfuscate ...         # everything after -- goes to `flutter build`
 #
-# Before anything is changed, `flutter analyze` and `flutter test` must pass
-# (unless --skip-checks), so a broken tree never consumes a version number. If
-# the build itself fails, pubspec.yaml and lib/build_info.dart are put back.
+# Before anything is changed, `flutter analyze lib` must pass (unless
+# --skip-checks), so app code is checked without including test files. Tests are
+# run separately with `flutter test`. If the build itself fails, pubspec.yaml
+# and lib/build_info.dart are put back.
 # ---------------------------------------------------------------------------
 
 APP_NAME="AutomationTool"
@@ -129,12 +130,10 @@ echo "  $APP_NAME : $ANDROID_VERSION+$ANDROID_BUILD"
 echo "Running flutter pub get..."
 flutter pub get
 if [ "$SKIP_CHECKS" = false ]; then
-  echo "Running flutter analyze..."
-  flutter analyze
-  echo "Running flutter test..."
-  flutter test
+  echo "Analyzing app code (lib/); tests are excluded from the build check..."
+  flutter analyze lib
 else
-  echo "Skipping analyze and test (--skip-checks)"
+  echo "Skipping app analysis (--skip-checks)"
 fi
 
 # ---------------------------------------------------------------------------

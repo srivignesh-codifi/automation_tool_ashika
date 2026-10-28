@@ -342,11 +342,14 @@ object ScreenRecorder {
         return MediaFormat.createVideoFormat(MIME, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
-            if (capabilities.encoderCapabilities?.isBitrateModeSupported(
-                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
-                ) == true
-            ) {
-                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            // Android's own software encoder (an emulator, a phone without a hardware one) treats a variable rate as a
+            // loose hint: a 7-minute run came out at 440 kbit/s, 24.6 MB, for 100 kbit/s asked (run 549102bb). A
+            // constant rate holds it there. Hardware encoders keep the variable rate, which costs a still screen next
+            // to nothing.
+            val software = codec.name.startsWith("c2.android.") || codec.name.startsWith("OMX.google.")
+            val mode = if (software) MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR else MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+            if (capabilities.encoderCapabilities?.isBitrateModeSupported(mode) == true) {
+                setInteger(MediaFormat.KEY_BITRATE_MODE, mode)
             }
             setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
             // The display draws up to 60 frames a second while it animates.

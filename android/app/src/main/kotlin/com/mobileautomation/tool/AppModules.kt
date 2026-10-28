@@ -137,9 +137,13 @@ object AppModules {
         ),
     )
 
-    fun of(app: TargetApp): List<AppModule> = when (app) {
-        TargetApp.ASHIKA -> ASHIKA
-        TargetApp.TRADION -> TRADION
+    /**
+     * [app]'s modules: its flow's, less the ones it has nothing for ([TargetApp.absentModules]), which are then also
+     * dropped from its checklist (see [TradionAutomationFlow.buildSteps]).
+     */
+    fun of(app: TargetApp): List<AppModule> = when (app.flow) {
+        TargetApp.Flow.ASHIKA -> ASHIKA
+        TargetApp.Flow.TRADION -> TRADION.filterNot { it.id in app.absentModules }
     }
 
     fun toMaps(app: TargetApp): List<Map<String, Any?>> = of(app).map {
@@ -252,7 +256,8 @@ class ModuleSelection(
     val liveMarket: Boolean = false,
 ) {
 
-    fun isOn(id: String): Boolean = selected == null || id in selected
+    /** False for a module the app does not have, whatever was selected. */
+    fun isOn(id: String): Boolean = all.any { it.id == id } && (selected == null || id in selected)
 
     fun label(id: String): String = all.firstOrNull { it.id == id }?.label ?: id
 

@@ -45,6 +45,11 @@ class WatchlistSuite(
     }
 
     companion object {
+        /** What [tradeBookRows] says when the Trade Book shows no row. */
+        private const val NO_TRADE_ROWS = "no row could be read"
+        private const val TRADE_TITLE_FIX = "Developers: renaming a basket overwrites the Trade Book tab title (basket_provider.dart sets " +
+            "orderTabs[2] from orderTabs[0]); it should update orderTabs[3], the Basket tab, from orderTabs[3]."
+
         private fun c(code: String, id: String, module: String, name: String, expected: String, severity: String) =
             Case(code, id, module, name, expected, severity)
 
@@ -482,6 +487,15 @@ class WatchlistSuite(
 
     private fun case(id: String): Case = (CASES + ORDER_CASES).first { it.id == id }
 
+    /** Where MCX instruments are searched: the Commodity category, or All in an app without one (iTrade). */
+    private val commodityTab: Pair<String, String> =
+        if (engine.lacks(TargetApp.Feature.SEARCH_COMMODITY_TAB)) T.SEARCH_TAB_ALL to "All" else T.SEARCH_TAB_COMMODITY to "Commodity"
+
+    /** The search categories the app offers, in order. */
+    private val searchTabs: List<String> =
+        if (engine.lacks(TargetApp.Feature.SEARCH_COMMODITY_TAB)) listOf(T.SEARCH_TAB_ALL, T.SEARCH_TAB_FNO, "search_tab_currency", T.SEARCH_TAB_STOCKS)
+        else T.SEARCH_TABS
+
     /**
      * Runs [body] as the step of case [id] and records how it ended. With [recoverAfter] the app is then taken back
      * to the Watchlist landing screen. Returns a result only when the run has to end (cancelled, or the session
@@ -491,6 +505,10 @@ class WatchlistSuite(
         val c = case(id)
         val step = flow.step(id)
         if (step.status != StepStatus.PENDING) return null
+        engine.app?.notApplicableCases?.get(id)?.let {
+            flow.skipAs(step, "not_applicable", it)
+            return null
+        }
         current = step
         currentCase = c
         notes.clear()
@@ -553,11 +571,19 @@ class WatchlistSuite(
      * leave the app). True when the landing screen is showing with nothing on it.
      */
     private fun recover(): Boolean {
+        // Tapped at most once per recovery: an account with no user watchlist shows no tab in either mode.
+        var switchedBack = false
         repeat(8) {
             alive()
             if (engine.isPresent(T.DASHBOARD_INDEX_CLOSE)) {
                 engine.tap(T.DASHBOARD_INDEX_CLOSE)
                 engine.waitForGone(T.DASHBOARD_INDEX_CLOSE, UI)
+                return@repeat
+            }
+            // An open dropdown menu covers the screen and takes no other tap: Back closes it without choosing.
+            if (engine.isPresent(T.ALERT_CONDITION_ITEM_PREFIX + "0")) {
+                engine.pressBack()
+                engine.waitForGone(T.ALERT_CONDITION_ITEM_PREFIX + "0", UI)
                 return@repeat
             }
             val overlay = engine.firstPresent(overlays)
@@ -573,9 +599,15 @@ class WatchlistSuite(
                 }
                 return@repeat
             }
-            if (engine.firstPresent(predefinedTabIds) != null && engine.isPresent(T.WATCHLIST_MODE_WATCHLIST)) {
+            // Predefined mode is left for Watchlist mode even when its tab strip is not readable: then no user
+            // watchlist tab is on screen either (iTrade's blank Predefined strip, run f00f716f).
+            if (engine.isPresent(T.WATCHLIST_MODE_WATCHLIST) &&
+                (engine.firstPresent(predefinedTabIds) != null || engine.firstPresent(tabIds) == null) &&
+                !switchedBack
+            ) {
+                switchedBack = true
                 engine.tap(T.WATCHLIST_MODE_WATCHLIST)
-                waitUntil(UI) { engine.firstPresent(predefinedTabIds) == null }
+                waitUntil(UI) { engine.firstPresent(predefinedTabIds) == null && engine.firstPresent(tabIds) != null }
                 return@repeat
             }
             if (engine.isPresent(T.WATCHLIST_SCREEN)) return true
@@ -894,7 +926,21 @@ class WatchlistSuite(
     }
 
     private fun enterPredefined() {
-        tapOpen(T.WATCHLIST_MODE_PREDEFINED, predefinedTabIds, "The Predefined switch did not show the predefined tabs")
+        val before = readCount()
+        val outcome = engine.tapAndConfirm(T.WATCHLIST_MODE_PREDEFINED, predefinedTabIds, UI, retryAfterMs = UI)
+        alive()
+        if (!outcome.ok) {
+            // The switch worked (other instruments, another count) but no Predefined tab can be read: the strip is
+            // blank on screen too (iTrade, run f00f716f), which is the app's fault, not a missing tag.
+            val now = readCount()
+            if (now != null && now != before && engine.firstPresent(tabIds) == null) fail(
+                "Predefined mode shows its instruments (${now.first} / ${now.second}) but no Predefined tab: the tab " +
+                    "strip above the list is blank, so a predefined list cannot be chosen",
+                Cause.APP,
+                "Developers: the Predefined TabBar renders no tabs (watchlist_screen.dart, controllerPreDefine / preDefineTabs).",
+            )
+            fail("The Predefined switch did not show the predefined tabs: ${outcome.detail}")
+        }
         if (!waitUntil(LOAD) { engine.isPresent(T.WATCHLIST_SCRIP_ROW) }) fail("The predefined instruments did not load within ${LOAD / 1000} s")
     }
 
@@ -924,8 +970,8 @@ class WatchlistSuite(
         val ticker = engine.labelsOf(T.WATCHLIST_TICKER).filter { it.isNotBlank() }
         if (ticker.isEmpty()) {
             blocked(
-                "The header ticker ('${T.WATCHLIST_TICKER}') is not on screen; the installed Tradion build may predate this identifier.",
-                Cause.AUTOMATION, "Rebuild Tradion with the '${T.WATCHLIST_TICKER}' and '${T.WATCHLIST_INDEX_DROPDOWN}' tags (docs/AUTOMATION_SEMANTICS.md).",
+                "The header ticker ('${T.WATCHLIST_TICKER}') is not on screen; the installed ${engine.appName} build may predate this identifier.",
+                Cause.AUTOMATION, "Rebuild ${engine.appName} with the '${T.WATCHLIST_TICKER}' and '${T.WATCHLIST_INDEX_DROPDOWN}' tags (docs/AUTOMATION_SEMANTICS.md).",
             )
         }
         note("ticker: ${ticker.take(2).joinToString(" | ") { it.replace('\n', ' ').take(30) }}")
@@ -1055,13 +1101,16 @@ class WatchlistSuite(
         val found = waitUntil(UI) { engine.isPresent(T.ALERT_CONDITION) || engine.revealInList(T.ALERT_CONDITION, anchors, maxScrolls = 1) }
         if (!found) {
             blocked(
-                "The condition dropdown ('${T.ALERT_CONDITION}') is not on screen; the installed Tradion build may predate this identifier.",
+                "The condition dropdown ('${T.ALERT_CONDITION}') is not on screen; the installed ${engine.appName} build may predate this identifier.",
                 Cause.AUTOMATION,
-                "Rebuild Tradion with CustomDropdownButton(automationId: 'alert_condition') (docs/AUTOMATION_SEMANTICS.md).",
+                "Rebuild ${engine.appName} with CustomDropdownButton(automationId: 'alert_condition') (docs/AUTOMATION_SEMANTICS.md).",
             )
         }
         val before = engine.labelsOf(T.ALERT_CONDITION).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-        tapOpen(T.ALERT_CONDITION, listOf(T.ALERT_CONDITION_ITEM_PREFIX + "0"), "The condition dropdown did not open")
+        // The keyboard from typing the alert name can take the first tap, and the menu animates in (run 549102bb).
+        engine.hideKeyboard()
+        pause(Timeouts.SETTLE)
+        tapOpen(T.ALERT_CONDITION, listOf(T.ALERT_CONDITION_ITEM_PREFIX + "0"), "The condition dropdown did not open", LOAD)
         val items = (0 until 8).map { "${T.ALERT_CONDITION_ITEM_PREFIX}$it" }.filter { engine.isPresent(it) }
         val labelled = items.associateWith { engine.labelsOf(it).firstOrNull { l -> l.isNotBlank() }?.trim().orEmpty() }
         val pick = labelled.entries.firstOrNull { it.value.isNotEmpty() && !it.value.equals(before, true) }
@@ -1200,8 +1249,15 @@ class WatchlistSuite(
         when (id) {
             "wl_more_market_depth" -> {
                 if (!engine.isPresent(T.MORE_INFO_SCREEN)) openMore()
-                val all = moreTab("market_depth")
-                val gaps = missing(all, listOf("Bid", "Offer", "Total", "Open", "High", "Low", "Close", "Today"))
+                var all = moreTab("market_depth")
+                var gaps = missing(all, listOf("Bid", "Offer", "Total", "Open", "High", "Low", "Close", "Today"))
+                // Today's Low / High can sit below the first screen of the tab (iTrade, run f00f716f).
+                if (gaps.isNotEmpty() && engine.scrollPage(forward = true)) {
+                    pause(Timeouts.SETTLE)
+                    all = (all + readScreen(T.MORE_INFO_SCREEN)).distinct()
+                    gaps = missing(all, gaps)
+                    scrollToTop()
+                }
                 if (gaps.isNotEmpty()) moreFail("Market Depth", gaps, all)
                 // The BUY / SELL bar sits below the tab body, so it is looked for on the screen, by identifier first.
                 val bar = readScreen()
@@ -1212,6 +1268,14 @@ class WatchlistSuite(
             }
             "wl_more_technicals" -> {
                 val all = moreTab("technicals")
+                if (engine.lacks(TargetApp.Feature.TECHNICALS_MOVING_AVERAGES)) {
+                    // iTrade's Technicals shows pivot levels, with no EMA / SMA summary or toggle.
+                    val gaps = missing(all, listOf("Pivot", "Support", "Resistance"))
+                    if (gaps.isNotEmpty()) moreFail("Technicals", gaps, all)
+                    shot("more_technicals")
+                    note("Pivot, Support and Resistance shown (${engine.appName} has no EMA / SMA summary)")
+                    return
+                }
                 val gaps = missing(all, listOf("EMA", "Bullish Moving Average", "Bearish Moving Average"))
                 if (gaps.isNotEmpty()) moreFail("Technicals", gaps, all)
                 shot("more_technicals")
@@ -1256,8 +1320,11 @@ class WatchlistSuite(
                 val r = needRep()
                 val all = moreTab("info")
                 note("Info tab loaded with ${all.size} labelled line(s)")
-                val gaps = missing(all, listOf("Board Lot", "Instrument Name", "Precision", "Tick Size", "Max Quantity", "Exchange", "Symbol", "Trading Symbol", "Company Name", "Isin"))
+                // Max Quantity (in Lots) is shown only for an instrument with a freeze quantity (both apps), so it is noted,
+                // not required.
+                val gaps = missing(all, listOf("Board Lot", "Instrument Name", "Precision", "Tick Size", "Exchange", "Symbol", "Trading Symbol", "Company Name", "Isin"))
                 if (gaps.isNotEmpty()) moreFail("Info", gaps, all)
+                note(if (hasText(all, "Max Quantity")) "Max Quantity shown" else "no Max Quantity row (the instrument has no freeze quantity)")
                 if (!hasText(all, base(r))) fail("Info does not show the opened instrument '${base(r)}' as its Trading Symbol")
                 if (all.none { it.equals(r.exchange, ignoreCase = true) }) fail("Info does not show the exchange '${r.exchange}' of the opened instrument")
                 shot("more_info")
@@ -1290,7 +1357,7 @@ class WatchlistSuite(
 
     /** Selects a search category, types [query] and waits for results. */
     private fun searchQuery(tab: String, tabName: String, query: String) {
-        if (!engine.revealInList(tab, T.SEARCH_TABS)) fail("The '$tabName' category is not on the search screen")
+        if (!engine.revealInList(tab, searchTabs)) fail("The '$tabName' category is not on the search screen")
         val typed = engine.enterText(T.SEARCH_SCRIP_INPUT, query)
         if (!typed.ok) fail("Could not type '$query': ${typed.detail}")
         val select = engine.tap(tab)
@@ -1334,9 +1401,9 @@ class WatchlistSuite(
                 val exchanges = rows.mapNotNull { exchangeOf(it) }.toSet()
                 if (exchanges.isEmpty()) fail("No result row shows an exchange badge")
                 if (exchanges.none { it == "NSE" || it == "BSE" }) fail("All lists INFY but no NSE / BSE stock among ${rows.size} result(s) (exchanges: ${exchanges.joinToString("/")})", Cause.APP)
-                val missingTabs = T.SEARCH_TABS.filterNot { engine.revealInList(it, T.SEARCH_TABS) }
+                val missingTabs = searchTabs.filterNot { engine.revealInList(it, searchTabs) }
                 if (missingTabs.isNotEmpty()) fail("These categories are missing: ${missingTabs.joinToString()}")
-                note("${rows.size} result(s) across ${exchanges.joinToString("/")}; $withIcon with an add or tick icon; All, F&O, Commodity and Stocks present")
+                note("${rows.size} result(s) across ${exchanges.joinToString("/")}; $withIcon with an add or tick icon; categories ${searchTabs.joinToString { it.removePrefix("search_tab_") }} present")
                 shot("search_results")
             }
             "wl_search_fno" -> categoryCase(T.SEARCH_TAB_FNO, "F&O", "TCS", setOf("NFO", "BFO"))
@@ -1446,10 +1513,17 @@ class WatchlistSuite(
     }
 
     /** What kind of instrument a search row is, from its text: EQ, FUT, CE, PE (a strike carries digits), or null. */
+    /** A month of an expiry, on its own or inside a contract name ("23NOV26"). */
+    private val EXPIRY_MONTH = Regex("(?i)(?<![A-Z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?![A-Z])")
+
     private fun scripType(label: String): String? {
         val toks = tokens(label)
         return when {
             toks.any { it.endsWith("-EQ", ignoreCase = true) } -> "EQ"
+            // A calendar spread names two expiries ("IDEA23NOV2629DEC26F", run f968cb96): its pad has no Regular / AMO
+            // tabs, so it must never pass for a future, call or put.
+            EXPIRY_MONTH.findAll(label).map { it.value.uppercase() }.distinct().count() >= 2 ||
+                toks.any { it.equals("SPD", true) || it.equals("SPREAD", true) } -> "SPREAD"
             toks.any { it.equals("FUT", true) || (it.endsWith("FUT", true) && it.any(Char::isDigit)) } -> "FUT"
             toks.any { it.equals("CE", true) || (it.endsWith("CE", true) && it.any(Char::isDigit)) } -> "CE"
             toks.any { it.equals("PE", true) || (it.endsWith("PE", true) && it.any(Char::isDigit)) } -> "PE"
@@ -1482,7 +1556,7 @@ class WatchlistSuite(
             Wanted("F&O", T.SEARCH_TAB_FNO, "F&O", listOf("TCS", "RELIANCE"), "FUT", setOf("NFO")),
             Wanted("F&O", T.SEARCH_TAB_FNO, "F&O", listOf("TCS", "RELIANCE", "NIFTY"), "CE", setOf("NFO")),
             Wanted("F&O", T.SEARCH_TAB_FNO, "F&O", listOf("TCS", "RELIANCE", "NIFTY"), "PE", setOf("NFO")),
-            Wanted("Commodity", T.SEARCH_TAB_COMMODITY, "Commodity", listOf("CRUDEOIL", "CRU"), "FUT", setOf("MCX")),
+            Wanted("Commodity", commodityTab.first, commodityTab.second, listOf("CRUDEOIL", "CRU"), "FUT", setOf("MCX")),
         )
         if (capacity - start < wanted.size) blocked("The watchlist has room for ${capacity - start} more instrument(s); this case adds up to ${wanted.size}.")
         val added = mutableListOf<Added>()
@@ -1663,10 +1737,20 @@ class WatchlistSuite(
     private fun confirm(row: Int, name: String, becomes: String, leaves: String, what: String) {
         var inFlight = false
         var refused = false
+        // The list can rebuild after the tap and move the row (iTrade, run f00f716f): it is found again each time, by
+        // its whole label (CRUDEOIL lists one row per expiry), else by the name.
+        val label = resultRows().getOrNull(row)
+        fun at(): Int {
+            val rows = resultRows()
+            return rows.indexOf(label).takeIf { label != null && it >= 0 }
+                ?: rows.indexOfFirst { r -> tokens(r).any { it.equals(name, ignoreCase = true) } }.takeIf { it >= 0 }
+                ?: row
+        }
         val done = waitUntil(LOAD) {
+            val r = at()
             when {
-                engine.hasDescendantAt(T.SEARCH_RESULT_ROW, row, becomes) -> true
-                !engine.hasDescendantAt(T.SEARCH_RESULT_ROW, row, leaves) -> {
+                engine.hasDescendantAt(T.SEARCH_RESULT_ROW, r, becomes) -> true
+                !engine.hasDescendantAt(T.SEARCH_RESULT_ROW, r, leaves) -> {
                     inFlight = true
                     false
                 }
@@ -1678,7 +1762,13 @@ class WatchlistSuite(
             }
         }
         if (refused) fail("The $what request for $name finished but the row went back to its old icon: the app refused it")
-        if (!done) fail("Tapping to $what $name did not change its icon within ${LOAD / 1000} s")
+        if (!done) {
+            val inside = engine.descendantIdentifiersAt(T.SEARCH_RESULT_ROW, at())
+            fail(
+                "Tapping to $what $name did not change its icon within ${LOAD / 1000} s (its row holds: " +
+                    "${inside.joinToString(", ").ifEmpty { "no identifier" }}; expected '$becomes')",
+            )
+        }
     }
 
     private fun capacityLimit() {
@@ -2240,8 +2330,8 @@ class WatchlistSuite(
                 // an index is in it), so the chip to use is one the list can have.
                 if (!engine.isPresent(chipId) && !engine.revealInList(chipId, listOf(chipId))) {
                     blocked(
-                        "The Filter section has no '$chipText' chip (identifier '$chipId'); the installed Tradion build may predate this identifier.",
-                        Cause.AUTOMATION, "Rebuild Tradion with the 'watchlist_filter_chip_<exchange>' tags (docs/AUTOMATION_SEMANTICS.md).",
+                        "The Filter section has no '$chipText' chip (identifier '$chipId'); the installed ${engine.appName} build may predate this identifier.",
+                        Cause.AUTOMATION, "Rebuild ${engine.appName} with the 'watchlist_filter_chip_<exchange>' tags (docs/AUTOMATION_SEMANTICS.md).",
                     )
                 }
                 if (!engine.isTappable(chipId)) fail("The '$chipText' chip is on screen but not tappable", Cause.AUTOMATION)
@@ -2253,7 +2343,13 @@ class WatchlistSuite(
                 note("'$chipText' chip selected")
                 applySettings()
                 val shown = rowLabels()
-                val other = shown.mapNotNull { exchangeOf(it) }.filter { it != exchange }
+                // A watchlist row starts with the instrument's name, which can itself be an exchange word (the stock
+                // "NSE" listed on BSE, run 549102bb): its exchange is the first such word after the name. An index row
+                // reads INDICES and stays under its exchange's filter (iTrade keeps SENSEX and BANKEX under BSE).
+                val other = shown.mapNotNull { row ->
+                    val t = tokens(row)
+                    (t.drop(1).firstOrNull { it.uppercase() in EXCHANGES } ?: t.firstOrNull { it.uppercase() in EXCHANGES })?.uppercase()
+                }.filter { it != exchange && it != "INDICES" }
                 when {
                     other.isNotEmpty() -> problem = (problem?.plus("; ") ?: "") + "the $chipText filter was applied but ${other.toSet().joinToString("/")} instruments are still listed"
                     shown.isEmpty() -> problem = (problem?.plus("; ") ?: "") + "the $chipText filter was applied and emptied a list that holds $chipText instruments"
@@ -2360,7 +2456,7 @@ class WatchlistSuite(
             seg("bfo", "BFO", T.SEARCH_TAB_FNO, "F&O", extra = "SENSEX") { l, q ->
                 exchangeOf(l) == "BFO" && scripType(l) != null && same(l, q)
             },
-            seg("mcx", "MCX", T.SEARCH_TAB_COMMODITY, "Commodity") { l, q ->
+            seg("mcx", "MCX", commodityTab.first, commodityTab.second) { l, q ->
                 exchangeOf(l) == "MCX" && scripType(l) == "FUT" && same(l, q)
             },
         )
@@ -2580,7 +2676,7 @@ class WatchlistSuite(
             blocked(
                 "The order pad carries none of the order_* identifiers, so it cannot be driven reliably.",
                 Cause.ACCESSIBILITY,
-                "Install a Tradion build that has the order pad tags (tradion_mobile docs/AUTOMATION_SEMANTICS.md, Order pad).",
+                "Install a build of ${engine.appName} that has the order pad tags (tradion_mobile docs/AUTOMATION_SEMANTICS.md, Order pad).",
             )
         }
         // NSE and BSE share one pad with a radio for each exchange; the pad opens on NSE whichever row was tapped.
@@ -2813,7 +2909,10 @@ class WatchlistSuite(
         gate.available?.let { knownAvailable = it }
         note("funds: ${gate.why}")
         note("lot size ${pad.lotSize() ?: "?"}, tick size ${pad.tickSize() ?: "?"}")
-        for (t in OrderPad.TABS) need(pad.hasTab(t), "the '$t' tab is missing")
+        for (t in OrderPad.TABS) {
+            if (t == "BO / CO" && engine.lacks(TargetApp.Feature.BO_CO_TAB)) continue
+            need(pad.hasTab(t), "the '$t' tab is missing")
+        }
         need(pad.openTab("Regular"), "the Regular tab could not be opened")
         need(waitUntil(UI) { pad.hasField(T.ORDER_FIELD_QUANTITY) }, "Regular shows no Quantity box")
         need(waitUntil(UI) { pad.has(T.ORDER_FIELD_PRICE) }, "Regular shows no Price box")
@@ -2825,7 +2924,9 @@ class WatchlistSuite(
         // The Lots / Quantity switch exists on NFO and BFO only.
         val lotExchange = ex == "NFO" || ex == "BFO"
         need(pad.has(T.ORDER_QUANTITY_LOT_TOGGLE) == lotExchange, if (lotExchange) "$ex shows no Lots / Quantity switch" else "$ex shows a Lots / Quantity switch, which only NFO and BFO have")
-        if (pad.openTab("BO / CO")) {
+        if (engine.lacks(TargetApp.Feature.BO_CO_TAB)) {
+            note("${engine.appName} has no BO / CO tab (Regular and AMO only)")
+        } else if (pad.openTab("BO / CO")) {
             need(pad.present(T.ORDER_FIELD_STOPLOSS), "BO / CO shows no Stoploss (Cover) box")
             need(pad.present(T.ORDER_SWITCH_TARGET), "BO / CO shows no Target (Bracket) switch")
         } else problems += "the BO / CO tab could not be opened"
@@ -2854,7 +2955,8 @@ class WatchlistSuite(
             problems += "the Price box could not be set to Market"
             return
         }
-        need(pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Market order offers no Market Protection switch")
+        val protection = !engine.lacks(TargetApp.Feature.MARKET_PROTECTION)
+        if (protection) need(pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Market order offers no Market Protection switch")
         engine.toTop()
         // Limit order.
         if (!pad.toggleMarketLimit() || !waitUntil(UI) { !pad.priceIsMarket() }) {
@@ -2868,9 +2970,12 @@ class WatchlistSuite(
             val next = "%.2f".format(price + tick)
             need(fillField(T.ORDER_FIELD_PRICE, next), "typing the price $next reads '${pad.value(T.ORDER_FIELD_PRICE)}'")
         }
-        need(!pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Limit order still offers the Market Protection switch, which is for Market orders only")
+        if (protection) need(!pad.present(T.ORDER_SWITCH_MARKET_PROTECTION), "a Limit order still offers the Market Protection switch, which is for Market orders only")
         engine.toTop()
-        note("Market order: disabled Price box with Market Protection; Limit order: enabled Price box prefilled ${price ?: "?"}, no Market Protection")
+        note(
+            if (protection) "Market order: disabled Price box with Market Protection; Limit order: enabled Price box prefilled ${price ?: "?"}, no Market Protection"
+            else "Market order: disabled Price box; Limit order: enabled Price box prefilled ${price ?: "?"} (${engine.appName} has no Market Protection)",
+        )
         if (!ensureMarket(true)) problems += "the Price box could not be switched back to Market"
 
         // Stoploss: SL (limit) and SL-M (market).
@@ -2967,7 +3072,7 @@ class WatchlistSuite(
             pad.tap(T.ORDER_SWITCH_STOPLOSS)
             waitUntil(UI) { !pad.hasField(T.ORDER_FIELD_TRIGGER_PRICE) }
         } else problems += "the Stoploss switch could not be turned on for the Trigger Price check"
-        if (pad.openTab("BO / CO")) {
+        if (!engine.lacks(TargetApp.Feature.BO_CO_TAB) && pad.openTab("BO / CO")) {
             // BO / CO checks its Target (on by default, 0) and Stoploss (Cover) first, so the message names them whatever else is wrong.
             val bracket = Regex("target|stoploss|trig|trail|zero|empty", RegexOption.IGNORE_CASE)
             invalidTap("BO / CO · Quantity 0", bracket, problems) { qtyIs("0") }
@@ -3271,6 +3376,10 @@ class WatchlistSuite(
                 results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: switched off in the Order settings")
                 continue
             }
+            if ((kind.type == "co" || kind.type == "bo") && engine.lacks(TargetApp.Feature.BO_CO_TAB)) {
+                results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: not applicable, ${engine.appName} has no BO / CO tab")
+                continue
+            }
             // Two failures in a row mean the pad itself is not being driven: the rest would only repeat them.
             if (results.size >= 2 && results.takeLast(2).all { it.kind == Placed.FAILED }) {
                 results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: not attempted after two failures")
@@ -3498,7 +3607,9 @@ class WatchlistSuite(
         val trigger0 = pad.value(T.ORDER_FIELD_TRIGGER_PRICE).orEmpty()
         val qty0 = pad.value(T.ORDER_FIELD_QUANTITY).orEmpty()
         note("defaults: alert ${engine.labelsOf(T.GTT_ALERT_TYPE).joinToString(" ")}, condition ${gttCondition()}, quantity $qty0, price $price0, trigger $trigger0 (${engine.labelsOf(T.GTT_TRIGGER_PERCENT).firstOrNull().orEmpty()})")
-        need(gttCondition().contains("Greater", ignoreCase = true), "the default condition is '${gttCondition()}', not Greater than")
+        // iTrade opens a new GTT on "Less than" by design; Tradion on "Greater than".
+        val defaultCondition = if (engine.lacks(TargetApp.Feature.GTT_DEFAULT_GREATER)) "Less" else "Greater"
+        need(gttCondition().contains(defaultCondition, ignoreCase = true), "the default condition is '${gttCondition()}', not $defaultCondition than")
 
         // The condition and alert dropdowns.
         if (gttChoose(T.GTT_CONDITION, 0)) {
@@ -3800,6 +3911,21 @@ class WatchlistSuite(
 
     private fun basketRowIndex(name: String): Int = basketRows().indexOfFirst { tokens(it).firstOrNull().equals(name, ignoreCase = true) }
 
+    /**
+     * The basket [name]'s row, scrolling the list down to it: an app may list its baskets oldest first, so a new one is
+     * at the foot of a long list (iTrade, 28 baskets, run f00f716f). -1 when the whole list was seen without it.
+     */
+    private fun findBasketRow(name: String): Int {
+        basketRowIndex(name).takeIf { it >= 0 }?.let { return it }
+        engine.toTop()
+        repeat(15) {
+            basketRowIndex(name).takeIf { it >= 0 }?.let { return it }
+            if (!engine.scrollPage(forward = true)) return basketRowIndex(name)
+            pause(300)
+        }
+        return basketRowIndex(name)
+    }
+
     private fun squash(label: String) = label.replace(Regex("""\s+"""), " ").take(80)
 
     /** Orders > Basket: the number in the tab's title once the list has drawn. */
@@ -3813,10 +3939,10 @@ class WatchlistSuite(
     /** From the list into the basket [made]. */
     private fun openBasket(made: BasketMade) {
         openBasketTab()
-        var index = basketRowIndex(made.name)
+        var index = findBasketRow(made.name)
         // The rename (BK-04) may have been saved although its case failed: the basket then carries the new name.
         val renamed = (made.name + "X").take(24)
-        if (index < 0 && basketRowIndex(renamed) >= 0) {
+        if (index < 0 && findBasketRow(renamed) >= 0) {
             note("the basket is listed as '$renamed' (renamed in BK-04)")
             made.name = renamed
             index = basketRowIndex(renamed)
@@ -3857,7 +3983,7 @@ class WatchlistSuite(
         }
         if (!engine.tap(T.BASKET_CREATE_BUTTON).ok) fail("Create could not be tapped", Cause.AUTOMATION)
         if (!waitUntil(LOAD) { !engine.isPresent(T.BASKET_CREATE_BUTTON) }) fail("Create did not close the sheet (a duplicate name shows only a snackbar)")
-        if (!waitUntil(LOAD) { basketRowIndex(name) >= 0 }) fail("The new basket '$name' is not in the list")
+        if (!waitUntil(LOAD) { basketRowIndex(name) >= 0 } && findBasketRow(name) < 0) fail("The new basket '$name' is not in the list")
         basketMade = BasketMade(name, basketSegment.queries.first())
         note("basket '$name' created; the Basket count went ${base} → ${tabCount(T.ORDERS_TAB_BASKET) ?: "?"}: '${squash(basketRows()[basketRowIndex(name)])}'")
     }
@@ -3949,25 +4075,63 @@ class WatchlistSuite(
         if (!waitUntil(LOAD) { engine.groupedLabelsOf(T.BASKET_SCRIP_ROW).any { Regex("""\b2\b""").containsMatchIn(it) } }) {
             fail("After MODIFY the scrip row does not show quantity 2: '${squash(engine.groupedLabelsOf(T.BASKET_SCRIP_ROW).firstOrNull().orEmpty())}'")
         }
-        val margin = basketMargin()
+        val margin = basketMargin(awaitPositive = true)
         note("modified: quantity 1 → 2 on the scrip row; Required Margin ${engine.labelsOf(T.BASKET_MARGIN_REQUIRED).firstOrNull().orEmpty()}")
         val single = basketGate?.required ?: 0.0
         if (margin != null && margin <= 0.0 && single > 0.0) fail(
             "After MODIFY (quantity 1 → 2) the basket shows Required Margin 0.00, although one share needed " +
                 "${"%.2f".format(single)}: the basket would be executed with no margin check",
-            Cause.APP, "The basket's Required Margin should be recalculated after a scrip is modified.",
+            Cause.APP, "The basket's Required Margin should be recalculated after a scrip is modified: modifyBasketScrips " +
+                "(basket_support_helper_provider.dart) reloads the scrips but, unlike add and delete, never calls getSpanMargin.",
         )
     }
 
-    /** The basket's Required Margin as a number, once it is shown. */
-    private fun basketMargin(): Double? {
+    /**
+     * The basket's Required Margin as a number, once it is shown. The app shows 0.00 until its margin request answers, so
+     * with [awaitPositive] a 0.00 is only taken once it has stayed for the whole load time.
+     */
+    private fun basketMargin(awaitPositive: Boolean = false): Double? {
         val number = Regex("""\d[\d,]*(\.\d+)?""")
-        waitUntil(UI) { engine.labelsOf(T.BASKET_MARGIN_REQUIRED).any { number.containsMatchIn(it) } }
-        return engine.labelsOf(T.BASKET_MARGIN_REQUIRED)
+        fun read() = engine.labelsOf(T.BASKET_MARGIN_REQUIRED)
             .firstNotNullOfOrNull { number.find(it)?.value?.replace(",", "")?.toDoubleOrNull() }
+        if (awaitPositive) waitUntil(LOAD) { (read() ?: 0.0) > 0.0 }
+        else waitUntil(UI) { read() != null }
+        return read()
     }
 
     /** The first rows of the Trade Book, for the report when it grew (instrument, side, quantity; no account data). */
+    /**
+     * Whether the Trade Book really grew. Its tab count can carry another tab's number: Tradion and iTrade write the
+     * basket count into the Trade Book title when a basket is renamed ("Pending (3)", later "Pending (3) (0)"; run
+     * f968cb96), so before calling an order executed the Trade Book itself is opened. Null when it did grow, otherwise
+     * what the title showed, for the report.
+     */
+    private fun tradeBookMislabelled(): String? {
+        val title = engine.labelsOf(T.ORDERS_TAB_TRADE_BOOK).joinToString(" ").trim()
+        if (title.contains("Trade", ignoreCase = true)) return null
+        openOrdersTab(T.ORDERS_TAB_TRADE_BOOK)
+        pause(Timeouts.SETTLE)
+        val empty = engine.isPresent(AutomationConfig.Ids.UI_EMPTY)
+        return if (empty && tradeBookRows() == NO_TRADE_ROWS) title.ifEmpty { "(no title)" } else null
+    }
+
+    /** The Trade Book title problem found by [tradeBookMislabelled], reported (once a run) when the case's checks are done. */
+    private var tradeTitleDefect: String? = null
+    private var tradeTitleReported = false
+
+    private fun noteMislabelledTradeBook(title: String, from: Int, to: Int) {
+        note("the Trade Book tab's count went $from → $to, but the Trade Book itself is empty: its title reads '$title'")
+        if (!tradeTitleReported) tradeTitleDefect = "The Trade Book tab is titled '$title' (another tab's name and count) while the Trade Book is empty"
+    }
+
+    /** Fails the running case with the mislabelled Trade Book, if this case found it first. */
+    private fun reportTradeTitle() {
+        val defect = tradeTitleDefect ?: return
+        tradeTitleDefect = null
+        tradeTitleReported = true
+        fail("$defect.", Cause.APP, TRADE_TITLE_FIX)
+    }
+
     private fun tradeBookRows(): String {
         openOrdersTab(T.ORDERS_TAB_TRADE_BOOK)
         pause(Timeouts.SETTLE)
@@ -3975,7 +4139,7 @@ class WatchlistSuite(
         val lines = engine.onScreenLines().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("Tab ") && !it.contains("(") }
             .dropWhile { !Regex("""-EQ|BUY|SELL""").containsMatchIn(it) }
-        return lines.take(10).joinToString(" | ").ifEmpty { "no row could be read" }
+        return lines.take(10).joinToString(" | ").ifEmpty { NO_TRADE_ROWS }
     }
 
     // BK-04 ---------------------------------------------------------------------------------------
@@ -3984,6 +4148,10 @@ class WatchlistSuite(
     private fun basketEdit() {
         val made = basketMade ?: notTested("No basket was created, so there is nothing to edit.")
         if (!engine.isPresent(T.BASKET_SCRIP_ROW)) openBasket(made)
+        // Edit Basket is reached through a scrip, and BK-02 adds none when the pad's margin gate stays shut (run 549102bb).
+        if (!waitUntil(UI) { engine.isPresent(T.BASKET_SCRIP_ROW) }) {
+            notTested("The basket has no scrip, and Edit Basket is opened by a long-press on one.")
+        }
         val press = engine.longTap(T.BASKET_SCRIP_ROW)
         if (!press.ok) fail("The long-press on the scrip row failed: ${press.detail}", Cause.AUTOMATION)
         if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_EDIT_NAME_INPUT) }) fail("A long-press on the scrip did not open Edit Basket")
@@ -4003,7 +4171,7 @@ class WatchlistSuite(
             pause(UI)
         }
         openBasketTab()
-        if (!waitUntil(LOAD) { basketRowIndex(renamed) >= 0 }) fail("After Save the list shows no basket named '$renamed'; rows: ${basketRows().take(3).joinToString(" | ") { squash(it) }}")
+        if (!waitUntil(LOAD) { basketRowIndex(renamed) >= 0 } && findBasketRow(renamed) < 0) fail("After Save the list shows no basket named '$renamed'; rows: ${basketRows().take(3).joinToString(" | ") { squash(it) }}")
         note("renamed '${made.name}' → '$renamed' and saved")
         made.name = renamed
     }
@@ -4035,6 +4203,7 @@ class WatchlistSuite(
         // Executing sends the basket and returns to the list; the row's chip turns EXECUTED when the list reloads.
         val left = waitUntil(LOAD) { !engine.isPresent(T.BASKET_EXECUTE_SLIDER) && engine.isPresent(T.BASKET_ROW) }
         if (!left) fail("The slide did not execute the basket: the detail screen stayed open (the knob may not have reached the end)")
+        findBasketRow(made.name)
         val executed = waitUntil(LOAD) { basketRows().getOrNull(basketRowIndex(made.name))?.contains("EXECUTED", ignoreCase = true) == true }
         note(if (executed) "the basket shows EXECUTED" else "the basket row did not turn EXECUTED within ${LOAD / 1000} s (the orders may have been refused)")
         // A fill can reach the Trade Book some seconds after the orders were sent: watch it for a while.
@@ -4044,12 +4213,15 @@ class WatchlistSuite(
             pause(2_000)
             after = readOrderCounts()
         }
-        if (before.trades != null && after.trades != null && after.trades > before.trades) {
+        val basketTitle = if (before.trades != null && after.trades != null && after.trades > before.trades) tradeBookMislabelled() else null
+        if (basketTitle != null) noteMislabelledTradeBook(basketTitle, before.trades!!, after.trades!!)
+        else if (before.trades != null && after.trades != null && after.trades > before.trades) {
             fail("Trade Book grew from ${before.trades} to ${after.trades}: an order of the basket was EXECUTED (Trade Book: ${tradeBookRows()})", Cause.APP,
                 "Check the account at once: the margin gate should have kept the orders from being accepted.")
         }
         if (before.book != null && after.book != null && after.book > before.book) basketBookRows += after.book - before.book
         note("Order Book ${before.book ?: "?"} → ${after.book ?: "?"}; Pending ${before.pending ?: "?"} → ${after.pending ?: "?"}; Trade Book unchanged")
+        reportTradeTitle()
         // Whatever is pending from the basket is cancelled on the Pending tab.
         cleanPendingAbove(before.pending ?: 0, listOf(made.script))
     }
@@ -4069,7 +4241,7 @@ class WatchlistSuite(
         }
         // There is no confirmation: the app returns to the list.
         if (!waitUntil(LOAD) { engine.isPresent(T.BASKET_NEW_BUTTON) || engine.isPresent(T.BASKET_ROW) }) fail("Delete Basket did not return to the Basket list")
-        if (!waitUntil(LOAD) { basketRowIndex(made.name) < 0 }) fail("The basket '${made.name}' is still in the list after Delete Basket")
+        if (!waitUntil(LOAD) { basketRowIndex(made.name) < 0 } || findBasketRow(made.name) >= 0) fail("The basket '${made.name}' is still in the list after Delete Basket")
         val base = basketBase
         val now = tabCount(T.ORDERS_TAB_BASKET)
         if (base != null && now != null && now != base) fail("After the delete the Basket count is $now, it was $base before the run")
@@ -4302,7 +4474,9 @@ class WatchlistSuite(
         openOrdersTab(T.ORDERS_TAB_ORDER_BOOK)
         shot("order_book")
         val base = orderBase
-        if (base?.trades != null && counts.trades != null && counts.trades > base.trades) {
+        val bookTitle = if (base?.trades != null && counts.trades != null && counts.trades > base.trades) tradeBookMislabelled() else null
+        if (bookTitle != null) noteMislabelledTradeBook(bookTitle, base!!.trades!!, counts.trades!!)
+        else if (base?.trades != null && counts.trades != null && counts.trades > base.trades) {
             fail("Trade Book grew from ${base.trades} to ${counts.trades}: an order of this run was EXECUTED (Trade Book: ${tradeBookRows()})", Cause.APP,
                 "Check the account at once: the margin gate should have kept every order from being accepted.")
         }
@@ -4323,6 +4497,8 @@ class WatchlistSuite(
         } else {
             note("Order Book (${counts.book ?: "?"}); the count before the run could not be read, so the number of new rows was not compared; $rejected REJECTED row(s) on the first screen")
         }
+        // A mislabelled Trade Book is a defect of its own; it is reported after the Order Book checks so they still run.
+        reportTradeTitle()
     }
 
     private fun orderStateRestored() {

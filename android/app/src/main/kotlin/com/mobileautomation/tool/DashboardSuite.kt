@@ -203,6 +203,9 @@ class DashboardSuite(
 
     private fun readScreen(limit: Int = 200): List<String> = engine.screenTexts(limit)
 
+    /** The app under test, for what its Dashboard shows differently ([TargetApp]); Tradion when it is not known. */
+    private val app: TargetApp get() = engine.app ?: TargetApp.TRADION
+
     private fun has(part: String): Boolean = engine.hasTextContaining(part)
 
     private fun norm(s: String): String = s.replace(Regex("\\s+"), " ").trim()
@@ -317,6 +320,10 @@ class DashboardSuite(
         val c = case(id)
         val step = flow.step(id)
         if (step.status != StepStatus.PENDING) return null
+        engine.app?.notApplicableCases?.get(id)?.let {
+            flow.skipAs(step, "not_applicable", it)
+            return null
+        }
         current = step
         currentCase = c
         notes.clear()
@@ -780,7 +787,7 @@ class DashboardSuite(
             "db_trading_customize_edit", "db_investments_customize_edit" -> notTested(
                 "The widgets' remove (minus) and drag controls carry no identifiers and publish no state, so a reversible change " +
                     "(remove or move one widget, Save, check the Dashboard, restore) cannot be made and verified safely. The screen " +
-                    "itself is covered by the Customize case. Tradion would need identifiers such as customize_remove_<widget> and " +
+                    "itself is covered by the Customize case. ${engine.appName} would need identifiers such as customize_remove_<widget> and " +
                     "customize_handle_<widget>, and Save's enabled state.",
             )
             "db_investments_landing" -> investmentsLanding()
@@ -822,7 +829,8 @@ class DashboardSuite(
         val all = readScreen()
         if (all.isEmpty()) unverifiable("the Dashboard", "Publish the ticker and the section headings as labels.")
         val problems = mutableListOf<String>()
-        if (!all.any { it.contains("NIFTY 50", ignoreCase = true) }) problems += "the NIFTY 50 ticker"
+        // The ticker leads with the app's own index name: Tradion's "NIFTY 50", iTrade's "NIFTY" (run f00f716f).
+        if (!all.any { it.contains(app.tickerIndex, ignoreCase = true) }) problems += "the ${app.tickerIndex} ticker"
         if (all.none { MONEY.containsMatchIn(it) }) problems += "an LTP"
         if (all.none { it.contains("%") }) problems += "a % change"
         if (!has("Trading")) problems += "the Trading tab"
@@ -830,7 +838,7 @@ class DashboardSuite(
         for (id in listOf(T.BOTTOMNAV_WATCHLIST_TAB, T.BOTTOMNAV_ORDER_TAB, T.BOTTOMNAV_DASHBOARD_TAB, T.BOTTOMNAV_PORTFOLIO_TAB)) {
             if (!engine.isPresent(id)) problems += "the bottom navigation item '$id'"
         }
-        if (problems.isNotEmpty()) fail("The Dashboard is readable but shows no ${problems.joinToString(", ")}", Cause.UNCONFIRMED)
+        if (problems.isNotEmpty()) fail("The Dashboard is readable but does not show ${problems.joinToString(", ")}", Cause.UNCONFIRMED)
         shot("DS-01_trading_dashboard")
         note("ticker, tabs and bottom navigation shown")
     }
@@ -872,7 +880,11 @@ class DashboardSuite(
         // The Positions card sits under the Tools at the top of the Trading page and is fully on screen there.
         scrollTop()
         pause(Timeouts.SETTLE)
-        val all = engine.onScreenLines()
+        // The card's lines can be merged into the Trading page's own node, which is taller than onScreenLines takes
+        // (run f00f716f: "Positions | Total P&L" readable, no line on screen): its labels are unique, so read the page.
+        val all = engine.onScreenLines().let { lines ->
+            if (missing(lines, listOf("Total P&L", "Buy Value", "Sell Value")).isEmpty()) lines else readScreen()
+        }
         val gaps = missing(all, listOf("Total P&L", "Buy Value", "Sell Value"))
         if (gaps.isNotEmpty()) fail("Positions is readable but shows no ${gaps.joinToString(", ")}", Cause.UNCONFIRMED)
         if (all.none { MONEY.containsMatchIn(it) }) fail("Positions shows no figure", Cause.UNCONFIRMED)
@@ -1093,11 +1105,14 @@ class DashboardSuite(
         if (!waitUntil(UI) { sheetOpen() }) fail("Tapping a Futures row did not open its sheet", Cause.UNCONFIRMED)
         note("a row opened its instrument sheet")
         quickClose(engine.firstPresent(sheetIds) ?: T.SCRIP_DETAILS_SHEET)
-        // Search.
+        // Search. The list is rebuilt after the text arrives: the rows of the moment before are not its answer (run
+        // f00f716f read the CURRENCY tab's USDINR rows while the screen already said NO RESULTS).
+        val unsearched = rowSignature(T.FUTURES_ROW)
         val typed = engine.enterTextLabelled("Search", "NIFTY")
         if (typed.ok) {
+            fastWait(1_500L) { emptyShown() || rowSignature(T.FUTURES_ROW) != unsearched }
             if (!waitUntil(UI) { engine.isPresent(T.FUTURES_ROW) || emptyShown() }) fail("Searching NIFTY showed neither a row nor an empty state", Cause.UNCONFIRMED)
-            val names = engine.groupedLabelsOf(T.FUTURES_ROW)
+            val names = if (emptyShown()) emptyList() else engine.groupedLabelsOf(T.FUTURES_ROW)
             if (names.isNotEmpty() && names.none { it.contains("NIFTY", true) }) fail("Searching NIFTY lists rows that do not contain NIFTY (${names.first().take(40)})", Cause.APP)
             engine.enterTextLabelled("Search", "")
             note("search NIFTY responded")
@@ -1194,9 +1209,11 @@ class DashboardSuite(
         timing(started, "Investments data loaded")
         if (engine.isSelected(T.DASHBOARD_TAB_TRADING)) fail("The Trading tab still reports itself selected on the Investments view", Cause.APP)
         val found = mutableSetOf<String>()
-        val wanted = listOf("Indian Indices", "Quick Tools", "Funds", "Holdings", "Scanners", "Top Sectors", "Customi")
+        val wanted = app.investmentsSections
         scrollTop()
-        fun collect() = wanted.filter { w -> readScreen().any { it.contains(w, ignoreCase = true) } }.forEach { found += it }
+        // iTrade heads Quick Tools "Invest" (run f00f716f), which the tab's own name contains: such a heading is a whole line.
+        fun shows(line: String, w: String) = if ("Investments".startsWith(w, ignoreCase = true)) line.trim().equals(w, ignoreCase = true) else line.contains(w, ignoreCase = true)
+        fun collect() = wanted.filter { w -> readScreen().any { shows(it, w) } }.forEach { found += it }
         collect()
         shot("DS-10_investments_dashboard")
         repeat(8) {
@@ -1205,9 +1222,14 @@ class DashboardSuite(
             pause(Timeouts.SETTLE)
             collect()
         }
+        // Indian Indices is drawn only once its data arrives; when that is the only gap it is reported once, by DB-I02 to
+        // DB-I04 (API), not again here (run 549102bb).
+        val dataOnly = setOf("Indian Indices")
         val gaps = wanted.filterNot { it in found }
-        if (gaps.isNotEmpty()) fail("The Investments tab is readable but these sections were not found while scrolling: ${gaps.joinToString()}", Cause.UNCONFIRMED)
-        note("Investments selected; all ${wanted.size} sections found by scrolling (the promotional banner is an image: seen in the screenshot, not tapped)")
+        val missingLayout = gaps.filterNot { it in dataOnly }
+        if (missingLayout.isNotEmpty()) fail("The Investments tab is readable but these sections were not found while scrolling: ${gaps.joinToString()}", Cause.UNCONFIRMED)
+        if (gaps.isNotEmpty()) note("${gaps.joinToString()} not shown: it appears only once its data arrives (see DB-I02)")
+        note("Investments selected; ${found.size} of ${wanted.size} sections found by scrolling (the promotional banner is an image: seen in the screenshot, not tapped)")
         scrollTop()
     }
 
@@ -1225,8 +1247,15 @@ class DashboardSuite(
             repeat(2) { if (!found && engine.scrollPage(forward = true)) { pause(Timeouts.SETTLE); found = has("All Indices") } }
             found
         }
+        // iTrade has no 'Indian Indices' shortcut: without the section nothing on the tab carries the name (run f00f716f).
+        if (!shown && !has("Indian Indices")) fail(
+            "The Indian Indices section is not shown: ${engine.appName} hides it (heading, All Indices and cards) until the index " +
+                "data arrives, and none had arrived ${LOAD / 1000} s after the Investments tab opened (nothing titled Indian Indices is on the tab)",
+            Cause.API, "Check the investment dashboard response: its preferences must enable 'indices' and carry indicesData " +
+                "(dashboardProvider.indexData stayed empty).",
+        )
         if (!shown) fail(
-            "The Indian Indices section is not shown: Tradion hides it until the index data arrives, and none had " +
+            "The Indian Indices section is not shown: ${engine.appName} hides it until the index data arrives, and none had " +
                 "arrived ${LOAD / 1000} s after the Investments tab opened (only the 'Indian Indices' shortcut is on screen)",
             Cause.API, "Check the dashboard index data call (dashboardProvider.indexData stayed empty).",
         )
@@ -1323,7 +1352,7 @@ class DashboardSuite(
 
     private fun openTile(tile: String, screen: String, what: String, timeoutMs: Long = UI) {
         ensureView(false)
-        if (!revealTile(tile)) blocked("The $what tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild Tradion with the invest_tile_<i> tags.")
+        if (!revealTile(tile)) blocked("The $what tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild ${engine.appName} with the invest_tile_<i> tags.")
         tapOpen(tile, listOf(screen), "$what did not open", timeoutMs)
     }
 
@@ -1513,7 +1542,7 @@ class DashboardSuite(
 
     private fun sdkTile(tile: String, label: String, ds: String) {
         ensureView(false)
-        if (!revealTile(tile)) blocked("The $label tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild Tradion with the invest_tile_<i> tags.")
+        if (!revealTile(tile)) blocked("The $label tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild ${engine.appName} with the invest_tile_<i> tags.")
         val tap = engine.tap(tile)
         if (!tap.ok) fail("The $label tile could not be tapped: ${tap.detail}", Cause.AUTOMATION)
         externalLanding(label, ds)
@@ -1522,7 +1551,7 @@ class DashboardSuite(
 
     private fun webTile(tile: String, label: String, ds: String, skipIfSessionLost: Boolean = false) {
         ensureView(false)
-        if (!revealTile(tile)) blocked("The $label tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild Tradion with the invest_tile_<i> tags.")
+        if (!revealTile(tile)) blocked("The $label tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild ${engine.appName} with the invest_tile_<i> tags.")
         val started = engine.clock()
         val tap = engine.tap(tile)
         if (!tap.ok) fail("The $label tile could not be tapped: ${tap.detail}", Cause.AUTOMATION)
@@ -1553,7 +1582,7 @@ class DashboardSuite(
             waitUntil(4_000L) { loggedOut() || engine.isPresent(T.DASHBOARD_SCREEN) }
             if (skipIfSessionLost && loggedOut()) {
                 // The app cannot be driven on, so the case is skipped (not failed): this was the last case of the run.
-                blocked("$label opened '$other'; coming back, Tradion showed the sign-in screen (the session ended), so the flow cannot continue from the page and the case is skipped.",
+                blocked("$label opened '$other'; coming back, ${engine.appName} showed the sign-in screen (the session ended), so the flow cannot continue from the page and the case is skipped.",
                     Cause.APP, "Developers: coming back from the browser, the app lands on the login screen (check what the resume does with the feed / heartbeat session).")
             }
             failIfLoggedOut("returning from '$other'")
@@ -1563,7 +1592,7 @@ class DashboardSuite(
                 unverifiable("the $label page in '$other'", "Another app's page is outside the accessibility scope of this tool; the screenshot is the evidence.")
             }
             timing(started, "$label opened in '$other'", slowMs = 10_000L)
-            note("$label opens in another app ('$other') and not inside Tradion; its page cannot be read by the tool, the screenshot shows ${if (rendered == true) "a drawn page" else "no verdict"}; the app was brought back")
+            note("$label opens in another app ('$other') and not inside ${engine.appName}; its page cannot be read by the tool, the screenshot shows ${if (rendered == true) "a drawn page" else "no verdict"}; the app was brought back")
             return
         }
         var readable = false
@@ -1707,6 +1736,14 @@ class DashboardSuite(
         // Statistics only: the card shows its figures. The widget is not opened and its formatting is not judged.
         val all = engine.onScreenLines()
         val gaps = missing(all, listOf("Current Value", "Invested Amount", "Net P&L"))
+        // A label shown as its translation key ("investedAmount", run f00f716f) is there but untranslated: an app defect.
+        val keys = gaps.map { g -> g.split(' ').joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }.replaceFirstChar(Char::lowercaseChar) }
+            .filter { k -> all.any { it.trim() == k } }
+        if (keys.isNotEmpty()) fail(
+            "The Holdings widget shows the untranslated key ${keys.joinToString { "'$it'" }} instead of its label " +
+                "(${gaps.filter { g -> keys.any { k -> k.equals(g.replace(" ", ""), ignoreCase = true) } }.joinToString()})",
+            Cause.APP, "Add ${keys.joinToString()} to the app's language file (assets/language/en-US.json): the label falls back to its key.",
+        )
         if (gaps.isNotEmpty()) fail("The Holdings widget is readable but shows no ${gaps.joinToString(", ")} (lines: ${all.take(14).joinToString(" | ")})", Cause.UNCONFIRMED)
         if (all.count { MONEY.containsMatchIn(it) } < 2) fail("The Holdings widget shows no amount", Cause.UNCONFIRMED)
         note("the Holdings statistics are loaded (Current Value, Invested Amount, Net P&L); the widget was not opened")
@@ -1745,7 +1782,7 @@ class DashboardSuite(
         engine.tap(ids.first())
         cleanup = "restored: Top Gainers selected again"
         note("chips ${seen.joinToString()} each showed cards or a valid empty state (cards were not read one by one)" +
-            if (!selectedExposed) "; the chips do not publish their selected state in this build (rebuild Tradion)" else "")
+            if (!selectedExposed) "; the chips do not publish their selected state in this build (rebuild ${engine.appName})" else "")
     }
 
     private fun scannersViewAll() {
@@ -1813,7 +1850,10 @@ class DashboardSuite(
         val sectors = all.map { it.trim() }.filter { it.length > 3 && it == it.uppercase() && it.any(Char::isLetter) && !it.contains("%") && it !in listOf("NSE", "BSE", "VIEW ALL") && it != "3M" && it != "6M" && it != "1Y" }
         if (sectors.isEmpty()) fail("The sector cards show no sector name (lines: ${all.take(14).joinToString(" | ")})", Cause.UNCONFIRMED)
         // Every complete card shows three performance figures (3M, 6M, 1Y); the row scrolls sideways, so the last card may be partial.
-        val figures = all.count { Regex("""^[+-]?\d+\.\d{2}%$""").matches(it.trim()) }
+        // iTrade prints bare figures ("-14.17", "-16.3", run f00f716f) under the periods; the Holdings amounts in the same
+        // band are bare too, so only the three lines after a card's "1Y" count.
+        val figures = if (app.sectorFiguresInPercent) all.count { Regex("""^[+-]?\d+\.\d{2}%$""").matches(it.trim()) }
+        else all.indices.filter { all[it].trim() == "1Y" }.sumOf { i -> all.drop(i + 1).take(3).count { Regex("""^[+-]?\d+(\.\d+)?$""").matches(it.trim()) } }
         if (figures < 3) fail("The sector cards show $figures performance figure(s), expected 3M, 6M and 1Y for at least one card (lines: ${all.take(14).joinToString(" | ")})", Cause.UNCONFIRMED)
         shot("DS-24_top_sectors")
         note("sector card(s) ${sectors.take(3).joinToString()}: $figures performance figure(s) for 3M, 6M and 1Y")
@@ -1824,10 +1864,10 @@ class DashboardSuite(
         revealAnchor(T.DASHBOARD_TOP_SECTORS_VIEW_ALL, "Top Sectors", "Investments")
         tapOpen(T.DASHBOARD_TOP_SECTORS_VIEW_ALL, listOf(T.SECTORS_SCREEN), "Top Sectors › View All did not open")
         val started = engine.clock()
-        if (!waitUntil(LOAD) { readScreen(120).any { it.contains("-EQ") } }) fail("The sectors page lists no constituent within ${LOAD / 1000} s", Cause.API)
+        if (!waitUntil(LOAD) { constituents().isNotEmpty() }) fail("The sectors page lists no constituent within ${LOAD / 1000} s", Cause.API)
         timing(started, "sector constituents loaded")
         // Every sector tab, not one: each is tapped, must change the list (or show a valid empty state) and must list constituents.
-        var previous = readScreen(120).filter { it.contains("-EQ") }.take(3)
+        var previous = constituents().take(3)
         val strip = stripOf(T.SECTORS_TAB_PREFIX)
         val seen = mutableListOf<String>()
         val problems = mutableListOf<String>()
@@ -1843,8 +1883,8 @@ class DashboardSuite(
                     continue
                 }
             }
-            val changed = waitUntil(if (i == 0) 500L else LOAD) { i == 0 || readScreen(120).filter { it.contains("-EQ") }.take(3).let { it.isNotEmpty() && it != previous } }
-            val rows = readScreen(120).filter { it.contains("-EQ") }
+            val changed = waitUntil(if (i == 0) 500L else LOAD) { i == 0 || constituents().take(3).let { it.isNotEmpty() && it != previous } }
+            val rows = constituents()
             if (rows.isEmpty() && !emptyShown()) problems += "$label lists no constituent and no empty state"
             else if (!changed && rows.isNotEmpty() && seen.isNotEmpty()) problems += "$label shows the same constituents as the tab before"
             previous = rows.take(3)
@@ -1854,6 +1894,19 @@ class DashboardSuite(
         note("all ${seen.size} sector tab(s): ${seen.joinToString(", ")}")
         if (problems.isNotEmpty()) fail(problems.joinToString("; "), Cause.UNCONFIRMED)
         leave()
+    }
+
+    /**
+     * The constituent lines of the sectors page: Tradion's NSE rows carry their series ("INFY-EQ"); iTrade's are BSE rows
+     * without one ("INFY | 1118.00 | BSE | -43.95", run f00f716f), so there a constituent is a lettered line directly
+     * followed by its price (the page's text is read once per distinct line, so the repeated "BSE" cannot anchor a row).
+     */
+    private fun constituents(): List<String> {
+        val lines = readScreen(120)
+        if (app.sectorRowsWithSeries) return lines.filter { it.contains("-EQ") }
+        val price = Regex("""^[\d,]+\.\d{2}$""")
+        return lines.zipWithNext().filter { (name, next) -> name.any(Char::isLetter) && !MONEY.containsMatchIn(name) && price.matches(next.trim()) }
+            .map { it.first.trim() }
     }
 
 }

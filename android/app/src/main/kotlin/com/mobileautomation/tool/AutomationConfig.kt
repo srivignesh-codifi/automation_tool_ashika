@@ -26,7 +26,13 @@ object AutomationConfig {
      */
     val ALLOWED_PACKAGES: Set<String> = TargetApp.values().map { it.packageName }.toSet()
 
-    val DEFAULT_TARGET_PACKAGE: String = TargetApp.ASHIKA.packageName
+    /**
+     * The apps the tool offers to test, in the order the picker shows them. An app left out stays registered (and
+     * allowlisted) but is not offered.
+     */
+    val OFFERED_APPS: List<TargetApp> = listOf(TargetApp.ASHIKA, TargetApp.TRADION, TargetApp.ITRADE)
+
+    val DEFAULT_TARGET_PACKAGE: String = OFFERED_APPS.first().packageName
 
     /**
      * Put on every launch of a target app. The apps read it (and the launching

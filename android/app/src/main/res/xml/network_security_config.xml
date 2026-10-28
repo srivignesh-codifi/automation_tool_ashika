@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HTTPS everywhere, except the sign-in server on the office network, which
+  serves plain HTTP (AuthService.baseUrl). Add its HTTPS address here and drop
+  the exception once it has one.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.10.134</domain>
+    </domain-config>
+</network-security-config>

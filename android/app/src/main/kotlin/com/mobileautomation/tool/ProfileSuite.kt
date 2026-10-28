@@ -98,7 +98,7 @@ class ProfileSuite(
             c("PF-16", "profile_font_size", "Font sizes",
                 "Font sizes offers Small, Medium and Large; another size is selected and shows as selected; the original size is restored."),
             c("PF-17", "profile_security_settings", "Security Settings",
-                "Security Settings opens Change Password with Current, New and Confirm fields; submitting them empty shows the three 'cannot be empty' errors and sends nothing; Back returns.", "High"),
+                "Security Settings opens Change Password with Current, New and Confirm fields; submitting them empty shows an error under each of the three and sends nothing; Back returns.", "High"),
             c("PF-18", "profile_trade_preferences", "Trade Settings (order preferences)",
                 "The order preferences load; every segment tab selects and shows its settings and Default Quantity; Save Settings is disabled with no change, enabled after quantity +, disabled again after quantity −; Back returns without a save prompt. Nothing is saved.", "High"),
             c("PF-19", "profile_accessibility_settings", "Accessibility Settings",
@@ -118,8 +118,8 @@ class ProfileSuite(
     private val LOAD = Timeouts.DATA_LOAD
 
     /** Said once per case when the installed Tradion build predates the Profile identifiers. */
-    private val STALE = "the installed Tradion build does not carry the Profile identifiers (it was built before they " +
-        "were added); rebuild and reinstall Tradion from the current working tree"
+    private val STALE = "the installed ${engine.appName} build does not carry the Profile identifiers (it was built before they " +
+        "were added); rebuild and reinstall ${engine.appName} from the current working tree"
 
     // ── Where things are: an identifier, and the visible label to fall back on ──────────────────
 
@@ -286,14 +286,14 @@ class ProfileSuite(
         val done = if (notes.isEmpty()) "" else " What could be checked passed: ${notes.joinToString("; ")}."
         throw CaseEnd(
             Kind.BLOCKED, "$what needs the Profile identifiers, but $STALE.$done", Cause.AUTOMATION, null,
-            "Rebuild Tradion (flutter build apk) from the working tree that has the Profile identifiers and install it, then run again.",
+            "Rebuild ${engine.appName} (flutter build apk) from the working tree that has the Profile identifiers and install it, then run again.",
         )
     }
 
     private fun missingTag(id: String, what: String): Nothing = blocked(
         "$what could not be found: '$id' is not on screen" + if (taggedBuild == false) " ($STALE)" else "",
         Cause.AUTOMATION,
-        "Install a Tradion build that carries the Profile identifiers (docs/AUTOMATION_SEMANTICS.md, Profile).",
+        "Install a build of ${engine.appName} that carries the Profile identifiers (docs/AUTOMATION_SEMANTICS.md, Profile).",
     )
 
     /** Records how long the server took on the case's own step. */
@@ -573,11 +573,25 @@ class ProfileSuite(
     // ═══ The run ═══════════════════════════════════════════════════════════════════════════════
 
     /** Runs every case. Returns a result only when the run has to end. */
+    /** The cases whose control the app under test does not have at all (see [TargetApp.Feature]). */
+    private val ABSENT_CASES = mapOf(
+        "profile_switch_account_sheet" to TargetApp.Feature.PROFILE_SWITCH_ACCOUNT,
+        "profile_rate_app" to TargetApp.Feature.PROFILE_RATE_APP,
+        "profile_toggle_notification" to TargetApp.Feature.PROFILE_NOTIFICATION_TOGGLE,
+        "profile_toggle_order_preview" to TargetApp.Feature.PROFILE_ORDER_PREVIEW_TOGGLE,
+        "profile_guarded_rows" to TargetApp.Feature.PROFILE_GUARDED_ROWS,
+    )
+
     fun run(): AutomationRunResult? {
         for (case in CASES) {
             if (case.id in off) {
                 val step = flow.step(case.id)
                 if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_tested", "turned off in the Profile settings")
+                continue
+            }
+            if (ABSENT_CASES[case.id]?.let(engine::lacks) == true) {
+                val step = flow.step(case.id)
+                if (step.status == StepStatus.PENDING) flow.skipAs(step, "not_applicable", "${engine.appName} has no ${case.name} in Profile")
                 continue
             }
             runCase(case.id) { body(case.id) }?.let { return it }
@@ -598,7 +612,12 @@ class ProfileSuite(
                 note("no account was chosen")
             }
             "profile_funds_opened" -> openAndReturn(R.FUNDS, S.FUNDS, "Funds", account = true, minLines = 3) { funds() }
-            "profile_add_funds_opened" -> openAndReturn(
+            "profile_add_funds_opened" -> if (engine.lacks(TargetApp.Feature.ADD_FUNDS_IN_APP)) {
+                onTab(account = true)
+                if (!rowPresent(R.ADD_FUNDS)) fail("The Add Funds button is not on the Profile tab", Cause.APP)
+                engine.toTop()
+                note("present, not tapped: in ${engine.appName} it opens the payment page in the browser; nothing was paid")
+            } else openAndReturn(
                 R.ADD_FUNDS, S.ADD_FUNDS, "Add Funds", account = true, anyOf = listOf("Add Funds", "Amount", "Balance"),
             ) { note("nothing was paid") }
             "profile_exchange_messages" -> openAndReturn(
@@ -643,9 +662,12 @@ class ProfileSuite(
         if (!has("Account Details") && lines(T.PROFILE_HEADER_CARD).isEmpty()) {
             fail("The profile card at the top of the Profile tab is not readable", Cause.UNCONFIRMED)
         }
-        val rows = listOf(
-            R.SWITCH to "Switch Account", R.FUNDS to "Funds", R.ADD_FUNDS to "Add Funds", R.EXCHANGE to "Exchange Messages",
-            R.MARKET to "Markets Status", R.SUPPORT to "Customer Support", R.RATE to "Rate Our App", R.LOGOUT to "Logout",
+        val rows = listOfNotNull(
+            (R.SWITCH to "Switch Account").takeUnless { engine.lacks(TargetApp.Feature.PROFILE_SWITCH_ACCOUNT) },
+            R.FUNDS to "Funds", R.ADD_FUNDS to "Add Funds", R.EXCHANGE to "Exchange Messages",
+            R.MARKET to "Markets Status", R.SUPPORT to "Customer Support",
+            (R.RATE to "Rate Our App").takeUnless { engine.lacks(TargetApp.Feature.PROFILE_RATE_APP) },
+            R.LOGOUT to "Logout",
         )
         val absent = rows.filterNot { rowPresent(it.first) }.map { it.second }
         engine.toTop()
@@ -657,15 +679,18 @@ class ProfileSuite(
     private fun tradeSettingsLanding() {
         onTab(account = false)
         settle("The Settings tab")
-        val rows = listOf(
+        val notification = !engine.lacks(TargetApp.Feature.PROFILE_NOTIFICATION_TOGGLE)
+        val preview = !engine.lacks(TargetApp.Feature.PROFILE_ORDER_PREVIEW_TOGGLE)
+        val guarded = !engine.lacks(TargetApp.Feature.PROFILE_GUARDED_ROWS)
+        val rows = listOfNotNull(
             Row("${T.PROFILE_TOGGLE_PREFIX}fixed_header", "Fixed Headers") to "Fixed Headers",
-            Row("${T.PROFILE_TOGGLE_PREFIX}notification", "Notifications") to "Notifications",
-            Row("${T.PROFILE_TOGGLE_PREFIX}order_preview", "orderPreview") to "Order preview",
+            (Row("${T.PROFILE_TOGGLE_PREFIX}notification", "Notifications") to "Notifications").takeIf { notification },
+            (Row("${T.PROFILE_TOGGLE_PREFIX}order_preview", "orderPreview") to "Order preview").takeIf { preview },
             Row("${T.PROFILE_TOGGLE_PREFIX}theme", "Dark Theme") to "Dark Theme",
             Row("${T.PROFILE_FONT_SIZE_PREFIX}0", "Font sizes") to "Font sizes",
-            R.TOTP to "TOTP", R.SECURITY to "Security Settings", R.FREEZE to "Freeze & UnFreeze",
+            (R.TOTP to "TOTP").takeIf { guarded }, R.SECURITY to "Security Settings", (R.FREEZE to "Freeze & UnFreeze").takeIf { guarded },
             Row(T.PROFILE_TRADE_PREFERENCES_ROW, "Trade Settings") to "Trade Settings",
-            R.ACCESSIBILITY to "Accessibility Settings", R.DEVELOPER to "Developer Console",
+            R.ACCESSIBILITY to "Accessibility Settings", (R.DEVELOPER to "Developer Console").takeIf { guarded },
         )
         val absent = rows.filterNot { rowPresent(it.first) }.map { it.second }
         engine.toTop()
@@ -686,7 +711,7 @@ class ProfileSuite(
         if (!rowPresent(R.LOGOUT)) fail("The Logout row is not on the Profile tab", Cause.APP)
         repeat(3) { if (engine.scrollPage(forward = true)) pause(200) }
         val all = lines()
-        val wanted = listOf("SEBI Registration No", "NSE Member Code", "App Version", "Build Version")
+        val wanted = engine.app?.profileFooterLines ?: TargetApp.TRADION.profileFooterLines
         val gaps = missing(all, wanted)
         val links = (0 until 8).count { engine.isPresent("${T.PROFILE_SOCIAL_LINK_PREFIX}$it") }
         val follow = has("Follow us")
@@ -827,9 +852,9 @@ class ProfileSuite(
         val original = control.read() ?: blocked(
             "No readable switch was found beside '$text', so it was not tapped",
             Cause.ACCESSIBILITY,
-            "Install a Tradion build with the Profile identifiers (profile_toggle_theme).",
+            "Install a build of ${engine.appName} with the Profile identifiers (profile_toggle_theme).",
         )
-        note("switch found beside its label (older Tradion build)")
+        note("switch found beside its label (older ${engine.appName} build)")
         cleanup = "nothing changed"
         themeRepaint(control, label, original)
     }
@@ -938,7 +963,22 @@ class ProfileSuite(
         val started = engine.clock()
         val open = engine.tapAndConfirm(T.FUNDS_WITHDRAW_BUTTON, listOf(T.WITHDRAW_FUNDS_SCREEN), UI, retryAfterMs = UI)
         alive()
-        if (!open.ok) fail("Withdraw did not open its screen: ${open.detail}", Cause.APP)
+        if (!open.ok) {
+            // iTrade opens its PayOut page in the browser (run f00f716f): the hand-over is the expected result. The page
+            // is outside what the tool reads and nothing on it is touched; the app is brought back to Funds.
+            if (!engine.targetInForeground()) {
+                val away = engine.foregroundPackage().orEmpty().ifEmpty { "another app" }
+                pause(1_000)
+                engine.launcher.launch(engine.targetPackage)?.let { fail("${engine.appName} could not be brought back after Withdraw: $it", Cause.AUTOMATION) }
+                // Brought forward (not restarted), the app is still on Funds, which the caller then closes with Back.
+                if (!waitUntil(LOAD) { isOpen(S.FUNDS) }) {
+                    fail("Coming back from the Withdraw page (in $away), ${engine.appName} was no longer on Funds", Cause.AUTOMATION)
+                }
+                note("Withdraw opened its page in $away (outside the app, not read); nothing was withdrawn and the app was brought back")
+                return
+            }
+            fail("Withdraw did not open its screen: ${open.detail}", Cause.APP)
+        }
         timing(started, "Withdraw opened")
         settle("Withdraw")
         if (lines(T.WITHDRAW_FUNDS_SCREEN).isEmpty()) fail("The Withdraw screen shows nothing readable", Cause.UNCONFIRMED)
@@ -955,7 +995,7 @@ class ProfileSuite(
      * without waiting, then checks that every tab still shows what it showed the first time.
      */
     private fun exchangeTabs() {
-        val names = listOf("NSE", "NFO", "BSE", "BFO", "NCOM", "MCX", "NSLB", "NCX")
+        val names = engine.app?.exchangeMessageTabs ?: TargetApp.TRADION.exchangeMessageTabs
         val results = mutableListOf<String>()
         val appProblems = mutableListOf<String>()
         val apiProblems = mutableListOf<String>()
@@ -1070,9 +1110,9 @@ class ProfileSuite(
         if (!counted) throw CaseEnd(
             Kind.BLOCKED,
             "Every tab loaded, but the messages could not be counted against what the server sent: the installed " +
-                "Tradion has no exchange_messages_count_ marker. What could be checked: ${notes.joinToString("; ")}.",
+                "${engine.appName} has no exchange_messages_count_ marker. What could be checked: ${notes.joinToString("; ")}.",
             Cause.AUTOMATION, null,
-            "Rebuild Tradion (flutter build apk) from the working tree and install it, then run again.",
+            "Rebuild ${engine.appName} (flutter build apk) from the working tree and install it, then run again.",
         )
     }
 
@@ -1144,8 +1184,15 @@ class ProfileSuite(
         if (!waitUntil(UI) { engine.isPresent(T.COMPANY_SCREEN) || (has("SEBI") && !has("Call Us")) }) {
             fail("Company did not open the company page", Cause.APP)
         }
-        repeat(4) { if (engine.scrollPage(forward = true)) pause(200) }
-        val page = lines(T.COMPANY_SCREEN)
+        // Every screenful is read: iTrade lists the links under Important Websites, below the member and contact details,
+        // and the last screenful alone missed them (run f00f716f).
+        var page = lines(T.COMPANY_SCREEN)
+        repeat(4) {
+            if (engine.scrollPage(forward = true)) {
+                pause(200)
+                page = (page + lines(T.COMPANY_SCREEN)).distinct()
+            }
+        }
         engine.toTop()
         if (page.isEmpty()) blocked("The company page exposes no readable content", Cause.ACCESSIBILITY)
         val gaps = missing(page, listOf("SEBI", "NSE", "BSE", "MCX"))
@@ -1154,8 +1201,16 @@ class ProfileSuite(
         if (!waitUntil(UI) { has("Call Us") || onView(account = true) }) {
             fail("Back from the company page did not return to Customer Support", Cause.APP)
         }
-        if (gaps.isNotEmpty()) fail("The company page shows no ${gaps.joinToString(", ")} link", Cause.UNCONFIRMED)
-        note("Call Us and Email Us shown (not opened: dialer / mail app); company page shows ${page.size} line(s) with the SEBI and exchange links (not opened: browser)")
+        // iTrade's Company page is a menu (About Us, Privacy Policy, Disclaimer, Website); its regulator and exchange
+        // links sit one level down, under About Us (run 549102bb).
+        val menu = listOf("About Us", "Privacy Policy", "Disclaimer")
+        val asMenu = gaps.isNotEmpty() && missing(page, menu).isEmpty()
+        if (gaps.isNotEmpty() && !asMenu) fail("The company page shows no ${gaps.joinToString(", ")} link", Cause.UNCONFIRMED)
+        note(
+            "Call Us and Email Us shown (not opened: dialer / mail app); " +
+                if (asMenu) "the company page lists ${menu.joinToString(", ")} (not opened)"
+                else "company page shows ${page.size} line(s) with the SEBI and exchange links (not opened: browser)",
+        )
         // Company pops the sheet on some builds: the caller then has nothing left to close.
         if (!has("Call Us")) throw ScreenLeft
     }
@@ -1169,13 +1224,16 @@ class ProfileSuite(
         else engine.tapLowestExactText("Change Password")
         alive()
         if (!tap.ok) fail("Change Password could not be tapped: ${tap.detail}", Cause.AUTOMATION)
-        val wanted = listOf("Old Password cannot be empty", "New Password cannot be empty", "Confirm Password cannot be empty")
-        if (!waitUntil(UI) { wanted.all(::has) }) {
-            fail("Submitting empty fields did not show: ${wanted.filterNot(::has).joinToString(", ")}", Cause.APP)
+        // One message per field, in either app's wording: Tradion "Old Password cannot be empty", iTrade "Please enter
+        // Old Password" (run f00f716f).
+        val wanted = listOf("Old", "New", "Confirm").map { listOf("$it Password cannot be empty", "Please enter $it Password") }
+        fun shown(field: List<String>) = field.any(::has)
+        if (!waitUntil(UI) { wanted.all(::shown) }) {
+            fail("Submitting empty fields did not show: ${wanted.filterNot(::shown).joinToString(", ") { it.first() }}", Cause.APP)
         }
         engine.hideKeyboard()
         shot("validation")
-        note("an empty submission shows all three 'cannot be empty' errors; nothing was sent")
+        note("an empty submission shows a 'required' error under all three fields; nothing was sent")
     }
 
     /** PF-18: segment tabs, quantity stepper and the Save Settings state; nothing is saved. */
@@ -1235,8 +1293,14 @@ class ProfileSuite(
 
     /** PF-19: every section is there and each Motion / Touch Targets switch goes over and back. */
     private fun accessibility() {
-        repeat(6) { if (engine.scrollPage(forward = true)) pause(200) }
-        val all = lines()
+        // Every screenful is read: the last one alone misses the sections at the top (run 549102bb).
+        var all = lines()
+        repeat(6) {
+            if (engine.scrollPage(forward = true)) {
+                pause(200)
+                all = (all + lines()).distinct()
+            }
+        }
         engine.toTop()
         val sections = listOf("Font Size", "Theme", "High Contrast", "Color Blind Mode", "Motion", "Touch Targets", "Disability Profiles")
         val gaps = missing(all, sections)
@@ -1275,7 +1339,7 @@ class ProfileSuite(
         }
         if (prompt != null) {
             // The camera is the tester's decision: the tool never grants or refuses a permission other than notifications.
-            engine.showNotice("Tradion asks for the camera (QR login). Allow it to let the scanner be checked; otherwise this case is skipped in 20 s.")
+            engine.showNotice("${engine.appName} asks for the camera (QR login). Allow it to let the scanner be checked; otherwise this case is skipped in 20 s.")
             try {
                 waitUntil(20_000L) { engine.permissionPromptMessage() == null }
             } finally {
@@ -1290,12 +1354,12 @@ class ProfileSuite(
             if (!engine.targetInForeground()) {
                 // Refusing makes Tradion open its App info page in Settings.
                 engine.returnToTarget()
-                throw CaseEnd(Kind.NOT_TESTED, "The camera permission was refused; Tradion opened its App info to ask for it again. Allow the camera to test the scanner.")
+                throw CaseEnd(Kind.NOT_TESTED, "The camera permission was refused; ${engine.appName} opened its App info to ask for it again. Allow the camera to test the scanner.")
             }
         }
         if (!waitUntil(UI) { engine.isPresent(T.QR_SCAN_SCREEN) }) {
             if (has("allow camera permission")) {
-                throw CaseEnd(Kind.NOT_TESTED, "The camera permission is refused for Tradion (the app says 'Please allow camera permission')")
+                throw CaseEnd(Kind.NOT_TESTED, "The camera permission is refused for ${engine.appName} (the app says 'Please allow camera permission')")
             }
             fail("Tapping the scan icon did not open the QR login scanner within ${UI / 1000} s", Cause.APP)
         }

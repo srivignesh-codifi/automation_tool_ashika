@@ -31,3 +31,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # CodiFi branding (white wordmark for the dark theme) and the logo of each
+    # app the tool tests, keyed by the native TargetApp id (see AppBrand).
+    - assets/brand/
+    - assets/apps/

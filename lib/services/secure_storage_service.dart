@@ -37,6 +37,8 @@ class SecureStorageService {
   static const String _kOrderConfig = 'tool_order_config';
   static const String _kProfileConfig = 'tool_profile_config';
   static const String _kMarketSession = 'tool_market_session';
+  static const String _kSessionUser = 'tool_session_user';
+  static const String _kSessionToken = 'tool_session_token';
 
   /// Ashika's keys predate the second app and stay as they were, so an operator
   /// who saved credentials keeps them. Every other app gets suffixed keys.
@@ -122,6 +124,27 @@ class SecureStorageService {
     ProfileConfig value, {
     required String appId,
   }) => _write('${_kProfileConfig}_$appId', jsonEncode(value.toJson()));
+
+  /// The signed-in tool user: their id and the session token the sign-in API
+  /// returned (empty until that API is connected). The password is never kept.
+  Future<(String, String)?> readSession() async {
+    final user = await _read(_kSessionUser);
+    if (user == null || user.isEmpty) return null;
+    return (user, await _read(_kSessionToken) ?? '');
+  }
+
+  Future<void> saveSession({
+    required String userId,
+    required String token,
+  }) async {
+    await _write(_kSessionUser, userId);
+    await _write(_kSessionToken, token);
+  }
+
+  Future<void> clearSession() async {
+    await _delete(_kSessionUser);
+    await _delete(_kSessionToken);
+  }
 
   /// Whether the first-launch permission setup was finished. Not a secret; it
   /// only lives here because this is the tool's one small store.

@@ -3,6 +3,7 @@ import '../models/market_session.dart';
 import '../models/profile_config.dart';
 import 'package:flutter/material.dart';
 
+import '../branding/app_brand.dart';
 import '../models/automation_step.dart';
 import '../models/test_run.dart';
 import '../services/automation_service.dart';
@@ -24,12 +25,17 @@ class LoginAutomationScreen extends StatefulWidget {
     required this.automation,
     required this.reports,
     required this.storage,
+    this.initialAppId,
     super.key,
   });
 
   final AutomationService automation;
   final ReportService reports;
   final SecureStorageService storage;
+
+  /// The app chosen on the home screen. When given, the run is for that app
+  /// only: no app picker and no package field.
+  final String? initialAppId;
 
   @override
   State<LoginAutomationScreen> createState() => _LoginAutomationScreenState();
@@ -106,7 +112,9 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     final config = await widget.automation.config();
     final savedPackage = await widget.storage.readTargetPackage();
     final app = config.targets.firstWhere(
-      (t) => t.packageName == (savedPackage ?? config.defaultTargetPackage),
+      (t) => widget.initialAppId != null
+          ? t.id == widget.initialAppId
+          : t.packageName == (savedPackage ?? config.defaultTargetPackage),
       orElse: () => config.targets.first,
     );
 
@@ -308,10 +316,12 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
       recordScreen = consent == ScreenRecordingConsent.granted;
       if (!recordScreen && !await _confirmRunWithoutRecording(consent)) return;
     }
+    if (!mounted) return;
 
     // The running screen subscribes to the event stream first, then invokes this
     // starter, so no early step event can be missed.
-    final run = await Navigator.of(context).push<TestRun>(
+    final navigator = Navigator.of(context);
+    final run = await navigator.push<TestRun>(
       MaterialPageRoute<TestRun>(
         builder: (_) => RunningTestScreen(
           automation: widget.automation,
@@ -320,7 +330,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
           testName: app.testName,
           // Only Ashika's checklist is mirrored in Dart; for the others the
           // driver announces its own the moment the run starts.
-          initialSteps: app.id == 'ashika' ? null : const <AutomationStep>[],
+          initialSteps: app.isRegression ? const <AutomationStep>[] : null,
           starter: () => widget.automation.startLoginAutomation(
             targetPackage: packageName,
             clientId: clientId,
@@ -334,7 +344,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                 ? _orderConfig
                 : null,
             profileConfig: _modules.contains('profile') ? _profileConfig : null,
-            marketSession: _app.id == 'tradion'
+            marketSession: _app.isRegression
                 ? _marketSession
                 : MarketSession.bod,
             modules: _app.modules.isEmpty
@@ -452,7 +462,22 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     final target = _target;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Run Automation')),
+      appBar: AppBar(
+        title: widget.initialAppId == null
+            ? const Text('Run Automation')
+            : Row(
+                children: [
+                  AppLogo(appId: _app.id, name: _app.displayName, size: 34),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      _app.displayName,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+      ),
       // The two actions of a run stay in view whatever the form above has scrolled to.
       bottomNavigationBar: Material(
         elevation: 8,
@@ -508,26 +533,52 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
             const SizedBox(height: 20),
 
-            Text('Target application', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            SegmentedButton<String>(
-              segments: [
-                for (final app in _config.targets)
-                  ButtonSegment<String>(
-                    value: app.id,
-                    label: Text(app.displayName),
-                  ),
-              ],
-              selected: <String>{_app.id},
-              showSelectedIcon: false,
-              onSelectionChanged: _running
-                  ? null
-                  : (selection) => _selectApp(
-                      _config.targets.firstWhere(
-                        (t) => t.id == selection.first,
+            if (widget.initialAppId == null) ...[
+              Text('Target application', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: const ValueKey<String>('app_picker'),
+                value: _app.id,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.apps),
+                ),
+                // Closed, the field shows the app's name; open, each app also
+                // shows its package.
+                selectedItemBuilder: (context) => [
+                  for (final app in _config.targets)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(app.displayName),
+                    ),
+                ],
+                items: [
+                  for (final app in _config.targets)
+                    DropdownMenuItem<String>(
+                      value: app.id,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(app.displayName),
+                          Text(
+                            app.packageName,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-            ),
+                ],
+                onChanged: _running
+                    ? null
+                    : (id) => _selectApp(
+                        _config.targets.firstWhere((t) => t.id == id),
+                      ),
+              ),
+            ],
             const SizedBox(height: 20),
 
             Text('Credentials', style: theme.textTheme.titleMedium),
@@ -540,12 +591,13 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             ),
             const SizedBox(height: 14),
 
-            CredentialField(
-              controller: _packageController,
-              label: 'Target application package',
-              helper: 'Allowlist: ${_config.allowedPackages.join(", ")}',
-              enabled: false,
-            ),
+            if (widget.initialAppId == null)
+              CredentialField(
+                controller: _packageController,
+                label: 'Target application package',
+                helper: 'Allowlist: ${_config.allowedPackages.join(", ")}',
+                enabled: false,
+              ),
             if (_app.modules.isNotEmpty) ...[
               const SizedBox(height: 14),
               ModuleField(
@@ -581,7 +633,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                     : null,
               ),
             ],
-            if (_app.id == 'tradion') ...[
+            if (_app.isRegression) ...[
               const SizedBox(height: 14),
               Text(
                 'Market session',

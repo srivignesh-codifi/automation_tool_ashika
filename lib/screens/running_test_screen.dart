@@ -8,6 +8,7 @@ import '../models/automation_step.dart';
 import '../models/test_run.dart';
 import '../services/automation_service.dart';
 import '../services/report_service.dart';
+import '../widgets/send_to_admin_button.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/test_step_tile.dart';
 
@@ -233,6 +234,10 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
   }
 
   String? _zipLine(TestRun run) {
+    if (run.zipPath.isNotEmpty) {
+      return 'Summary zip kept in app storage for admin upload: '
+          '${run.zipPath.split('/').last}';
+    }
     if (run.zipFolder.isNotEmpty) {
       return 'Summary zip saved to ${run.zipFolder}: '
           '${run.zipPath.split('/').last}';
@@ -416,6 +421,9 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
                               ),
                             ),
                           ),
+                          const SizedBox(height: 8),
+                          // Disabled until the run's report is saved.
+                          SendToAdminButton(run: _savedRun),
                         ],
                       )
                     // Player-style controls: Pause / Play, Skip module, Stop.

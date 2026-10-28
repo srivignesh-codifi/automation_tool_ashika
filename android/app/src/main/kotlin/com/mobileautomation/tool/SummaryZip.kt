@@ -1,11 +1,8 @@
 package com.mobileautomation.tool
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.Environment
-import android.provider.MediaStore
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -15,7 +12,7 @@ import java.util.zip.ZipOutputStream
 
 /**
  * Packs a finished run's evidence (text report, screen recording, failed-step
- * screenshots) into one ZIP and puts a copy in public Downloads.
+ * screenshots) into one ZIP in the app's private reports directory.
  *
  * Only files inside the tool's own storage are accepted, so the zip can hold
  * nothing but run output.
@@ -26,10 +23,10 @@ import java.util.zip.ZipOutputStream
  */
 object SummaryZip {
 
-    const val FOLDER = "Downloads/Automation Tool Reports"
-
-    private const val SHOT_WIDTH = 720
-    private const val SHOT_QUALITY = 80
+    // 540 px at 70 keeps a phone screen's prices readable at about half the bytes of 720 px at 80 (some 40 KB a
+    // screenshot instead of 80 KB).
+    private const val SHOT_WIDTH = 540
+    private const val SHOT_QUALITY = 70
 
     data class Entry(val path: String, val name: String)
 
@@ -45,7 +42,7 @@ object SummaryZip {
         )
     }
 
-    fun build(context: Context, zipFile: File, displayName: String, entries: List<Entry>): Outcome {
+    fun build(context: Context, zipFile: File, entries: List<Entry>): Outcome {
         val roots = listOfNotNull(context.getExternalFilesDir(null), context.filesDir)
             .map { it.canonicalFile }
         val usable = entries.filter { entry ->
@@ -58,9 +55,11 @@ object SummaryZip {
         try {
             zipFile.parentFile?.mkdirs()
             ZipOutputStream(temp.outputStream().buffered()).use { zip ->
-                // The video is already compressed; do not spend time on it.
-                zip.setLevel(Deflater.BEST_SPEED)
                 for (entry in usable) {
+                    // The text reports shrink several times over; the video and the JPEGs are compressed already, so
+                    // they are stored as they are rather than spending time on them for nothing.
+                    val text = entry.name.endsWith(".txt", true) || entry.name.endsWith(".html", true) || entry.name.endsWith(".json", true)
+                    zip.setLevel(if (text) Deflater.BEST_COMPRESSION else Deflater.NO_COMPRESSION)
                     val shot = if (entry.name.endsWith(".png", ignoreCase = true)) smallJpeg(entry.path) else null
                     if (shot != null) {
                         zip.putNextEntry(ZipEntry(entry.name.dropLast(4) + ".jpg"))
@@ -79,12 +78,7 @@ object SummaryZip {
             return Outcome(null, null, "the zip could not be written (${t.javaClass.simpleName}: ${t.message ?: "no detail"})")
         }
 
-        val published = publish(context, zipFile, displayName)
-        return if (published == null) {
-            Outcome(zipFile.absolutePath, FOLDER, null)
-        } else {
-            Outcome(zipFile.absolutePath, null, "the zip was made but could not be copied to Downloads ($published)")
-        }
+        return Outcome(zipFile.absolutePath, null, null)
     }
 
     /** [path] as a JPEG at most [SHOT_WIDTH] wide, or null to keep the original file. */
@@ -104,43 +98,6 @@ object SummaryZip {
             null
         } finally {
             source.recycle()
-        }
-    }
-
-    /** Null on success, otherwise the reason. Replaces an earlier copy of the same name. */
-    private fun publish(context: Context, source: File, displayName: String): String? {
-        val resolver = context.contentResolver
-        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/Automation Tool Reports"
-        try {
-            resolver.delete(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-                arrayOf(displayName, "$relativePath%"),
-            )
-        } catch (_: Throwable) {
-            // Not ours to delete, or nothing there: a numbered copy is acceptable.
-        }
-
-        var destination: android.net.Uri? = null
-        try {
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            destination = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: return "MediaStore refused the destination"
-            resolver.openOutputStream(destination, "w").use { output ->
-                requireNotNull(output) { "the destination could not be opened" }
-                FileInputStream(source).use { it.copyTo(output) }
-            }
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            if (resolver.update(destination, done, null, null) <= 0) return "the copy could not be published"
-            return null
-        } catch (t: Throwable) {
-            destination?.let { runCatching { resolver.delete(it, null, null) } }
-            return "${t.javaClass.simpleName}: ${t.message ?: "no detail"}"
         }
     }
 

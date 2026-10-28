@@ -33,6 +33,15 @@ class AutomationEngine private constructor(
     private val sink: (Map<String, Any?>) -> Unit,
 ) {
 
+    /** The app under test as the reports name it ("Tradion", "iTrade"), for messages shared between apps. */
+    val appName: String get() = TargetApp.forPackage(targetPackage)?.displayName ?: targetPackage
+
+    /** The app under test; null only for a package the tool has no flow for. */
+    val app: TargetApp? get() = TargetApp.forPackage(targetPackage)
+
+    /** True when the app under test has no [feature] (a [TargetApp.Feature]); its checks are not applicable. */
+    fun lacks(feature: String): Boolean = app?.lacks(feature) == true
+
     /**
      * A run request. Holds credentials, so it is created from the platform call,
      * consumed by the worker thread, and never logged or persisted.
@@ -97,7 +106,7 @@ class AutomationEngine private constructor(
             val app = TargetApp.forPackage(request.targetPackage)
                 ?: return "'${request.targetPackage}' has no automation flow."
             if (request.clientId.isBlank()) {
-                return if (app == TargetApp.TRADION) "User ID is required." else "Client ID is required."
+                return if (app.secret == TargetApp.Secret.PASSWORD) "User ID is required." else "Client ID is required."
             }
             if (request.otp.isBlank()) return "OTP is required."
             when (app.secret) {
@@ -135,8 +144,8 @@ class AutomationEngine private constructor(
                 engine.workerThread = Thread.currentThread()
                 try {
                     if (request.recordScreen) engine.beginRecording()
-                    val result = when (app) {
-                        TargetApp.ASHIKA -> LoginAutomationFlow(
+                    val result = when (app.flow) {
+                        TargetApp.Flow.ASHIKA -> LoginAutomationFlow(
                             engine,
                             ModuleSelection(AppModules.ASHIKA, request.modules?.toSet()),
                         ).run(
@@ -144,14 +153,15 @@ class AutomationEngine private constructor(
                             otp = request.otp,
                             mpin = request.mpin,
                         )
-                        TargetApp.TRADION -> TradionAutomationFlow(
+                        TargetApp.Flow.TRADION -> TradionAutomationFlow(
                             engine,
                             ModuleSelection(
-                                AppModules.TRADION, request.modules?.toSet(), request.loginDirectOnly,
+                                AppModules.of(app), request.modules?.toSet(), request.loginDirectOnly,
                                 OrderPlan.fromMap(request.orderConfig),
                                 profileOff = (request.profileConfig?.get("off") as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty(),
                                 liveMarket = request.marketSession == "live",
                             ),
+                            app,
                         ).run(
                             userId = request.clientId,
                             password = request.password,
@@ -925,6 +935,13 @@ class AutomationEngine private constructor(
         val containers = AccessibilityNodeFinder.allByIdentifier(targetRoot(), containerIdentifier)
         val container = containers.getOrNull(containerIndex) ?: return false
         return AccessibilityNodeFinder.byIdentifier(container, descendantIdentifier) != null
+    }
+
+    /** The identifiers inside the indexed tagged row, for a report that has to say what the row held. */
+    fun descendantIdentifiersAt(containerIdentifier: String, containerIndex: Int): List<String> {
+        val container = AccessibilityNodeFinder.allByIdentifier(targetRoot(), containerIdentifier)
+            .getOrNull(containerIndex) ?: return emptyList()
+        return AccessibilityNodeFinder.collectIdentifiers(container, limit = 15)
     }
 
     /** Taps a tagged descendant in the indexed tagged row. */

@@ -82,7 +82,7 @@ class FeedMonitor(private val engine: AutomationEngine) {
         val clock = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
         val problems = mutableListOf<String>()
         fun count(key: String) = h(key) ?: 0L
-        if (samples == 0) problems += "the app published no feed status (install a Tradion build with the ws_feed_status marker)"
+        if (samples == 0) problems += "the app published no feed status (install a build of ${engine.appName} with the ws_feed_status marker)"
         if (count("disconnects") > 0) problems += "${count("disconnects")} unplanned disconnection(s)"
         for (d in dropped) {
             problems += "feed dropped at ${clock.format(java.util.Date(d.atMs))} (${CAUSES[d.phase] ?: d.phase}) during '${d.step ?: "before the first step"}'"

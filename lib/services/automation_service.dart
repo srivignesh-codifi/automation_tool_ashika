@@ -96,6 +96,7 @@ class TargetAppInfo {
     required this.packageName,
     required this.testName,
     required this.secret,
+    this.flow = 'tradion',
     this.modules = const <AutomationModule>[],
   });
 
@@ -105,14 +106,23 @@ class TargetAppInfo {
   final String testName;
   final TargetSecret secret;
 
+  /// The native test flow that drives it: 'ashika', or 'tradion' for Tradion
+  /// and every sibling build of it.
+  final String flow;
+
+  /// Runs the Tradion regression pass (login side paths, every module, a
+  /// market session choice).
+  bool get isRegression => flow == 'tradion';
+
   /// What a run can be limited to. The native driver is authoritative.
   final List<AutomationModule> modules;
 
   /// What the first credential is called in this app's own login.
-  String get userIdLabel => id == 'tradion' ? 'User ID' : 'Client ID';
+  String get userIdLabel =>
+      secret == TargetSecret.password ? 'User ID' : 'Client ID';
 
   /// The one-line summary of what a run does, shown under the Start button.
-  String get runSummary => id == 'tradion'
+  String get runSummary => isRegression
       ? 'Checks the login page links (Guest User, Unblock Account, Join Now, '
             'Forgot Password, Switch Account, Login with OTP, Confirm OTP, '
             'Enable 2FA), logs in (User ID, Password, OTP), then exercises the watchlist: '
@@ -142,42 +152,72 @@ class AutomationConfigInfo {
     : allowedPackages = const <String>[
         'com.codifi.dhanush',
         'com.codifi.rmoney',
+        'com.codifi.itrade',
       ],
       defaultTargetPackage = 'com.codifi.dhanush',
       testName = 'Phase 1 - Login Automation',
       requiresRestrictedSettingsGuidance = true,
-      targets = const <TargetAppInfo>[
-        TargetAppInfo(
-          id: 'ashika',
-          displayName: 'Ashika',
-          packageName: 'com.codifi.dhanush',
-          testName: 'Phase 1 - Login Automation',
-          secret: TargetSecret.mpin,
-          modules: <AutomationModule>[
-            AutomationModule(id: 'watchlist', label: 'Watchlist and Search'),
-            AutomationModule(id: 'home', label: 'Home'),
-            AutomationModule(id: 'research', label: 'Research'),
-            AutomationModule(id: 'portfolio', label: 'Portfolio'),
-            AutomationModule(id: 'orders', label: 'Orders'),
-          ],
-        ),
-        TargetAppInfo(
-          id: 'tradion',
-          displayName: 'Tradion',
-          packageName: 'com.codifi.rmoney',
-          testName: 'Tradion - Regression Automation',
-          secret: TargetSecret.password,
-          modules: <AutomationModule>[
-            AutomationModule(id: 'login', label: 'Login'),
-            AutomationModule(id: 'watchlist', label: 'Watchlist'),
-            AutomationModule(id: 'order_placement', label: 'Order placement'),
-            AutomationModule(id: 'orders', label: 'Orders'),
-            AutomationModule(id: 'dashboard', label: 'Dashboard'),
-            AutomationModule(id: 'portfolio', label: 'Portfolio'),
-            AutomationModule(id: 'profile', label: 'Profile'),
-          ],
-        ),
-      ];
+      targets = offeredTargets;
+
+  /// Every app the native driver knows (`TargetApp`), offered or not.
+  static const List<TargetAppInfo> knownTargets = <TargetAppInfo>[
+    _ashika,
+    _tradion,
+    _itrade,
+  ];
+
+  /// The apps the tool offers, mirroring `AutomationConfig.OFFERED_APPS`.
+  static const List<TargetAppInfo> offeredTargets = knownTargets;
+
+  static const TargetAppInfo _ashika = TargetAppInfo(
+    id: 'ashika',
+    displayName: 'Ashika',
+    packageName: 'com.codifi.dhanush',
+    testName: 'Phase 1 - Login Automation',
+    secret: TargetSecret.mpin,
+    flow: 'ashika',
+    modules: <AutomationModule>[
+      AutomationModule(id: 'watchlist', label: 'Watchlist and Search'),
+      AutomationModule(id: 'home', label: 'Home'),
+      AutomationModule(id: 'research', label: 'Research'),
+      AutomationModule(id: 'portfolio', label: 'Portfolio'),
+      AutomationModule(id: 'orders', label: 'Orders'),
+    ],
+  );
+
+  static const TargetAppInfo _tradion = TargetAppInfo(
+    id: 'tradion',
+    displayName: 'Tradion',
+    packageName: 'com.codifi.rmoney',
+    testName: 'Tradion - Regression Automation',
+    secret: TargetSecret.password,
+    modules: <AutomationModule>[
+      AutomationModule(id: 'login', label: 'Login'),
+      AutomationModule(id: 'watchlist', label: 'Watchlist'),
+      AutomationModule(id: 'order_placement', label: 'Order placement'),
+      AutomationModule(id: 'orders', label: 'Orders'),
+      AutomationModule(id: 'dashboard', label: 'Dashboard'),
+      AutomationModule(id: 'portfolio', label: 'Portfolio'),
+      AutomationModule(id: 'profile', label: 'Profile'),
+    ],
+  );
+
+  static const TargetAppInfo _itrade = TargetAppInfo(
+    id: 'itrade',
+    displayName: 'iTrade',
+    packageName: 'com.codifi.itrade',
+    testName: 'iTrade - Regression Automation',
+    secret: TargetSecret.password,
+    modules: <AutomationModule>[
+      AutomationModule(id: 'login', label: 'Login'),
+      AutomationModule(id: 'watchlist', label: 'Watchlist'),
+      AutomationModule(id: 'order_placement', label: 'Order placement'),
+      AutomationModule(id: 'orders', label: 'Orders'),
+      AutomationModule(id: 'dashboard', label: 'Dashboard'),
+      AutomationModule(id: 'portfolio', label: 'Portfolio'),
+      AutomationModule(id: 'profile', label: 'Profile'),
+    ],
+  );
 
   final List<String> allowedPackages;
   final String defaultTargetPackage;
@@ -344,6 +384,9 @@ class AutomationService {
             packageName: (t['packageName'] as String?) ?? '',
             testName: (t['testName'] as String?) ?? 'Login Automation',
             secret: TargetSecret.parse(t['secret']),
+            flow:
+                (t['flow'] as String?) ??
+                (t['id'] == 'ashika' ? 'ashika' : 'tradion'),
             modules: (t['modules'] as List<Object?>? ?? const <Object?>[])
                 .whereType<Map<Object?, Object?>>()
                 .map(

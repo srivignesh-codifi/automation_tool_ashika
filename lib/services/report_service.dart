@@ -39,6 +39,7 @@ class ReportService {
   static const Map<String, String> _appNames = <String, String>{
     'com.codifi.dhanush': 'ashika',
     'com.codifi.rmoney': 'tradion',
+    'com.codifi.itrade': 'itrade',
   };
 
   /// `<app>_<ddMMyyyy>_<HHmm>.zip` of the run's start, e.g. `ashika_23102026_0810.zip`.
@@ -113,8 +114,9 @@ class ReportService {
   }
 
   /// Packs the text and HTML reports, the recording, the failed-step screenshots and the test cases' checkpoint screenshots into
-  /// `<app>_<ddMMyyyy>_<HHmm>.zip` (see [zipNameFor]) and has Android copy it to public Downloads. Best
-  /// effort: a failure is returned as text and never fails the save.
+  /// `<app>_<ddMMyyyy>_<HHmm>.zip` (see [zipNameFor]) in app-private storage.
+  /// It is retained there for Send to admin; it is not copied to public
+  /// Downloads. Best effort: a failure is returned as text and never fails save.
   Future<({String path, String folder, String error})> _buildSummaryZip(
     AutomationResult result,
     Directory dir,
@@ -136,6 +138,8 @@ class ReportService {
       if (!shot.key.startsWith('failed') && !_caseShotKey.hasMatch(shot.key)) {
         continue;
       }
+      // `failed_<step>` repeats the case's own failure shot, taken a moment earlier: the report links the case's.
+      if (_duplicateFailedShot(result, shot.key)) continue;
       if (!await File(shot.value).exists()) continue;
       entries.add(<String, String>{
         'path': shot.value,
@@ -548,7 +552,8 @@ class ReportService {
     final evidence = <String>[
       if (result.screenshots.isNotEmpty)
         for (final e in result.screenshots.entries)
-          'Screenshot  ${e.key}: ${_fileName(e.value)}',
+          if (!_duplicateFailedShot(result, e.key))
+            'Screenshot  ${e.key}: ${_fileName(e.value)}',
       if (result.screenshotUnavailableReason != null)
         'Screenshot: unavailable — ${result.screenshotUnavailableReason}',
     ];
@@ -649,7 +654,7 @@ class ReportService {
     }
     out
       ..writeln(
-        '  From what Tradion reports about its own feed socket (ws_feed_status), '
+        '  From what the app reports about its own feed socket (ws_feed_status), '
         'read after every step; not network traffic.',
       )
       ..writeln();
@@ -772,7 +777,7 @@ class ReportService {
         '$dropBlock'
         '${problems.isEmpty ? '' : '<ul>${problems.map((p) => '<li><strong>${_esc(p)}</strong></li>').join()}</ul>'}'
         '${events.isEmpty ? '' : '<p><strong>Events</strong> (with the step that was running)</p><ul class="paths">${events.map((e) => '<li><code>${_esc(e.$1)}</code> ${e.$3 ? '<strong>ERROR</strong> ' : ''}${_esc(e.$2)}${e.$4 == null ? '' : ' · ${_esc(e.$4!)}'}</li>').join()}</ul>'}'
-        '<p class="muted">From what Tradion reports about its own feed socket, read after every step; not network traffic.</p>'
+        '<p class="muted">From what the app reports about its own feed socket, read after every step; not network traffic.</p>'
         '</div>';
   }
 
@@ -896,6 +901,66 @@ class ReportService {
     line('Cleanup', s.cleanup);
   }
 
+  /// The cases that failed or could not run: what the findings sections list.
+  static List<AutomationStep> _findings(List<AutomationStep> cases) => cases
+      .where(
+        (s) => s.status == StepStatus.failed || s.outcomeLabel == 'BLOCKED',
+      )
+      .toList();
+
+  /// The QA verdict of a run's [cases], shared by the text and HTML reports. [level] is ready, fixes, not_ready,
+  /// review or none (no case ran), for the HTML's colour.
+  static ({String verdict, String level, int cleanupFailed}) _assess(
+    List<AutomationStep> cases,
+  ) {
+    final findings = _findings(cases);
+    final defects = findings
+        .where((s) => (s.cause ?? 'unconfirmed') == 'app_defect')
+        .toList();
+    final critical = defects.where((s) => s.severity == 'Critical').length;
+    final unresolved = findings.length - defects.length;
+    final notTested = cases.where((s) => s.outcomeLabel == 'NOT TESTED').length;
+    final cleanupFailed = cases
+        .where((s) => s.cleanup != null && s.cleanup!.startsWith('FAILED'))
+        .length;
+    if (cases.every((s) => s.status == StepStatus.pending)) {
+      return (
+        verdict: 'Not assessed: no test case ran.',
+        level: 'none',
+        cleanupFailed: cleanupFailed,
+      );
+    }
+    if (critical > 0) {
+      return (
+        verdict: 'Not ready: $critical critical application defect(s).',
+        level: 'not_ready',
+        cleanupFailed: cleanupFailed,
+      );
+    }
+    if (defects.isNotEmpty) {
+      return (
+        verdict:
+            'Needs fixes: ${defects.length} confirmed application defect(s), none critical.',
+        level: 'fixes',
+        cleanupFailed: cleanupFailed,
+      );
+    }
+    if (unresolved > 0 || notTested > 0) {
+      return (
+        verdict:
+            'No application defect confirmed. $unresolved case(s) could not be verified or need review, and '
+            '$notTested were not tested: they are not passes.',
+        level: 'review',
+        cleanupFailed: cleanupFailed,
+      );
+    }
+    return (
+      verdict: 'Ready: every applicable case passed.',
+      level: 'ready',
+      cleanupFailed: cleanupFailed,
+    );
+  }
+
   /// The formal test-case table, the findings by class, the cleanup status and the QA assessment.
   static void _caseSections(StringBuffer out, AutomationResult result) {
     final cases = result.steps.where((s) => s.isCase).toList();
@@ -1016,32 +1081,12 @@ class ReportService {
     }
 
     _heading(out, 'QA ASSESSMENT');
-    final defects = of('app_defect');
-    final critical = defects.where((s) => s.severity == 'Critical').length;
-    final unresolved = findings.length - defects.length;
-    final cleanupFailed = cleaned
-        .where((s) => s.cleanup!.startsWith('FAILED'))
-        .length;
-    final String verdict;
-    if (cases.every((s) => s.status == StepStatus.pending)) {
-      verdict = 'Not assessed: no test case ran.';
-    } else if (critical > 0) {
-      verdict = 'Not ready: $critical critical application defect(s).';
-    } else if (defects.isNotEmpty) {
-      verdict =
-          'Needs fixes: ${defects.length} confirmed application defect(s), none critical.';
-    } else if (unresolved > 0 || count('NOT TESTED') > 0) {
-      verdict =
-          'No application defect confirmed. $unresolved case(s) could not be verified or need review, and '
-          '${count('NOT TESTED')} were not tested: they are not passes.';
-    } else {
-      verdict = 'Ready: every applicable case passed.';
-    }
+    final qa = _assess(cases);
     out
-      ..writeln('  $verdict')
+      ..writeln('  ${qa.verdict}')
       ..writeln(
-        cleanupFailed > 0
-            ? '  WARNING: $cleanupFailed case(s) could not put back what they changed: see CLEANUP above.'
+        qa.cleanupFailed > 0
+            ? '  WARNING: ${qa.cleanupFailed} case(s) could not put back what they changed: see CLEANUP above.'
             : '  Everything the cases changed was put back.',
       )
       ..writeln(
@@ -1057,9 +1102,20 @@ class ReportService {
     return detail == null || detail.isEmpty ? label : '$label  $detail';
   }
 
-  static String? _screenshotFor(AutomationResult result, AutomationStep step) {
-    final path = result.screenshots['failed_${step.id}'];
-    return path == null ? null : _fileName(path);
+  /// The screenshot the report shows for [step]: its test case's own shot first, else the step's failure shot.
+  static String? _screenshotFor(AutomationResult result, AutomationStep step) =>
+      _caseShot(result, step);
+
+  /// Whether [key] is a step's `failed_<id>` shot whose test case has a shot of its own (left out of the zip).
+  static bool _duplicateFailedShot(AutomationResult result, String key) {
+    if (!key.startsWith('failed_')) return false;
+    final id = key.substring('failed_'.length);
+    final step = result.steps.where((s) => s.id == id).firstOrNull;
+    final code = step?.code;
+    if (code == null) return false;
+    return result.screenshots.keys.any(
+      (k) => k != key && k.startsWith('${code}_'),
+    );
   }
 
   static String _clip(String text, int max) =>
@@ -1120,6 +1176,265 @@ class ReportService {
     }
   }
 
+  /// The CSS class that colours an outcome label (PASS, FAIL, BLOCKED, ...).
+  static String _outcomeClass(String label) => switch (label) {
+    'PASS' || 'PASSED' => 'o-pass',
+    'FAIL' || 'FAILED' => 'o-fail',
+    'BLOCKED' => 'o-blocked',
+    'NOT APPLICABLE' => 'o-na',
+    'SKIPPED' || 'SKIP' => 'o-skip',
+    _ => 'o-nt',
+  };
+
+  /// Where a case's screenshot is next to the report: the zip holds it under screenshots/ as a JPEG.
+  static String? _shotHref(AutomationResult result, AutomationStep s) {
+    final name = _caseShot(result, s) ?? _screenshotFor(result, s);
+    if (name == null) return null;
+    final dot = name.lastIndexOf('.');
+    return 'screenshots/${dot < 0 ? name : name.substring(0, dot)}.jpg';
+  }
+
+  /// A stacked bar of [counts] (outcome label to number), out of [total].
+  static String _bar(Map<String, int> counts, int total) {
+    if (total == 0) return '<div class="bar"></div>';
+    final parts = counts.entries
+        .where((e) => e.value > 0)
+        .map(
+          (e) =>
+              '<span class="${_outcomeClass(e.key)}" style="width:${(e.value * 100 / total).toStringAsFixed(2)}%" '
+              'title="${_esc(e.key)}: ${e.value}"></span>',
+        )
+        .join();
+    return '<div class="bar">$parts</div>';
+  }
+
+  /// How many of [steps] ended each way, in report order.
+  static Map<String, int> _outcomeCounts(Iterable<AutomationStep> steps) {
+    final counts = <String, int>{
+      for (final o in <String>[
+        'PASS',
+        'FAIL',
+        'BLOCKED',
+        'NOT APPLICABLE',
+        'NOT TESTED',
+        'SKIPPED',
+      ])
+        o: 0,
+    };
+    for (final s in steps) {
+      final label = switch (s.outcomeLabel) {
+        'PASSED' => 'PASS',
+        'FAILED' => 'FAIL',
+        'SKIP' => 'SKIPPED',
+        final other => counts.containsKey(other) ? other : 'NOT TESTED',
+      };
+      counts[label] = counts[label]! + 1;
+    }
+    return counts;
+  }
+
+  /// The findings classes of the HTML report: cause id, title, letter, colour class.
+  static const List<(String, String, String, String)> _findingClasses =
+      <(String, String, String, String)>[
+        ('app_defect', 'Confirmed application defects', 'D', 'c-app'),
+        (
+          'unconfirmed',
+          'Needs review: expected content not found',
+          'R',
+          'c-review',
+        ),
+        ('automation', 'Automation / locator failures', 'A', 'c-auto'),
+        (
+          'accessibility',
+          'Accessibility limitations (not a defect)',
+          'X',
+          'c-a11y',
+        ),
+        ('api_data', 'API / data dependency failures', 'P', 'c-api'),
+        ('test_data', 'Test-data / state failures', 'T', 'c-data'),
+      ];
+
+  /// Overview cards, the QA assessment, findings by class, the test-case table and the not-tested, cleanup and
+  /// performance lists: the HTML side of [_caseSections].
+  static String _caseSectionsHtml(AutomationResult result) {
+    final cases = result.steps.where((s) => s.isCase).toList();
+    if (cases.isEmpty) return '';
+    final counts = _outcomeCounts(cases);
+    final total = cases.length;
+    final qa = _assess(cases);
+    final out = StringBuffer();
+
+    String pct(int n) => (n * 100 / total).round().toString();
+    out
+      ..writeln('  <section class="overview">')
+      ..writeln('  <div class="kpis">')
+      ..writeln(
+        '    <div class="kpi o-total"><b>$total</b><span>Test cases</span></div>',
+      );
+    for (final e in counts.entries) {
+      if (e.value == 0 && (e.key == 'SKIPPED' || e.key == 'BLOCKED')) continue;
+      out.writeln(
+        '    <div class="kpi ${_outcomeClass(e.key)}"><b>${e.value}</b><span>${_esc(e.key)}</span><i>${pct(e.value)}%</i></div>',
+      );
+    }
+    out
+      ..writeln('  </div>')
+      ..writeln('  ${_bar(counts, total)}')
+      ..writeln(
+        '  <div class="qa qa-${qa.level}"><strong>QA assessment</strong><p>${_esc(qa.verdict)}</p>'
+        '<p>${qa.cleanupFailed > 0 ? '⚠ ${qa.cleanupFailed} case(s) could not put back what they changed: see Cleanup.' : 'Everything the cases changed was put back.'}</p>'
+        '<p class="muted">Only cases that ran are counted; a case that could not run or could not be read is never reported as PASS.</p></div>',
+      )
+      ..writeln('  </section>');
+
+    // Findings, by what they turned out to be.
+    final findings = _findings(cases);
+    out
+      ..writeln('  <h2>Findings</h2>')
+      ..writeln('  <div class="classes">');
+    for (final c in _findingClasses) {
+      final n = findings
+          .where((s) => (s.cause ?? 'unconfirmed') == c.$1)
+          .length;
+      out.writeln(
+        '    <a class="cls ${c.$4}${n == 0 ? ' none' : ''}" href="#${c.$4}"><b>$n</b> ${_esc(c.$2)}</a>',
+      );
+    }
+    out.writeln('  </div>');
+    if (findings.isEmpty) {
+      out.writeln('  <p class="muted">No case failed or was blocked.</p>');
+    }
+    for (final c in _findingClasses) {
+      final items = findings
+          .where((s) => (s.cause ?? 'unconfirmed') == c.$1)
+          .toList();
+      if (items.isEmpty) continue;
+      out.writeln(
+        '  <h3 id="${c.$4}" class="ftitle ${c.$4}">${_esc(c.$2)} <span>${items.length}</span></h3>',
+      );
+      for (var i = 0; i < items.length; i++) {
+        final s = items[i];
+        final severity = s.severity ?? 'Medium';
+        final observed = s.status == StepStatus.failed
+            ? s.failureReason
+            : s.note;
+        final href = _shotHref(result, s);
+        String row(String key, String? value, [String cls = '']) =>
+            value == null || value.isEmpty
+            ? ''
+            : '<dt>$key</dt><dd class="$cls">${_esc(value)}</dd>';
+        final thumb = href == null
+            ? ''
+            : '<a class="thumb" href="${_esc(href)}" target="_blank"><img loading="lazy" src="${_esc(href)}" '
+                  'alt="Screenshot of ${_esc(s.code ?? s.name)}" onerror="this.parentNode.classList.add(\'missing\');this.remove()"></a>';
+        final hierarchy = s.evidence == null || s.evidence!.isEmpty
+            ? ''
+            : '<details><summary>UI hierarchy</summary><pre>${_esc(s.evidence!)}</pre></details>';
+        out
+          ..writeln('  <article class="finding ${c.$4}">')
+          ..writeln(
+            '    <header><span class="fid">${c.$3}${i + 1}</span><span class="code">${_esc(s.code ?? '')}</span>'
+            '<span class="sev sev-${severity.toLowerCase()}">${_esc(severity)}</span><span class="fname">${_esc(s.name)}</span></header>',
+          )
+          ..writeln(
+            '    <div class="fbody"><dl>${row('Expected', s.expected)}${row('Observed', observed, 'obs')}'
+            '${row('Cause', '${s.causeTag}: ${s.causeLabel}')}${row('Recommendation', s.recommendation, 'rec')}'
+            '${row('Cleanup', s.cleanup)}</dl>$thumb</div>',
+          )
+          ..writeln('    $hierarchy')
+          ..writeln('  </article>');
+      }
+    }
+
+    // The formal test-case table, filterable by outcome.
+    out
+      ..writeln('  <h2>Test cases</h2>')
+      ..writeln('  <div class="chips" id="cf">')
+      ..writeln(
+        '    <button type="button" class="chip on" data-o="">All ($total)</button>',
+      );
+    for (final e in counts.entries.where((e) => e.value > 0)) {
+      final o = _outcomeClass(e.key);
+      out.writeln(
+        '    <button type="button" class="chip $o" data-o="$o">${_esc(e.key)} (${e.value})</button>',
+      );
+    }
+    out
+      ..writeln('  </div>')
+      ..writeln('  <div class="scroll"><table class="cases">')
+      ..writeln(
+        '    <thead><tr><th>ID</th><th>Scenario</th><th>Expected result</th><th>Actual result</th>'
+        '<th>Status</th><th>Class</th><th>Severity</th><th>Shot</th></tr></thead><tbody>',
+      );
+    for (final s in cases) {
+      final o = _outcomeClass(s.outcomeLabel);
+      final actual =
+          (s.status == StepStatus.failed ? s.failureReason : null) ??
+          s.note ??
+          '';
+      final href = _shotHref(result, s);
+      out.writeln(
+        '    <tr class="$o" data-o="$o"><td class="id">${_esc(s.code ?? '')}</td><td>${_esc(s.name)}</td>'
+        '<td class="small">${_esc(s.expected ?? '')}</td><td class="small">${_esc(actual)}</td>'
+        '<td><span class="pill $o">${_esc(s.outcomeLabel)}</span></td><td class="small">${_esc(_classShort(s))}</td>'
+        '<td>${s.severity == null ? '' : '<span class="sev sev-${s.severity!.toLowerCase()}">${_esc(s.severity!)}</span>'}</td>'
+        '<td>${href == null ? '' : '<a href="${_esc(href)}" target="_blank">view</a>'}</td></tr>',
+      );
+    }
+    out.writeln('    </tbody></table></div>');
+
+    final untested = cases
+        .where(
+          (s) =>
+              s.outcomeLabel == 'NOT TESTED' ||
+              s.outcomeLabel == 'NOT APPLICABLE',
+        )
+        .toList();
+    if (untested.isNotEmpty) {
+      out.writeln('  <h2>Not tested / not applicable</h2><ul class="list">');
+      for (final s in untested) {
+        out.writeln(
+          '    <li><span class="pill ${_outcomeClass(s.outcomeLabel)}">${_esc(s.outcomeLabel)}</span> '
+          '<b>${_esc(s.code ?? '')}</b> ${_esc(s.note ?? s.name)}</li>',
+        );
+      }
+      out.writeln('  </ul>');
+    }
+
+    final cleaned = cases.where((s) => s.cleanup != null).toList();
+    if (cleaned.isNotEmpty) {
+      out.writeln(
+        '  <h2>Cleanup of test-created changes</h2><ul class="list">',
+      );
+      for (final s in cleaned) {
+        final o = s.cleanup!.startsWith('FAILED') ? 'o-fail' : 'o-pass';
+        out.writeln(
+          '    <li><span class="pill $o">${o == 'o-fail' ? 'NOT RESTORED' : 'RESTORED'}</span> '
+          '<b>${_esc(s.code ?? '')}</b> ${_esc(s.cleanup!)}</li>',
+        );
+      }
+      out.writeln('  </ul>');
+    }
+
+    final slow = cases.where((s) => s.apiMs != null && s.apiMs! > 0).toList()
+      ..sort((a, b) => b.apiMs!.compareTo(a.apiMs!));
+    if (slow.isNotEmpty) {
+      final top = slow.first.apiMs!;
+      out.writeln('  <h2>Performance (slowest checks)</h2><div class="perf">');
+      for (final s in slow.take(8)) {
+        final width = (s.apiMs! * 100 / top).clamp(4, 100).toStringAsFixed(1);
+        final cls = s.apiMs! > _slowSeconds * 1000 ? ' class="slow"' : '';
+        out.writeln(
+          '    <div class="prow"><span class="pt">${_esc(_ms(s.apiMs!))}</span>'
+          '<span class="pb"><i style="width:$width%"$cls></i></span>'
+          '<span class="pl"><b>${_esc(s.code ?? '')}</b> ${_esc(s.apiDetail ?? s.name)}</span></div>',
+        );
+      }
+      out.writeln('  </div>');
+    }
+    return out.toString();
+  }
+
   /// A self-contained HTML report.
   String buildHtml(AutomationResult result) {
     final rows = StringBuffer();
@@ -1156,6 +1471,10 @@ class ReportService {
     }
 
     final stats = summarizeModules(result.steps);
+    final byModule = <String, List<AutomationStep>>{};
+    for (final s in result.steps) {
+      byModule.putIfAbsent(moduleLabelOf(s), () => <AutomationStep>[]).add(s);
+    }
     String rowClass(ModuleStats m) =>
         m.failed > 0 ? 'failed' : (m.outcome == 'PASS' ? 'passed' : 'skipped');
     final moduleRows = stats
@@ -1163,6 +1482,7 @@ class ReportService {
           (m) =>
               '      <tr class="${rowClass(m)}" data-pick="${_esc(m.label)}" title="Show only ${_esc(m.label)}">\n'
               '        <td class="name">${_esc(m.label)}</td><td>${m.total}</td><td>${m.passed}</td><td>${m.failed}</td><td>${m.skipped + m.pending}</td>\n'
+              '        <td class="barcell">${_bar(_outcomeCounts(byModule[m.label] ?? const <AutomationStep>[]), m.total)}</td>\n'
               '        <td class="status"><span class="pill ${rowClass(m)}">${m.outcome}</span></td>\n'
               '      </tr>',
         )
@@ -1179,7 +1499,7 @@ class ReportService {
   <h2>Summary by module</h2>
   <div class="scroll">
   <table class="steps modsum">
-    <thead><tr><th>Module</th><th>Steps</th><th>Pass</th><th>Fail</th><th>Skipped / not tested</th><th>Result</th></tr></thead>
+    <thead><tr><th>Module</th><th>Steps</th><th>Pass</th><th>Fail</th><th>Skipped / not tested</th><th>Outcome</th><th>Result</th></tr></thead>
     <tbody>
 $moduleRows
     </tbody>
@@ -1315,7 +1635,23 @@ $moduleChips
     })();
   </script>''';
 
-    final filterScriptTag = result.steps.isEmpty ? '' : filterScript;
+    // The test-case table's outcome chips.
+    const caseFilterScript = r'''
+  <script type="text/javascript">
+    (function () {
+      var bar = document.getElementById('cf');
+      if (!bar) return;
+      var rows = document.querySelectorAll('table.cases tbody tr');
+      bar.addEventListener('click', function (e) {
+        var c = e.target.closest('.chip');
+        if (!c) return;
+        bar.querySelectorAll('.chip').forEach(function (x) { x.classList.toggle('on', x === c); });
+        rows.forEach(function (r) { r.style.display = !c.dataset.o || r.dataset.o === c.dataset.o ? '' : 'none'; });
+      });
+    })();
+  </script>''';
+    final filterScriptTag =
+        (result.steps.isEmpty ? '' : filterScript) + caseFilterScript;
 
     // Only a report with a video needs script, and only to seek that video.
     const seekScript = '''
@@ -1337,11 +1673,15 @@ $moduleChips
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${_esc(result.testName)} — ${result.verdict}</title>
 <style>
-  :root { color-scheme: light dark; --fg:#16181d; --bg:#fff; --muted:#5d6470;
-          --line:#e3e6ec; --pass:#127a41; --fail:#c0261c; --skip:#8a6d1f; --card:#f7f8fa; }
+  :root { color-scheme: light dark; --fg:#16181d; --bg:#f6f7fb; --muted:#5d6470;
+          --line:#e3e6ec; --card:#fff;
+          --pass:#15803d; --fail:#dc2626; --blocked:#d97706; --na:#2563eb; --nt:#6b7280; --skip:#a16207;
+          --app:#dc2626; --review:#d97706; --auto:#7c3aed; --a11y:#0284c7; --api:#0d9488; --data:#ea580c;
+          --orange:#ee6a4b; --purple:#8e5cf7; --blue:#4a7dff; }
   @media (prefers-color-scheme: dark) {
-    :root { --fg:#e8eaee; --bg:#14161a; --muted:#9aa2af; --line:#2b2f37;
-            --pass:#4ec97f; --fail:#ff6b5e; --skip:#e0b64a; --card:#1c1f25; }
+    :root { --fg:#e8eaee; --bg:#0b0b10; --muted:#9aa2af; --line:#2b2f37; --card:#15151d;
+            --pass:#4ade80; --fail:#f87171; --blocked:#fbbf24; --na:#60a5fa; --nt:#9ca3af; --skip:#eab308;
+            --app:#f87171; --review:#fbbf24; --auto:#a78bfa; --a11y:#38bdf8; --api:#2dd4bf; --data:#fb923c; }
   }
   * { box-sizing: border-box; }
   body { margin:0; padding:24px; font:15px/1.55 -apple-system,Roboto,Segoe UI,sans-serif;
@@ -1400,13 +1740,104 @@ $moduleChips
   .chip.on { background:var(--card); border-color:var(--muted); font-weight:600; }
   footer { margin-top:30px; padding-top:14px; border-top:1px solid var(--line);
            font-size:12.5px; color:var(--muted); }
+  /* Header band in CodiFi's colours. */
+  .hero { margin:-24px -24px 20px; padding:22px 24px 18px; color:#fff;
+          background:linear-gradient(120deg,#0b0b10 0%,#2a1640 45%,#1d2a6b 75%,#ee6a4b 130%); }
+  .hero h1 { color:#fff; font-size:24px; }
+  .hero p { margin:8px 0 0; color:#d6d6e4; font-size:13px; }
+  .brand { font-size:12px; letter-spacing:1.2px; text-transform:uppercase; color:#ffb59f; margin-bottom:6px; }
+  .brand .logo { display:inline-block; width:18px; height:18px; border-radius:50%; text-align:center; line-height:18px;
+                 font-weight:800; color:#fff; background:linear-gradient(135deg,var(--orange),var(--purple),var(--blue)); }
+  .hero-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+  .hero .verdict { margin:0; }
+  .hchip { font-size:12.5px; padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.12);
+           border:1px solid rgba(255,255,255,.18); }
+  /* Overview: coloured counts, the outcome bar and the QA verdict. */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:10px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-top:4px solid var(--c,var(--muted));
+         border-radius:12px; padding:10px 12px; }
+  .kpi b { display:block; font-size:26px; line-height:1.1; color:var(--c,var(--fg)); }
+  .kpi span { font-size:11.5px; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); }
+  .kpi i { float:right; font-style:normal; font-size:12px; color:var(--c); }
+  .o-total { --c:var(--orange); } .o-pass { --c:var(--pass); } .o-fail { --c:var(--fail); }
+  .o-blocked { --c:var(--blocked); } .o-na { --c:var(--na); } .o-nt { --c:var(--nt); } .o-skip { --c:var(--skip); }
+  .bar { display:flex; height:12px; border-radius:999px; overflow:hidden; background:var(--line); margin:14px 0; }
+  .bar span { display:block; height:100%; background:var(--c); }
+  td.barcell { min-width:160px; } td.barcell .bar { margin:6px 0; height:10px; }
+  .qa { border-radius:12px; padding:12px 16px; border-left:6px solid var(--q); background:var(--card);
+        border-top:1px solid var(--line); border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .qa strong { color:var(--q); text-transform:uppercase; letter-spacing:.6px; font-size:12.5px; }
+  .qa p { margin:4px 0; }
+  .qa-ready { --q:var(--pass); } .qa-fixes { --q:var(--blocked); } .qa-not_ready { --q:var(--fail); }
+  .qa-review { --q:var(--na); } .qa-none { --q:var(--nt); }
+  .pill.o-pass, .pill.o-fail, .pill.o-blocked, .pill.o-na, .pill.o-nt, .pill.o-skip {
+    color:var(--c); border-color:var(--c); background:color-mix(in srgb, var(--c) 12%, transparent); font-weight:600; }
+  /* Findings: a colour per class, a badge per severity. */
+  .c-app { --k:var(--app); } .c-review { --k:var(--review); } .c-auto { --k:var(--auto); }
+  .c-a11y { --k:var(--a11y); } .c-api { --k:var(--api); } .c-data { --k:var(--data); }
+  .classes { display:flex; flex-wrap:wrap; gap:8px; }
+  .cls { text-decoration:none; color:var(--k); border:1px solid var(--k); border-radius:999px; padding:4px 12px;
+         font-size:13px; background:color-mix(in srgb, var(--k) 10%, transparent); }
+  .cls b { font-size:15px; } .cls.none { opacity:.45; }
+  h3.ftitle { color:var(--k); font-size:15px; margin:22px 0 8px; padding-bottom:4px; border-bottom:2px solid var(--k); }
+  h3.ftitle span { font-size:12px; color:#fff; background:var(--k); border-radius:999px; padding:1px 8px; margin-left:6px; }
+  .finding { background:var(--card); border:1px solid var(--line); border-left:5px solid var(--k);
+             border-radius:12px; padding:10px 14px; margin:10px 0; }
+  .finding header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-weight:600; }
+  .fid { color:#fff; background:var(--k); border-radius:6px; padding:1px 7px; font-size:12px; }
+  .code { font-family:ui-monospace,Menlo,monospace; color:var(--k); }
+  .fbody { display:flex; gap:14px; align-items:flex-start; }
+  .fbody dl { flex:1; display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; margin:10px 0 4px; font-size:13.5px; }
+  .fbody dt { color:var(--muted); } .fbody dd { margin:0; }
+  dd.obs { color:var(--k); } dd.rec { font-style:italic; }
+  .thumb img { width:120px; border-radius:8px; border:1px solid var(--line); margin-top:10px; }
+  .thumb.missing { display:none; }
+  .finding details summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
+  .finding pre { white-space:pre-wrap; font-size:11.5px; color:var(--muted); max-height:220px; overflow:auto; }
+  .sev { font-size:11px; font-weight:700; letter-spacing:.4px; border-radius:6px; padding:1px 7px; color:#fff; }
+  .sev-critical { background:#7f1d1d; } .sev-high { background:#dc2626; } .sev-medium { background:#d97706; }
+  .sev-low { background:#64748b; }
+  /* The test-case table and the lists. */
+  table.cases { border-collapse:collapse; width:100%; min-width:900px; background:var(--card); border-radius:12px; overflow:hidden; }
+  table.cases th, table.cases td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  table.cases th { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); }
+  table.cases tr td:first-child { border-left:4px solid var(--c); }
+  table.cases tr.o-fail td { background:color-mix(in srgb, var(--fail) 7%, transparent); }
+  table.cases tr.o-blocked td { background:color-mix(in srgb, var(--blocked) 7%, transparent); }
+  td.id { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; font-weight:600; color:var(--c); }
+  td.small { font-size:12.5px; color:var(--muted); }
+  .chip.o-pass, .chip.o-fail, .chip.o-blocked, .chip.o-na, .chip.o-nt, .chip.o-skip { color:var(--c); border-color:var(--c); }
+  .chip.on.o-pass, .chip.on.o-fail, .chip.on.o-blocked, .chip.on.o-na, .chip.on.o-nt, .chip.on.o-skip {
+    background:var(--c); color:#fff; }
+  ul.list { list-style:none; padding:0; } ul.list li { padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .perf .prow { display:grid; grid-template-columns:64px 160px 1fr; gap:10px; align-items:center; font-size:13px; padding:3px 0; }
+  .perf .pt { font-variant-numeric:tabular-nums; text-align:right; color:var(--muted); }
+  .perf .pb { height:8px; background:var(--line); border-radius:999px; overflow:hidden; }
+  .perf .pb i { display:block; height:100%; background:linear-gradient(90deg,var(--blue),var(--purple)); }
+  .perf .pb i.slow { background:linear-gradient(90deg,var(--orange),var(--fail)); }
+  /* The checklist: each row tinted by its status. */
+  table.steps:not(.modsum) tr.failed td { background:color-mix(in srgb, var(--fail) 8%, transparent); }
+  table.steps:not(.modsum) tr.failed td.glyph { box-shadow:inset 4px 0 var(--fail); }
+  table.steps:not(.modsum) tr.passed td.glyph { box-shadow:inset 4px 0 var(--pass); }
+  table.steps:not(.modsum) tr.skipped td.glyph { box-shadow:inset 4px 0 var(--nt); }
+  table.steps { background:var(--card); }
+  h2 { color:var(--fg); border-left:4px solid var(--orange); padding-left:10px; }
 </style>
 </head>
 <body>
-  <h1>${_esc(result.testName)}</h1>
-  <div class="verdict ${result.verdict}">${result.verdict}</div>
-  <p class="muted">Completed ${result.completedSteps} of ${result.totalSteps} steps.</p>
-
+  <header class="hero">
+    <div class="brand"><span class="logo">C</span> CodiFi · Automation report</div>
+    <h1>${_esc(result.testName)}</h1>
+    <div class="hero-row">
+      <span class="verdict ${result.verdict}">${result.verdict}</span>
+      <span class="hchip">${_esc(result.targetVersionName == null ? 'version —' : 'v${result.targetVersionName}')}</span>
+      <span class="hchip">${_esc('${result.deviceManufacturer} ${result.deviceModel}')} · Android ${_esc(result.androidVersion)}</span>
+      <span class="hchip">${result.startedAt == null ? '—' : _esc(_stamp.format(result.startedAt!))}</span>
+      <span class="hchip">${result.duration == null ? '—' : _esc(_formatDuration(result.duration!))}</span>
+    </div>
+    <p>Completed ${result.completedSteps} of ${result.totalSteps} steps.</p>
+  </header>
+${_caseSectionsHtml(result)}
   <h2>Run</h2>
   <table class="meta">
     <tr><td>Test name</td><td>${_esc(result.testName)}</td></tr>

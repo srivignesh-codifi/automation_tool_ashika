@@ -9,6 +9,8 @@ import '../models/automation_result.dart';
 import '../models/report_modules.dart';
 import '../models/test_run.dart';
 import '../services/report_service.dart';
+import '../services/report_upload_service.dart';
+import '../widgets/send_to_admin_button.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/test_step_tile.dart';
 
@@ -19,10 +21,14 @@ class ReportScreen extends StatefulWidget {
     required this.run,
     super.key,
     this.checklistText,
+    this.uploader,
   });
 
   final ReportService reports;
   final TestRun run;
+
+  /// Sends the report to the admin server; a default one when not given.
+  final ReportUploadService? uploader;
 
   /// Pre-read plain-text checklist, when the caller already had it.
   final String? checklistText;
@@ -259,7 +265,14 @@ class _ReportScreenState extends State<ReportScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _withViewSwitch(
               ListView(
-                padding: const EdgeInsets.all(16),
+                // Edge-to-edge (Android 15+): the list ends above the navigation bar while
+                // the background still runs under it.
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  16 + MediaQuery.paddingOf(context).bottom,
+                ),
                 children: [
                   Row(
                     children: [
@@ -384,6 +397,11 @@ class _ReportScreenState extends State<ReportScreen> {
                     _PathRow(label: 'Video', path: widget.run.videoPath),
                   if (widget.run.zipPath.isNotEmpty)
                     _PathRow(label: 'Summary zip', path: widget.run.zipPath),
+                  if (widget.run.zipPath.isNotEmpty)
+                    Text(
+                      'Kept in app storage for sending to admin; not copied to Downloads.',
+                      style: theme.textTheme.bodySmall,
+                    ),
                   if (widget.run.zipFolder.isNotEmpty)
                     Text(
                       'Copy in ${widget.run.zipFolder}: text report, video and '
@@ -409,6 +427,8 @@ class _ReportScreenState extends State<ReportScreen> {
                       _downloading ? 'Downloading…' : 'Download Reports',
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  SendToAdminButton(run: widget.run, uploader: widget.uploader),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: _copy,
