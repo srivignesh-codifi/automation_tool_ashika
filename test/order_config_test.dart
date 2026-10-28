@@ -26,21 +26,21 @@ void main() {
     },
   );
 
-  test(
-    'orders can only be placed on NSE and BSE, and only on an exchange that is on',
-    () {
-      var c = OrderConfig.defaults();
-      c = c.withSegment('mcx', c.of('mcx').copyWith(place: true));
-      expect(c.of('mcx').place, isFalse);
-      c = c.withSegment('nse', c.of('nse').copyWith(enabled: false));
-      expect(c.of('nse').place, isFalse);
-      c = c.withSegment(
-        'bse',
-        const OrderSegmentConfig(enabled: true, place: true, script: 'IDEA'),
-      );
-      expect(c.of('bse').place, isTrue);
-    },
-  );
+  test('orders can be placed on any exchange, but only on one that is on', () {
+    var c = OrderConfig.defaults();
+    c = c.withSegment('mcx', c.of('mcx').copyWith(place: true));
+    expect(c.of('mcx').place, isTrue);
+    expect(c.summary, contains('MCX CRUDEOIL (orders)'));
+    c = c.withSegment('nfo', c.of('nfo').copyWith(place: true));
+    expect(c.of('nfo').place, isFalse, reason: 'NFO is off');
+    c = c.withSegment('nse', c.of('nse').copyWith(enabled: false));
+    expect(c.of('nse').place, isFalse);
+    c = c.withSegment(
+      'bse',
+      const OrderSegmentConfig(enabled: true, place: true, script: 'IDEA'),
+    );
+    expect(c.of('bse').place, isTrue);
+  });
 
   test(
     'a saved or sent config survives a round trip and bad input falls back',
@@ -63,7 +63,7 @@ void main() {
       });
       expect(odd.of('nse').enabled, isTrue);
       expect(odd.of('nse').script, 'TCS');
-      expect(odd.of('mcx').place, isFalse);
+      expect(odd.of('mcx').place, isTrue);
       expect(odd.of('mcx').script, 'CRUDEOIL');
       expect(
         OrderConfig.fromJson(null).toJson(),
@@ -157,8 +157,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey<String>('order_place_mcx')),
-        findsNothing,
-        reason: 'MCX never places orders',
+        findsOneWidget,
+        reason: 'every exchange can place orders',
       );
       expect(
         find.byKey(const ValueKey<String>('order_place_nse')),
@@ -312,4 +312,84 @@ void main() {
       );
     },
   );
+
+  test(
+    'every kind of order is on by default; one switched off is kept and said in the summary',
+    () {
+      var c = OrderConfig.defaults();
+      expect(OrderConfig.kinds.map((k) => k.id), <String>[
+        'market', 'limit', 'sl', 'slm', 'co', 'bo', 'amo', //
+        'nrml', 'cnc', 'mtf', 'ioc', 'disclosed',
+      ]);
+      expect(OrderConfig.kinds.every((k) => c.places(k.id)), isTrue);
+      expect(c.summary, isNot(contains('kinds of order')));
+      c = c.withKind('mtf', false).withKind('slm', false);
+      expect(c.places('mtf'), isFalse);
+      expect(c.places('slm'), isFalse);
+      expect(c.places('ioc'), isTrue);
+      expect(c.summary, endsWith('10 of 12 kinds of order'));
+      c = c.withSegment('bse', c.of('bse').copyWith(enabled: true));
+      expect(c.places('mtf'), isFalse, reason: 'changing an exchange keeps it');
+      final back = OrderConfig.fromJson(c.toJson());
+      expect(back.placeOff, <String>{'mtf', 'slm'});
+      expect(back.toJson(), c.toJson());
+      expect(
+        OrderConfig.fromJson(<String, Object?>{
+          'placeOff': <Object?>['ioc', 'unknown', 3],
+        }).placeOff,
+        <String>{'ioc'},
+        reason: 'unknown kinds are dropped',
+      );
+      expect(c.withKind('mtf', true).places('mtf'), isTrue);
+      final none = c.withSegment('nse', c.of('nse').copyWith(place: false));
+      expect(
+        none.summary,
+        isNot(contains('kinds of order')),
+        reason: 'nothing is placed, so the kinds do not matter',
+      );
+    },
+  );
+
+  testWidgets('the kinds of order are chips that switch on and off', (
+    tester,
+  ) async {
+    const modules = <AutomationModule>[
+      AutomationModule(id: 'order_placement', label: 'Order placement'),
+    ];
+    var config = OrderConfig.defaults();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => SingleChildScrollView(
+              child: ModulePicker(
+                modules: modules,
+                selected: const <String>{'order_placement'},
+                onChanged: (_) {},
+                orderConfig: config,
+                onOrderConfigChanged: (next) => setState(() => config = next),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('order_config_header')));
+    await tester.pumpAndSettle();
+    for (final kind in OrderConfig.kinds) {
+      expect(
+        find.byKey(ValueKey<String>('order_kind_${kind.id}')),
+        findsOneWidget,
+        reason: kind.id,
+      );
+    }
+    final chip = find.byKey(const ValueKey<String>('order_kind_disclosed'));
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pump();
+    expect(config.places('disclosed'), isFalse);
+    await tester.tap(chip);
+    await tester.pump();
+    expect(config.places('disclosed'), isTrue);
+  });
 }

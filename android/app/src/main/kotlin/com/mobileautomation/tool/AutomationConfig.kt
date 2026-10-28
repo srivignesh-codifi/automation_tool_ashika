@@ -251,9 +251,26 @@ object AutomationConfig {
         /** Offered only on a device with biometrics; has no Skip, so a run cannot pass it. */
         const val BIOMETRIC_SCREEN = "biometric_screen"
 
+        /**
+         * The biometric sign-in screen, shown instead of the password screen once biometrics were enabled for the user
+         * (a run without the data clear, or after a session expiry). It raises Android's prompt by itself on opening.
+         */
+        const val BIOMETRIC_LOGIN_SCREEN = "biometric_login_screen"
+        const val BIOMETRIC_LOGIN_BUTTON = "biometric_login_button"
+        const val BIOMETRIC_LOGIN_SWITCH_ACCOUNT = "biometric_login_switch_account"
+
         /** "Risk Disclosure on Derivatives" and its "I understand" / "Next" button. */
         const val RISK_DISCLOSURE_DIALOG = "risk_disclosure_dialog"
         const val DISCLOSURE_UNDERSTAND_BUTTON = "disclosure_understand_button"
+
+        /**
+         * Published by the app (only on a run the tool launched) once any call has been refused as unauthorised.
+         * Its label holds the latest such calls, one per line: `<epoch ms>|<status>|<METHOD>|<path>`.
+         */
+        const val API_UNAUTHORIZED = "api_unauthorized"
+
+        /** Tradion's market-data feed status (JSON label), on a run the tool launched: see FeedMonitor. */
+        const val WS_FEED_STATUS = "ws_feed_status"
 
         // Shell
         const val HOME_SCREEN = "home_screen"
@@ -558,6 +575,78 @@ object AutomationConfig {
         const val PROFILE_TAB_TRADE_SETTINGS = "profile_tab_trade_settings"
         const val PROFILE_LOGOUT_BUTTON = "profile_logout_button"
         const val LOGOUT_CONFIRM_BUTTON = "logout_confirm_button"
+
+        // Profile › Account (rows, and the screens / sheets they open)
+        const val PROFILE_ACCOUNT_VIEW = "profile_account_view"
+        const val PROFILE_HEADER_CARD = "profile_header_card"
+        const val PROFILE_SWITCH_ACCOUNT_ROW = "profile_switch_account_row"
+        const val PROFILE_FUNDS_ROW = "profile_funds_row"
+        const val PROFILE_ADD_FUNDS_BUTTON = "profile_add_funds_button"
+        const val PROFILE_EXCHANGE_MESSAGES_ROW = "profile_exchange_messages_row"
+        const val PROFILE_MARKET_STATUS_ROW = "profile_market_status_row"
+        const val PROFILE_CUSTOMER_SUPPORT_ROW = "profile_customer_support_row"
+        const val PROFILE_RATE_APP_ROW = "profile_rate_app_row"
+        const val PROFILE_SOCIAL_LINK_PREFIX = "profile_social_link_"
+        const val PROFILE_DETAILS_SCREEN = "profile_details_screen"
+        const val SWITCH_ACCOUNT_SHEET = "switch_account_sheet"
+        const val FUNDS_SCREEN = "funds_screen"
+        const val ADD_FUNDS_SCREEN = "add_funds_screen"
+        const val EXCHANGE_MESSAGES_SCREEN = "exchange_messages_screen"
+        const val MARKET_STATUS_SCREEN = "market_status_screen"
+        const val CUSTOMER_SUPPORT_SHEET = "customer_support_sheet"
+        const val RATE_APP_SCREEN = "rate_app_screen"
+
+        // Profile › Trade Settings
+        const val PROFILE_TRADE_SETTINGS_VIEW = "profile_trade_settings_view"
+        /** Followed by fixed_header, notification, order_preview or theme. */
+        const val PROFILE_TOGGLE_PREFIX = "profile_toggle_"
+        /** Followed by 0 (Small), 1 (Medium) or 2 (Large); each segment publishes `selected`. */
+        const val PROFILE_FONT_SIZE_PREFIX = "profile_font_size_"
+        const val PROFILE_TOTP_ROW = "profile_totp_row"
+        const val PROFILE_SECURITY_ROW = "profile_security_row"
+        const val PROFILE_FREEZE_ROW = "profile_freeze_row"
+        const val PROFILE_TRADE_PREFERENCES_ROW = "profile_trade_preferences_row"
+        const val PROFILE_ACCESSIBILITY_ROW = "profile_accessibility_row"
+        const val PROFILE_DEVELOPER_CONSOLE_ROW = "profile_developer_console_row"
+        const val CHANGE_PASSWORD_SCREEN = "change_password_screen"
+        const val TRADE_PREFERENCES_SCREEN = "trade_preferences_screen"
+        const val ACCESSIBILITY_SETTINGS_SCREEN = "accessibility_settings_screen"
+
+        // Inside the Profile / Settings screens
+        const val HEADER_SCAN_BUTTON = "header_scan_button"
+        const val QR_SCAN_SCREEN = "qr_scan_screen"
+        const val PROFILE_BANK_DETAILS_ROW = "profile_bank_details_row"
+        const val BANK_DETAILS_SHEET = "bank_details_sheet"
+        const val FUNDS_ADD_BUTTON = "funds_add_button"
+        const val FUNDS_WITHDRAW_BUTTON = "funds_withdraw_button"
+        const val WITHDRAW_FUNDS_SCREEN = "withdraw_funds_screen"
+        const val EXCHANGE_MESSAGES_TAB_PREFIX = "exchange_messages_tab_"
+        /** Label: how many messages the server sent for the tab (`<EX>` = NSE, NFO, ...), or "none" before a response. */
+        const val EXCHANGE_MESSAGES_COUNT_PREFIX = "exchange_messages_count_"
+        /** One per message row, by its index in the server's list. */
+        const val EXCHANGE_MESSAGE_ITEM_PREFIX = "exchange_message_item_"
+        const val MARKET_STATUS_ROW = "market_status_row"
+        const val SUPPORT_CALL_ROW = "support_call_row"
+        const val SUPPORT_EMAIL_ROW = "support_email_row"
+        const val SUPPORT_COMPANY_ROW = "support_company_row"
+        const val COMPANY_SCREEN = "company_screen"
+        const val RATE_SUBMIT_BUTTON = "rate_submit_button"
+        const val CHANGE_PASSWORD_SUBMIT = "change_password_submit"
+        const val CHANGE_PASSWORD_OLD_INPUT = "change_password_old_input"
+        const val CHANGE_PASSWORD_NEW_INPUT = "change_password_new_input"
+        const val CHANGE_PASSWORD_CONFIRM_INPUT = "change_password_confirm_input"
+        const val TRADE_PREF_TAB_PREFIX = "trade_pref_tab_"
+        const val TRADE_PREF_QTY_PLUS = "trade_pref_qty_plus"
+        const val TRADE_PREF_QTY_MINUS = "trade_pref_qty_minus"
+        const val TRADE_PREF_SAVE_BUTTON = "trade_pref_save_button"
+        const val TRADE_PREF_DISCARD_BUTTON = "trade_pref_discard_button"
+        /** The Motion and Touch Targets switches of Accessibility Settings. */
+        val A11Y_SWITCHES = listOf(
+            "a11y_reduce_motion" to "Reduce motion",
+            "a11y_disable_shimmer" to "Disable shimmer loading",
+            "a11y_reduce_transitions" to "Reduce transitions",
+            "a11y_larger_touch_targets" to "Larger touch targets",
+        )
     }
 
     /** View ids of the system runtime permission prompt (AOSP and Google builds alike). */
@@ -676,6 +765,12 @@ object AutomationConfig {
          * phone's PIN) after Enable now. The tool never answers that prompt itself.
          */
         const val BIOMETRIC_CONFIRM = 90_000L
+
+        /** After the session expired mid-run: how long a person has to type the new OTP into the app. */
+        const val RELOGIN_OTP = 180_000L
+
+        /** After the session expired on a user with biometrics: how long a person has to touch the sensor. */
+        const val RELOGIN_BIOMETRIC = 60_000L
 
         /** After Join Now is tapped, how long Tradion may take to hand over to the browser. */
         const val JOIN_NOW_LEAVES = 8_000L

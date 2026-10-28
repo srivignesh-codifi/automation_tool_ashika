@@ -64,6 +64,15 @@ class AutomationStepResult(
     var apiMs: Long? = null
     var apiChecks: Int = 0
 
+    /**
+     * The calls the target app reported as unauthorised (HTTP 401 / "Session Expired") while this step ran, and
+     * what the run did about it. Kept when the step is run again after signing in, so the report still shows it.
+     */
+    var unauthorized: String? = null
+
+    /** How many times this step was run again after the session ended part way through it. */
+    var reruns: Int = 0
+
     val durationMs: Long?
         get() {
             val start = startedAtMs ?: return null
@@ -74,6 +83,25 @@ class AutomationStepResult(
     fun start() {
         status = StepStatus.RUNNING
         startedAtMs = System.currentTimeMillis()
+    }
+
+    /** Puts the step back in the queue, to be run again from the start (after signing in again). */
+    fun resetForRerun() {
+        status = StepStatus.PENDING
+        startedAtMs = null
+        finishedAtMs = null
+        failureReason = null
+        note = null
+        cause = null
+        evidence = null
+        recommendation = null
+        skipKind = null
+        apiKind = null
+        apiStatus = null
+        apiDetail = null
+        apiMs = null
+        apiChecks = 0
+        reruns++
     }
 
     fun pass(note: String? = null) {
@@ -102,22 +130,24 @@ class AutomationStepResult(
         "startedAtMs" to startedAtMs,
         "finishedAtMs" to finishedAtMs,
         "durationMs" to durationMs,
-        "failureReason" to failureReason,
-        "note" to note,
+        "failureReason" to Redactor.apply(failureReason),
+        "note" to Redactor.apply(note),
         "code" to code,
         "expected" to expected,
         "severity" to severity,
         "skipKind" to skipKind,
         "module" to module,
         "cause" to cause,
-        "evidence" to evidence,
-        "recommendation" to recommendation,
-        "cleanup" to cleanup,
+        "evidence" to Redactor.apply(evidence),
+        "recommendation" to Redactor.apply(recommendation),
+        "cleanup" to Redactor.apply(cleanup),
         "apiKind" to apiKind,
         "apiStatus" to apiStatus,
-        "apiDetail" to apiDetail,
+        "apiDetail" to Redactor.apply(apiDetail),
         "apiMs" to apiMs,
         "apiChecks" to apiChecks,
+        "unauthorized" to Redactor.apply(unauthorized),
+        "reruns" to reruns,
     )
 }
 
@@ -159,6 +189,15 @@ class AutomationRunResult(
     /** Why there is no video, or what the video does not cover. */
     var recordingNote: String? = null
 
+    /**
+     * Each time the target app's session ended mid-run: which step, which API answered 401, and whether the tool
+     * signed in again and resumed. See [TradionAutomationFlow].
+     */
+    val sessionBreaks: MutableList<Map<String, Any?>> = mutableListOf()
+
+    /** The market-data feed over the run (live market hours), or the BOD note; see [FeedMonitor]. */
+    var feed: Map<String, Any?>? = null
+
     val durationMs: Long?
         get() = finishedAtMs?.let { it - startedAtMs }
 
@@ -180,7 +219,7 @@ class AutomationRunResult(
         "durationMs" to durationMs,
         "passed" to passed,
         "stopped" to stopped,
-        "failureMessage" to failureMessage,
+        "failureMessage" to Redactor.apply(failureMessage),
         "totalSteps" to steps.size,
         "completedSteps" to completedCount,
         "steps" to steps.map { it.toMap() },
@@ -191,5 +230,7 @@ class AutomationRunResult(
         "videoPath" to videoPath,
         "recordingStartedAtMs" to recordingStartedAtMs,
         "recordingNote" to recordingNote,
+        "sessionBreaks" to sessionBreaks.toList(),
+        "feed" to feed,
     )
 }

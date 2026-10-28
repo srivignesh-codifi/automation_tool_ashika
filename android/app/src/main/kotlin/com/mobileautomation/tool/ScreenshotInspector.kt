@@ -65,4 +65,39 @@ object ScreenshotInspector {
             bitmap.recycle()
         }
     }
+
+    /**
+     * The mean brightness (0 = black, 1 = white) of the same band as [content]: a dark theme paints mostly dark
+     * background, a light one mostly white. Null when the file cannot be decoded.
+     */
+    fun brightness(path: String, topShare: Double = 0.18, bottomShare: Double = 0.12): Double? {
+        val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+        val bitmap = try {
+            BitmapFactory.decodeFile(path, options)
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+        try {
+            val width = bitmap.width
+            val height = bitmap.height
+            val from = (height * topShare).toInt().coerceIn(0, height - 1)
+            val to = (height * (1 - bottomShare)).toInt().coerceIn(from + 1, height)
+            var sum = 0.0
+            var total = 0
+            val row = IntArray(width)
+            for (y in from until to) {
+                bitmap.getPixels(row, 0, width, 0, y, width, 1)
+                for (pixel in row) {
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    sum += (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+                    total++
+                }
+            }
+            return if (total == 0) null else sum / total
+        } finally {
+            bitmap.recycle()
+        }
+    }
 }

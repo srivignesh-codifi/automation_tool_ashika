@@ -56,6 +56,7 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
 
   String? _startError;
   bool _finished = false;
+  bool _paused = false;
   AutomationResult? _result;
   TestRun? _savedRun;
   bool _saving = false;
@@ -127,11 +128,28 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
           ),
         );
 
+      case 'automation_paused':
+        setState(() => _paused = true);
+
+      case 'automation_resumed':
+        setState(() => _paused = false);
+
+      case 'automation_module_skipped':
+        setState(() => _paused = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Skipping this module; the run goes on with the next.',
+            ),
+          ),
+        );
+
       case 'automation_completed':
       case 'automation_stopped':
         final result = event.result;
         setState(() {
           _finished = true;
+          _paused = false;
           if (result != null) {
             _result = result;
             if (result.steps.isNotEmpty) _steps = result.steps;
@@ -168,6 +186,28 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
 
   Future<void> _stop() async {
     await widget.automation.stopAutomation();
+  }
+
+  Future<void> _skip() async {
+    final ok = await widget.automation.skipModule();
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Skip works once sign-in is done and a module is running.',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Pause / Play: the same as the floating button over the app under test.
+  Future<void> _togglePause() async {
+    if (_paused) {
+      await widget.automation.resumeAutomation();
+    } else {
+      await widget.automation.pauseAutomation();
+    }
   }
 
   Future<void> _downloadReport() async {
@@ -228,7 +268,13 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_finished ? 'Run finished' : 'Running…'),
+          title: Text(
+            _finished
+                ? 'Run finished'
+                : _paused
+                ? 'Paused'
+                : 'Running…',
+          ),
           automaticallyImplyLeading: _finished,
         ),
         body: Column(
@@ -372,10 +418,33 @@ class _RunningTestScreenState extends State<RunningTestScreen> {
                           ),
                         ],
                       )
-                    : OutlinedButton.icon(
-                        onPressed: _stop,
-                        icon: const Icon(Icons.stop),
-                        label: const Text('Stop Automation'),
+                    // Player-style controls: Pause / Play, Skip module, Stop.
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton.filledTonal(
+                            key: const ValueKey<String>('pause_resume_button'),
+                            tooltip: _paused ? 'Play' : 'Pause',
+                            onPressed: _togglePause,
+                            icon: Icon(
+                              _paused ? Icons.play_arrow : Icons.pause,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          IconButton.filledTonal(
+                            key: const ValueKey<String>('skip_module_button'),
+                            tooltip: 'Skip this module',
+                            onPressed: _skip,
+                            icon: const Icon(Icons.skip_next),
+                          ),
+                          const SizedBox(width: 16),
+                          IconButton.filledTonal(
+                            key: const ValueKey<String>('stop_button'),
+                            tooltip: 'Stop',
+                            onPressed: _stop,
+                            icon: const Icon(Icons.stop),
+                          ),
+                        ],
                       ),
               ),
             ),

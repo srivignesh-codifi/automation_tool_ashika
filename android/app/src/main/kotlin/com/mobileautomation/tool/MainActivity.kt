@@ -76,6 +76,8 @@ class MainActivity : FlutterActivity() {
         when (call.method) {
             "isAccessibilityEnabled" -> result.success(
                 mapOf(
+                    // Re-enables the service when Android dropped it and the one-time grant allows it.
+                    "autoEnabled" to AutomationAccessibilityService.ensureEnabled(this),
                     "enabledInSettings" to AutomationAccessibilityService.isEnabledInSettings(this),
                     "connected" to (AutomationAccessibilityService.connected() != null),
                     "ready" to AutomationAccessibilityService.isReady(this),
@@ -105,6 +107,8 @@ class MainActivity : FlutterActivity() {
                     clearData = call.argument<Boolean>("clearData") != false,
                     loginDirectOnly = call.argument<Boolean>("loginDirectOnly") == true,
                     orderConfig = call.argument<Map<*, *>>("orderConfig"),
+                    profileConfig = call.argument<Map<*, *>>("profileConfig"),
+                    marketSession = call.argument<String>("marketSession") ?: "bod",
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))
@@ -121,6 +125,14 @@ class MainActivity : FlutterActivity() {
             "buildSummaryZip" -> buildSummaryZip(call, result)
 
             "stopAutomation" -> result.success(AutomationEngine.stop())
+
+            "pauseAutomation" -> result.success(AutomationEngine.pause())
+
+            "resumeAutomation" -> result.success(AutomationEngine.resume())
+
+            "isAutomationPaused" -> result.success(AutomationEngine.isPaused())
+
+            "skipModule" -> result.success(AutomationEngine.skipModule())
 
             "isAutomationRunning" -> result.success(AutomationEngine.isRunning())
 

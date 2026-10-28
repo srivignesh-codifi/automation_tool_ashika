@@ -48,6 +48,32 @@ class AutomationAccessibilityService : AccessibilityService() {
         fun isReady(context: Context): Boolean =
             isEnabledInSettings(context) && instance != null
 
+        /**
+         * Puts this service back in the enabled list when Android dropped it (an update of the tool can), so the
+         * operator enables it once, not after every install. Needs WRITE_SECURE_SETTINGS, granted once over adb;
+         * without it nothing changes and the operator is asked as before. True when the service is enabled.
+         */
+        fun ensureEnabled(context: Context): Boolean {
+            if (isEnabledInSettings(context)) return true
+            val granted = context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) return false
+            return try {
+                val me = ComponentName(context.packageName, AutomationAccessibilityService::class.java.name)
+                    .flattenToString()
+                val resolver = context.contentResolver
+                val current = Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+                    ?.split(':')?.filter { it.isNotBlank() && it != "null" }.orEmpty()
+                Settings.Secure.putString(
+                    resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, (current + me).distinct().joinToString(":"),
+                )
+                Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+                isEnabledInSettings(context)
+            } catch (_: Throwable) {
+                false
+            }
+        }
+
         fun isEnabledInSettings(context: Context): Boolean {
             val expected = ComponentName(
                 context.packageName,

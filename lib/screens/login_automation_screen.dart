@@ -1,4 +1,6 @@
 import '../models/order_config.dart';
+import '../models/market_session.dart';
+import '../models/profile_config.dart';
 import 'package:flutter/material.dart';
 
 import '../models/automation_step.dart';
@@ -64,6 +66,10 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
 
   /// Order placement module settings: which exchanges, which instruments, where orders are placed.
   OrderConfig _orderConfig = OrderConfig.defaults();
+
+  /// Profile module settings: which of its checks run.
+  ProfileConfig _profileConfig = ProfileConfig.defaults();
+  MarketSession _marketSession = MarketSession.bod;
   bool _busy = true;
   bool _running = false;
 
@@ -146,6 +152,8 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     final off = await widget.storage.readModulesOff(appId: app.id);
     final direct = await widget.storage.readDirectLogin(appId: app.id);
     final orders = await widget.storage.readOrderConfig(appId: app.id);
+    final profile = await widget.storage.readProfileConfig(appId: app.id);
+    final session = await widget.storage.readMarketSession(appId: app.id);
     if (!mounted || app.id != _app.id) return;
     setState(() {
       _modules = app.modules
@@ -154,6 +162,8 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
           .toSet();
       _directLogin = direct;
       _orderConfig = orders;
+      _profileConfig = profile;
+      _marketSession = session;
     });
   }
 
@@ -166,6 +176,8 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
     widget.storage.saveModulesOff(off, appId: _app.id);
     widget.storage.saveDirectLogin(_directLogin, appId: _app.id);
     widget.storage.saveOrderConfig(_orderConfig, appId: _app.id);
+    widget.storage.saveProfileConfig(_profileConfig, appId: _app.id);
+    widget.storage.saveMarketSession(_marketSession, appId: _app.id);
   }
 
   Future<void> _selectApp(TargetAppInfo app) async {
@@ -321,6 +333,10 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             orderConfig: _modules.contains('order_placement')
                 ? _orderConfig
                 : null,
+            profileConfig: _modules.contains('profile') ? _profileConfig : null,
+            marketSession: _app.id == 'tradion'
+                ? _marketSession
+                : MarketSession.bod,
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules
@@ -555,6 +571,52 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
                         _saveChoices();
                       }
                     : null,
+                profileConfig: _profileConfig,
+                onProfileConfigChanged:
+                    _app.modules.any((m) => m.id == 'profile')
+                    ? (next) {
+                        setState(() => _profileConfig = next);
+                        _saveChoices();
+                      }
+                    : null,
+              ),
+            ],
+            if (_app.id == 'tradion') ...[
+              const SizedBox(height: 14),
+              Text(
+                'Market session',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 6),
+              SegmentedButton<MarketSession>(
+                key: const ValueKey<String>('market_session_selector'),
+                showSelectedIcon: false,
+                segments: [
+                  for (final s in MarketSession.values)
+                    ButtonSegment<MarketSession>(
+                      value: s,
+                      label: Text(s.label),
+                      icon: Icon(
+                        s == MarketSession.live
+                            ? Icons.sensors
+                            : Icons.wb_twilight,
+                      ),
+                    ),
+                ],
+                selected: {_marketSession},
+                onSelectionChanged: _running
+                    ? null
+                    : (next) {
+                        setState(() => _marketSession = next.first);
+                        _saveChoices();
+                      },
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _marketSession.hint,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
             const SizedBox(height: 14),

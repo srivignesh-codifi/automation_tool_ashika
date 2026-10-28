@@ -245,7 +245,7 @@ class DashboardSuite(
 
     private fun snapshot(): String {
         val ids = engine.visibleIdentifiers()
-        val texts = engine.screenTexts(15)
+        val texts = Redactor.evidence(engine.screenTexts(25)).take(15)
         return "identifiers: ${ids.take(30).joinToString(", ").ifEmpty { "none" }}; " +
             "readable text: ${if (texts.isEmpty()) "none" else texts.joinToString(" | ")}"
     }
@@ -299,7 +299,7 @@ class DashboardSuite(
 
     /** Records how long a real dependency (server, SDK, WebView) took, separately from the 3 s UI limit. */
     private fun timing(startedAtMs: Long, what: String, slowMs: Long = 5_000L) {
-        val took = SystemClock.elapsedRealtime() - startedAtMs
+        val took = engine.clock() - startedAtMs
         val step = current ?: return
         step.apiKind = step.apiKind ?: StepApi.READ
         step.apiMs = maxOf(step.apiMs ?: 0L, took)
@@ -383,7 +383,7 @@ class DashboardSuite(
     // ── Getting back to the Dashboard ──────────────────────────────────────────────────────────
 
     /** The screens of the sign-in. When one is up the session is gone and nothing on it may be driven with Back. */
-    private val loginIds = listOf(T.USER_ID_SCREEN, T.USER_ID_INPUT, T.PASSWORD_SCREEN, T.PASSWORD_INPUT, T.OTP_SCREEN, T.OTP_INPUT)
+    private val loginIds = listOf(T.USER_ID_SCREEN, T.USER_ID_INPUT, T.PASSWORD_SCREEN, T.PASSWORD_INPUT, T.OTP_SCREEN, T.OTP_INPUT, T.BIOMETRIC_LOGIN_SCREEN)
 
     private fun loggedOut(): Boolean = engine.firstPresent(loginIds) != null
 
@@ -567,7 +567,11 @@ class DashboardSuite(
     }
 
     /** All Indices is open: its own index cards and its search field are on a page that replaced the Dashboard. */
-    private fun onAllIndices(): Boolean = !engine.isPresent(T.DASHBOARD_SCREEN) && has("INDEX") && engine.hasFieldLabelled("Search")
+    /** The pushed All Indices page: no Dashboard behind it, and its search box, or its own title with the index rows. */
+    private fun onAllIndices(): Boolean = !engine.isPresent(T.DASHBOARD_SCREEN) && (
+        (has("INDEX") && engine.hasFieldLabelled("Search")) ||
+            (engine.hasExactText("All Indices") && has("NIFTY 50") && !engine.isPresent(T.BOTTOMNAV_DASHBOARD_TAB))
+        )
 
     private fun leave() {
         if (!recover()) fail("The app did not come back to the Dashboard after leaving the screen", Cause.UNCONFIRMED)
@@ -586,10 +590,10 @@ class DashboardSuite(
      * identifier is the first proof, the card text the second (a tab whose rows are not tagged still shows its cards).
      */
     private fun rowsOrEmpty(rowId: String, what: String): Int {
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         val ok = waitUntil(LOAD) { engine.isPresent(rowId) || cardContent() || emptyShown() }
         if (!ok) fail("$what showed neither rows nor an empty state within ${LOAD / 1000} s", Cause.API)
-        val took = SystemClock.elapsedRealtime() - started
+        val took = engine.clock() - started
         if (took > 2_000) note("$what took ${"%.1f".format(took / 1000.0)} s")
         return engine.countOf(rowId)
     }
@@ -610,7 +614,7 @@ class DashboardSuite(
      * leave within [SDK], then something has to be readable or drawn. A page's own container is not content.
      */
     private fun externalLanding(label: String, ds: String): Long {
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         val left = waitUntil(SDK) { !engine.isPresent(T.DASHBOARD_SCREEN) }
         if (!left) fail("$label did not start within ${SDK / 1000} s (the Dashboard is still showing)", Cause.API)
         // Content: readable text or, for a page the tree cannot describe, pixels (a flat page is a page that has not drawn).
@@ -619,7 +623,7 @@ class DashboardSuite(
             readable = readScreen(60).count { it.length > 2 } >= 4
             readable
         }
-        val took = SystemClock.elapsedRealtime() - started
+        val took = engine.clock() - started
         pause(300)
         val path = shot("${ds}_${label.lowercase().replace(Regex("[^a-z0-9]+"), "_")}_landing")
         val rendered = path?.let { ScreenshotInspector.content(it)?.rendered }
@@ -644,7 +648,7 @@ class DashboardSuite(
      * 4. the generic recovery, with an evidence screenshot and an APPLICATION finding if even that was needed.
      */
     private fun backFromExternal(label: String) {
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         fun home() = engine.isPresent(T.DASHBOARD_SCREEN)
         if (!engine.targetInForeground()) engine.returnToTarget()
         failIfLoggedOut("leaving $label")
@@ -662,10 +666,10 @@ class DashboardSuite(
             evidenceShot("did_not_return")
             if (!recover()) fail("$label did not return to the Dashboard (its Back arrow, Android Back twice and the recovery were all tried)", Cause.APP,
                 "The SDK / web page keeps the user on it after Back; check its back handling.")
-            note("$label: only the recovery got back to the Dashboard (${"%.1f".format((SystemClock.elapsedRealtime() - started) / 1000.0)} s)")
+            note("$label: only the recovery got back to the Dashboard (${"%.1f".format((engine.clock() - started) / 1000.0)} s)")
             return
         }
-        val took = SystemClock.elapsedRealtime() - started
+        val took = engine.clock() - started
         note("$label: back on the Dashboard with $how in ${"%.1f".format(took / 1000.0)} s" + if (took > 5_000) " (slow)" else "")
     }
 
@@ -811,7 +815,7 @@ class DashboardSuite(
 
     private fun initialLoad() {
         ensureView(true)
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         // Dashboard data arrives from the API: wait for the loading markers to clear, then read.
         waitUntil(LOAD) { engine.countOf(AutomationConfig.Ids.UI_LOADING) == 0 }
         timing(started, "Dashboard data loaded")
@@ -879,7 +883,7 @@ class DashboardSuite(
         ensureView(true)
         scrollTop()
         tapOpen(T.DASHBOARD_OPEN_OPTION_CHAIN, listOf(T.OPTION_CHAIN_SCREEN), "Option Chain did not open")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!waitUntil(Timeouts.OPTION_CHAIN_LOAD) { engine.isPresent(T.OPTION_CHAIN_TABLE) }) {
             fail("Option Chain opened but its table did not load within ${Timeouts.OPTION_CHAIN_LOAD / 1000} s", Cause.API)
         }
@@ -929,12 +933,12 @@ class DashboardSuite(
         }
         val script = engine.ownLabelsOf(T.OPTION_CHAIN_SPOT_ROW).firstOrNull()?.lines()?.firstOrNull()?.trim().orEmpty()
         if (!engine.tap(T.OPTION_CHAIN_SPOT_ROW).ok) return "$name: the first underlying could not be chosen"
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!engine.waitForGone(T.OPTION_CHAIN_SPOT_SEARCH_SCREEN, UI)) return "$name: choosing the first underlying did not return to the option chain"
         if (!waitUntil(Timeouts.OPTION_CHAIN_LOAD) { engine.isPresent(T.OPTION_CHAIN_TABLE) }) {
             return "$name: the chain of '${script.ifEmpty { "the first underlying" }}' had not loaded within ${Timeouts.OPTION_CHAIN_LOAD / 1000} s (still loading, empty, or no expiry)"
         }
-        val took = SystemClock.elapsedRealtime() - started
+        val took = engine.clock() - started
         note("$name${if (script.isNotEmpty()) " ($script)" else ""} loaded in ${"%.1f".format(took / 1000.0)} s")
         current?.let {
             it.apiKind = it.apiKind ?: StepApi.READ
@@ -979,7 +983,11 @@ class DashboardSuite(
         for (i in 0 until 8) {
             if (!tapTab(T.RESEARCH_TAB_PREFIX, i, strip)) break
             val id = "${T.RESEARCH_TAB_PREFIX}$i"
-            if (!waitUntil(UI) { engine.isSelected(id) }) fail("Tab ${i + 1} was tapped but does not show as selected", Cause.UNCONFIRMED)
+            if (!waitUntil(UI) { engine.isSelected(id) }) {
+                // The last tab sits at the strip's edge: the strip scrolls on the first tap and may swallow it.
+                tapTab(T.RESEARCH_TAB_PREFIX, i, strip)
+                if (!waitUntil(LOAD) { engine.isSelected(id) }) fail("Tab ${i + 1} was tapped twice but does not show as selected", Cause.UNCONFIRMED)
+            }
             val cards = rowsOrEmpty(T.RESEARCH_CARD, "Trading Ideas tab ${i + 1}")
             tabs += "${i + 1}: ${if (cards == 0) "empty" else "$cards card(s)"}"
         }
@@ -1135,7 +1143,7 @@ class DashboardSuite(
         ensureView(true)
         revealAnchor(T.DASHBOARD_FII_DII_VIEW_ALL, "FII / DII", "Trading")
         tapOpen(T.DASHBOARD_FII_DII_VIEW_ALL, listOf(T.FII_DII_SCREEN), "FII / DII › View All did not open")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!waitUntil(LOAD) { engine.countOf(T.FII_DII_ROW) >= 3 }) fail("The FII / DII page lists ${engine.countOf(T.FII_DII_ROW)} row(s) after ${LOAD / 1000} s", Cause.API)
         timing(started, "FII / DII history loaded")
         val all = readScreen()
@@ -1181,7 +1189,7 @@ class DashboardSuite(
 
     private fun investmentsLanding() {
         ensureView(false)
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         waitUntil(LOAD) { engine.countOf(AutomationConfig.Ids.UI_LOADING) == 0 }
         timing(started, "Investments data loaded")
         if (engine.isSelected(T.DASHBOARD_TAB_TRADING)) fail("The Trading tab still reports itself selected on the Investments view", Cause.APP)
@@ -1203,11 +1211,25 @@ class DashboardSuite(
         scrollTop()
     }
 
-    /** Indian Indices is the first section under the banner: the top of the page shows it, no heading search needed. */
+    /**
+     * Indian Indices is the first section under the banner. Tradion hides the whole section (heading, All Indices and
+     * the cards) until the index data has arrived, and a section shortcut also reads "Indian Indices", so the section
+     * counts as shown only once its All Indices link is.
+     */
     private fun revealIndices() {
         scrollTop()
         pause(Timeouts.SETTLE)
-        if (!has("Indian Indices")) fail("The Indian Indices section is not at the top of the Investments tab", Cause.UNCONFIRMED)
+        val shown = waitUntil(LOAD) { has("All Indices") } || run {
+            // A taller banner can push it below the first screen.
+            var found = false
+            repeat(2) { if (!found && engine.scrollPage(forward = true)) { pause(Timeouts.SETTLE); found = has("All Indices") } }
+            found
+        }
+        if (!shown) fail(
+            "The Indian Indices section is not shown: Tradion hides it until the index data arrives, and none had " +
+                "arrived ${LOAD / 1000} s after the Investments tab opened (only the 'Indian Indices' shortcut is on screen)",
+            Cause.API, "Check the dashboard index data call (dashboardProvider.indexData stayed empty).",
+        )
     }
 
     private fun indicesCards() {
@@ -1289,7 +1311,7 @@ class DashboardSuite(
         note("sheet shows the index name and market data; More Details is not offered for indices: ${if (engine.isPresent(T.SCRIP_SHEET_MORE_BUTTON)) "it is present" else "not offered (expected)"}")
         if (engine.isPresent(T.SCRIP_SHEET_CHART_BUTTON)) {
             tapOpen(T.SCRIP_SHEET_CHART_BUTTON, listOf(T.CHART_SCREEN), "Chart did not open from the index sheet")
-            val started = SystemClock.elapsedRealtime()
+            val started = engine.clock()
             if (!waitUntil(Timeouts.CHART_LOAD) { engine.isPresent(T.CHART_READY) }) fail("The index chart did not report ready within ${Timeouts.CHART_LOAD / 1000} s", Cause.API)
             timing(started, "index chart ready", slowMs = 8_000L)
         } else {
@@ -1319,7 +1341,7 @@ class DashboardSuite(
 
     private fun alertsList() {
         openTile(T.INVEST_TILE_ALERTS, T.ALERTS_SCREEN, "Alerts")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         waitUntil(LOAD) { engine.isPresent(T.ALERT_ROW) || emptyShown() }
         timing(started, "alerts loaded")
         val rows = engine.countOf(T.ALERT_ROW)
@@ -1421,10 +1443,10 @@ class DashboardSuite(
             }
             // Only the Ongoing rows carry an identifier; the other tabs' rows are read as text: anything beyond the tab
             // strip and the search box is content.
-            val started = SystemClock.elapsedRealtime()
+            val started = engine.clock()
             val ok = waitUntil(LOAD) { engine.isPresent(T.IPO_ROW) || emptyShown() || ipoContentLines() >= 2 }
             if (!ok) fail("IPO tab ${i + 1} showed neither rows nor an empty state within ${LOAD / 1000} s", Cause.API)
-            val took = SystemClock.elapsedRealtime() - started
+            val took = engine.clock() - started
             if (took > 2_000) note("IPO tab ${i + 1} took ${"%.1f".format(took / 1000.0)} s")
             seen += "${i + 1}: ${if (emptyShown() && ipoContentLines() < 2) "empty" else "${maxOf(engine.countOf(T.IPO_ROW), ipoContentLines())} line(s)"}"
         }
@@ -1501,7 +1523,7 @@ class DashboardSuite(
     private fun webTile(tile: String, label: String, ds: String, skipIfSessionLost: Boolean = false) {
         ensureView(false)
         if (!revealTile(tile)) blocked("The $label tile ('$tile') is not on the Investments tab (it could not be paged into view).", Cause.AUTOMATION, "Rebuild Tradion with the invest_tile_<i> tags.")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         val tap = engine.tap(tile)
         if (!tap.ok) fail("The $label tile could not be tapped: ${tap.detail}", Cause.AUTOMATION)
         // Where the page opens is the first thing to find out: inside the app (a web view), or in another app (a browser,
@@ -1525,7 +1547,7 @@ class DashboardSuite(
                 rendered = shot(shotName)?.let { ScreenshotInspector.content(it)?.rendered }
                 if (rendered == true) break
             }
-            val away = SystemClock.elapsedRealtime()
+            val away = engine.clock()
             if (!engine.returnToTarget()) fail("$label opened '$other' and the app could not be brought back", Cause.APP, "The tool resumed the app's launcher intent and then pressed Back.")
             // The sign-in screen shows a moment after the app is back: wait for the Dashboard or the sign-in before judging.
             waitUntil(4_000L) { loggedOut() || engine.isPresent(T.DASHBOARD_SCREEN) }
@@ -1535,7 +1557,7 @@ class DashboardSuite(
                     Cause.APP, "Developers: coming back from the browser, the app lands on the login screen (check what the resume does with the feed / heartbeat session).")
             }
             failIfLoggedOut("returning from '$other'")
-            note("the app was away for ${"%.1f".format((SystemClock.elapsedRealtime() - away) / 1000.0)} s")
+            note("the app was away for ${"%.1f".format((engine.clock() - away) / 1000.0)} s")
             if (rendered != true) {
                 // A page the tool cannot read and whose screenshot is still flat is not verified, which is not a failure of the page.
                 unverifiable("the $label page in '$other'", "Another app's page is outside the accessibility scope of this tool; the screenshot is the evidence.")
@@ -1627,7 +1649,7 @@ class DashboardSuite(
         // The Custom amount chip opens the Add Funds screen without choosing any amount.
         if (!engine.scrollTextIntoView("Custom")) fail("The Funds card shows no Custom amount chip", Cause.UNCONFIRMED)
         tapLabel("Custom", "the Custom amount chip")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!waitUntil(UI) { has("Add Funds") && has("Balance") }) fail("The Custom amount chip did not open the Add Funds screen", Cause.UNCONFIRMED)
         waitUntil(LOAD) { has("Payment Method") }
         timing(started, "Add Funds loaded")
@@ -1661,7 +1683,7 @@ class DashboardSuite(
         }
         shot("DS-20_funds")
         tapLabel("Withdraw", "Withdraw")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!waitUntil(UI) { has("Withdraw Funds") }) fail("Withdraw did not open the Withdraw Funds screen", Cause.UNCONFIRMED)
         waitUntil(LOAD) { has("Bank Account") }
         timing(started, "Withdraw Funds loaded")
@@ -1801,7 +1823,7 @@ class DashboardSuite(
         ensureView(false)
         revealAnchor(T.DASHBOARD_TOP_SECTORS_VIEW_ALL, "Top Sectors", "Investments")
         tapOpen(T.DASHBOARD_TOP_SECTORS_VIEW_ALL, listOf(T.SECTORS_SCREEN), "Top Sectors › View All did not open")
-        val started = SystemClock.elapsedRealtime()
+        val started = engine.clock()
         if (!waitUntil(LOAD) { readScreen(120).any { it.contains("-EQ") } }) fail("The sectors page lists no constituent within ${LOAD / 1000} s", Cause.API)
         timing(started, "sector constituents loaded")
         // Every sector tab, not one: each is tapped, must change the list (or show a valid empty state) and must list constituents.
