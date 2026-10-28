@@ -827,8 +827,11 @@ step to its place in it.
   in the same folder** — opened from a phone's file manager the page cannot reach
   a sibling file, so play the `.mp4` from Files/Gallery, or copy both to a
   computer. **Download Reports** and **Share Report** include the video.
-* It is 720p-class H.264 at 15 fps and about 1.5 Mbit/s: roughly 11 MB per
-  minute. The run does not start recording with under 500 MB free.
+* It is H.264 at 480 px on the short side, at most 8 fps, about 100 kbit/s
+  (variable) with a key frame every 20 s: roughly 0.75 MB per minute, with the
+  prices still readable (an 8-minute run went from 107 MB to about 6 MB). It is
+  encoded with MediaCodec + MediaMuxer, because MediaRecorder forces a key
+  frame every second. The run does not start recording with under 500 MB free.
 * It is a picture of the screen: whatever Tradion shows is in it, and a window
   marked `FLAG_SECURE` is black. Use a test account, and treat the file like the
   report (section 13).
@@ -836,7 +839,8 @@ step to its place in it.
   Android shows its own "recording" indicator for the duration.
 * **Summary zip.** When a run finishes, the tool also writes
   `<app>_<ddMMyyyy>_<HHmm>.zip` (for example `ashika_23102026_0810.zip`) with the text report, the video and the failed-step
-  screenshots (`screenshots/`) and copies it to
+  screenshots (`screenshots/`, as 720-px-wide JPEGs under the report's names
+  with `.jpg`; the full-size PNGs stay in the app's folder) and copies it to
   `Downloads/Automation Tool Reports/` on the phone, with no tap needed. The run
   screen and report screen say where it went, or why not. A copy stays in the
   app's `reports/` folder. Code: `SummaryZip.kt`.

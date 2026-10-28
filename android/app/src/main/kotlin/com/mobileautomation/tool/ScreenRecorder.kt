@@ -9,7 +9,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-import android.media.MediaRecorder
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -17,6 +20,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.view.Surface
 import android.view.WindowManager
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -34,6 +38,10 @@ import kotlin.math.roundToInt
  * single use and is spent by [start]. The capture itself lives in
  * [RecordingService], a foreground service, which Android requires to keep a
  * projection alive while another app is in front.
+ *
+ * The screen feeds a MediaCodec H.264 encoder whose output a MediaMuxer writes
+ * to the MP4. MediaRecorder was not used because it forces a key frame about
+ * every second, which on a mostly still screen was nearly half the file.
  *
  * Nothing here can fail a run: a recording that cannot start, or cannot be
  * finalised, is reported as a note on the result and the run carries on.
@@ -55,12 +63,20 @@ object ScreenRecorder {
      */
     class Finished(val file: File?, val startedAtMs: Long?, val note: String?)
 
-    // Small enough for a half-hour run to stay in the low hundreds of MB, sharp
-    // enough to read the labels the report points at.
-    private const val MAX_SHORT_SIDE = 720
+    // About 0.75 MB per minute (an 8-minute run measured 5.9 MB, against 107 MB
+    // at the earlier 720p / 15 fps / 1.5 Mbit/s with 1 s key frames) with the
+    // prices still readable. The screen is mostly still, so a variable bit rate
+    // and a key frame every 20 s carry most of the saving; the report's seek
+    // links decode from the key frame before the step, which a browser does at
+    // once.
+    private const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
+    private const val MAX_SHORT_SIDE = 480
     private const val ALIGN = 16
-    private const val FRAME_RATE = 15
-    private const val BIT_RATE = 1_500_000
+    private const val FRAME_RATE = 8
+    private const val BIT_RATE = 100_000
+    private const val KEY_FRAME_INTERVAL_S = 20
+    private const val DRAIN_TIMEOUT_US = 100_000L
+    private const val DRAIN_FINISH_WAIT_MS = 5_000L
     private const val MIN_FREE_BYTES = 500L * 1024 * 1024
     private const val SERVICE_START_WAIT_MS = 10_000L
 
@@ -71,10 +87,57 @@ object ScreenRecorder {
         val service: Service,
         val projection: MediaProjection,
         val callback: MediaProjection.Callback,
-        val recorder: MediaRecorder,
+        val codec: MediaCodec,
+        val surface: Surface,
+        val muxer: MediaMuxer,
+        val drain: Drain,
         val display: VirtualDisplay,
         val startedAtMs: Long,
     )
+
+    /**
+     * Moves encoded frames from [codec] into [muxer] until the end of stream.
+     * The muxer starts when the encoder reports its format, so it only ever
+     * holds a playable track. A failure is kept in [error] and handed to
+     * [onError]; [finish] reads both after joining.
+     */
+    private class Drain(
+        val codec: MediaCodec,
+        val muxer: MediaMuxer,
+        val onError: (String) -> Unit,
+    ) : Thread("run-recording-encoder") {
+        @Volatile var error: String? = null
+        @Volatile var samples = 0
+
+        override fun run() {
+            val info = MediaCodec.BufferInfo()
+            var track = -1
+            try {
+                while (true) {
+                    val index = codec.dequeueOutputBuffer(info, DRAIN_TIMEOUT_US)
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        track = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                    } else if (index >= 0) {
+                        val buffer = codec.getOutputBuffer(index)
+                        val config = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        if (!config && info.size > 0 && track >= 0 && buffer != null) {
+                            buffer.position(info.offset)
+                            buffer.limit(info.offset + info.size)
+                            muxer.writeSampleData(track, buffer, info)
+                            samples++
+                        }
+                        codec.releaseOutputBuffer(index, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
+                    }
+                }
+            } catch (t: Throwable) {
+                val reason = "the encoder failed (${t.javaClass.simpleName}: ${t.message ?: "no detail"})"
+                error = reason
+                onError(reason)
+            }
+        }
+    }
 
     @Volatile
     private var consent: Consent? = null
@@ -167,53 +230,51 @@ object ScreenRecorder {
                 finish("the system ended the screen capture before the run finished")
             }
         }
-        var recorder: MediaRecorder? = null
+        val main = Handler(Looper.getMainLooper())
+        var codec: MediaCodec? = null
+        var surface: Surface? = null
+        var muxer: MediaMuxer? = null
         var display: VirtualDisplay? = null
         try {
-            projection.registerCallback(callback, Handler(Looper.getMainLooper()))
-            val made = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(service)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }
-            recorder = made
-            made.apply {
-                setVideoSource(MediaRecorder.VideoSource.SURFACE)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-                setVideoSize(width, height)
-                setVideoFrameRate(FRAME_RATE)
-                setVideoEncodingBitRate(BIT_RATE)
-                setOutputFile(request.file.absolutePath)
-                setOnErrorListener { _, what, extra ->
-                    finish("the recorder reported error $what/$extra")
-                }
-                prepare()
-            }
+            projection.registerCallback(callback, main)
+            val encoder = MediaCodec.createEncoderByType(MIME)
+            codec = encoder
+            encoder.configure(encoderFormat(encoder, width, height), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = encoder.createInputSurface()
+            val output = MediaMuxer(request.file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = output
+            encoder.start()
+            // finish() joins the drain thread, so it must not run on it.
+            val drain = Drain(encoder, output) { reason -> main.post { finish(reason) } }
             display = projection.createVirtualDisplay(
                 "automation-run-recording",
                 width,
                 height,
                 dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                made.surface,
+                surface,
                 null,
                 null,
             )
-            made.start()
+            drain.start()
             return Session(
                 file = request.file,
                 service = service,
                 projection = projection,
                 callback = callback,
-                recorder = made,
+                codec = encoder,
+                surface = surface,
+                muxer = output,
+                drain = drain,
                 display = display,
                 startedAtMs = System.currentTimeMillis(),
             )
         } catch (t: Throwable) {
-            runCatching { recorder?.release() }
             runCatching { display?.release() }
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            runCatching { surface?.release() }
+            runCatching { muxer?.release() }
             runCatching { projection.unregisterCallback(callback) }
             runCatching { projection.stop() }
             request.file.delete()
@@ -228,14 +289,32 @@ object ScreenRecorder {
 
         var note = reason
         var usable = true
+        // No more frames, then let the encoder flush what it holds.
+        runCatching { s.display.release() }
+        runCatching { s.codec.signalEndOfInputStream() }
+        s.drain.join(DRAIN_FINISH_WAIT_MS)
+        if (s.drain.isAlive) {
+            note = note ?: "the encoder did not finish within ${DRAIN_FINISH_WAIT_MS / 1000} seconds"
+        }
+        // Stopping the codec also ends a drain that is still waiting on it.
+        runCatching { s.codec.stop() }
+        s.drain.join(DRAIN_FINISH_WAIT_MS)
+        s.drain.error?.let { note = note ?: it }
         try {
-            s.recorder.stop()
+            // A muxer that never received a frame was never started and cannot stop.
+            if (s.drain.isAlive || s.drain.samples == 0) {
+                usable = false
+                note = note ?: "the encoder produced no frames"
+            } else {
+                s.muxer.stop()
+            }
         } catch (t: RuntimeException) {
             usable = false
-            note = note ?: "the recorder could not finalise the video (${t.message ?: t.javaClass.simpleName})"
+            note = note ?: "the video could not be finalised (${t.message ?: t.javaClass.simpleName})"
         }
-        runCatching { s.recorder.release() }
-        runCatching { s.display.release() }
+        runCatching { s.muxer.release() }
+        runCatching { s.codec.release() }
+        runCatching { s.surface.release() }
         runCatching { s.projection.unregisterCallback(s.callback) }
         runCatching { s.projection.stop() }
         runCatching { s.service.stopSelf() }
@@ -250,6 +329,30 @@ object ScreenRecorder {
             startedAtMs = if (usable) s.startedAtMs else null,
             note = note,
         ).also { finished = it }
+    }
+
+    /**
+     * H.264 at [BIT_RATE], variable where the encoder offers it (a still screen
+     * then costs next to nothing), at most [FRAME_RATE] frames a second taken
+     * from the display, a key frame every [KEY_FRAME_INTERVAL_S] seconds.
+     */
+    private fun encoderFormat(codec: MediaCodec, width: Int, height: Int): MediaFormat {
+        val capabilities = codec.codecInfo.getCapabilitiesForType(MIME)
+        val bitRate = capabilities.videoCapabilities?.bitrateRange?.clamp(BIT_RATE) ?: BIT_RATE
+        return MediaFormat.createVideoFormat(MIME, width, height).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+            if (capabilities.encoderCapabilities?.isBitrateModeSupported(
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                ) == true
+            ) {
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            }
+            setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
+            // The display draws up to 60 frames a second while it animates.
+            setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, FRAME_RATE.toFloat())
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, KEY_FRAME_INTERVAL_S)
+        }
     }
 
     /** Real display size scaled down to [MAX_SHORT_SIDE], aligned for the encoder. */

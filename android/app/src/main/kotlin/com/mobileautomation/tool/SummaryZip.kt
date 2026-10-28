@@ -2,8 +2,11 @@ package com.mobileautomation.tool
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Environment
 import android.provider.MediaStore
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.Deflater
@@ -16,10 +19,17 @@ import java.util.zip.ZipOutputStream
  *
  * Only files inside the tool's own storage are accepted, so the zip can hold
  * nothing but run output.
+ *
+ * Screenshots go in as JPEGs [SHOT_WIDTH] wide under the same name with a
+ * `.jpg` extension: the full-size PNGs were about 15 MB of a run's zip. The
+ * PNGs in the app's own folder are not touched.
  */
 object SummaryZip {
 
     const val FOLDER = "Downloads/Automation Tool Reports"
+
+    private const val SHOT_WIDTH = 720
+    private const val SHOT_QUALITY = 80
 
     data class Entry(val path: String, val name: String)
 
@@ -51,8 +61,14 @@ object SummaryZip {
                 // The video is already compressed; do not spend time on it.
                 zip.setLevel(Deflater.BEST_SPEED)
                 for (entry in usable) {
-                    zip.putNextEntry(ZipEntry(entry.name))
-                    FileInputStream(entry.path).use { it.copyTo(zip) }
+                    val shot = if (entry.name.endsWith(".png", ignoreCase = true)) smallJpeg(entry.path) else null
+                    if (shot != null) {
+                        zip.putNextEntry(ZipEntry(entry.name.dropLast(4) + ".jpg"))
+                        zip.write(shot)
+                    } else {
+                        zip.putNextEntry(ZipEntry(entry.name))
+                        FileInputStream(entry.path).use { it.copyTo(zip) }
+                    }
                     zip.closeEntry()
                 }
             }
@@ -68,6 +84,26 @@ object SummaryZip {
             Outcome(zipFile.absolutePath, FOLDER, null)
         } else {
             Outcome(zipFile.absolutePath, null, "the zip was made but could not be copied to Downloads ($published)")
+        }
+    }
+
+    /** [path] as a JPEG at most [SHOT_WIDTH] wide, or null to keep the original file. */
+    private fun smallJpeg(path: String): ByteArray? {
+        val source = runCatching { BitmapFactory.decodeFile(path) }.getOrNull() ?: return null
+        return try {
+            val scaled = if (source.width > SHOT_WIDTH) {
+                Bitmap.createScaledBitmap(source, SHOT_WIDTH, source.height * SHOT_WIDTH / source.width, true)
+            } else {
+                source
+            }
+            val out = ByteArrayOutputStream()
+            val ok = scaled.compress(Bitmap.CompressFormat.JPEG, SHOT_QUALITY, out)
+            if (scaled !== source) scaled.recycle()
+            if (ok) out.toByteArray() else null
+        } catch (_: Throwable) {
+            null
+        } finally {
+            source.recycle()
         }
     }
 
