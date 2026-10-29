@@ -46,6 +46,8 @@ class MainActivity : FlutterActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private val biometric by lazy { BiometricSignIn(this) }
+
     @Volatile
     private var eventSink: EventChannel.EventSink? = null
 
@@ -109,6 +111,7 @@ class MainActivity : FlutterActivity() {
                     orderConfig = call.argument<Map<*, *>>("orderConfig"),
                     profileConfig = call.argument<Map<*, *>>("profileConfig"),
                     marketSession = call.argument<String>("marketSession") ?: "bod",
+                    testedBy = call.argument<Map<*, *>>("testedBy"),
                 )
                 val error = AutomationEngine.start(applicationContext, request) { sendEvent(it) }
                 result.success(mapOf("started" to (error == null), "error" to error))
@@ -137,6 +140,21 @@ class MainActivity : FlutterActivity() {
             "isAutomationRunning" -> result.success(AutomationEngine.isRunning())
 
             "getLastReport" -> result.success(AutomationEngine.lastResult)
+
+            // The tool's own biometric sign-in (see BiometricSignIn); the password crosses the channel, never a log.
+            "biometricStatus" -> result.success(biometric.status())
+
+            "biometricEnable" -> biometric.enable(
+                userId = call.argument<String>("userId").orEmpty(),
+                password = call.argument<String>("password").orEmpty(),
+            ) { result.success(it) }
+
+            "biometricUnlock" -> biometric.unlock { result.success(it) }
+
+            "biometricDisable" -> {
+                biometric.disable()
+                result.success(true)
+            }
 
             "downloadReportFiles" -> downloadReportFiles(call, result)
 

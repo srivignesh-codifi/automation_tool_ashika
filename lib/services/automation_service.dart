@@ -432,6 +432,7 @@ class AutomationService {
     OrderConfig? orderConfig,
     ProfileConfig? profileConfig,
     MarketSession marketSession = MarketSession.bod,
+    Map<String, Object?>? testedBy,
   }) async {
     final raw = await _invokeMap('startLoginAutomation', <String, Object?>{
       'targetPackage': targetPackage,
@@ -446,6 +447,8 @@ class AutomationService {
       'orderConfig': orderConfig?.toJson(),
       'profileConfig': profileConfig?.toJson(),
       'marketSession': marketSession.wire,
+      // Who started the run, for its report (user ID, role, how they signed in).
+      'testedBy': testedBy,
     });
     if (raw == null) return 'The native automation driver did not respond.';
     if (raw['started'] == true) return null;

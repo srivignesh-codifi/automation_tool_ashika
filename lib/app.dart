@@ -5,6 +5,7 @@ import 'screens/setup_screen.dart';
 import 'screens/sign_in_screen.dart';
 import 'services/auth_service.dart';
 import 'services/automation_service.dart';
+import 'services/biometric_service.dart';
 import 'services/report_service.dart';
 import 'services/secure_storage_service.dart';
 import 'theme/codifi_theme.dart';
@@ -26,6 +27,7 @@ class _MobileAutomationToolAppState extends State<MobileAutomationToolApp> {
   final ReportService _reports = ReportService();
   final SecureStorageService _storage = SecureStorageService();
   late final AuthService _auth = AuthService(_storage);
+  final BiometricService _biometrics = BiometricService();
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +42,7 @@ class _MobileAutomationToolAppState extends State<MobileAutomationToolApp> {
         reports: _reports,
         storage: _storage,
         auth: _auth,
+        biometrics: _biometrics,
       ),
     );
   }
@@ -54,12 +57,14 @@ class _StartupGate extends StatefulWidget {
     required this.reports,
     required this.storage,
     required this.auth,
+    required this.biometrics,
   });
 
   final AutomationService automation;
   final ReportService reports;
   final SecureStorageService storage;
   final AuthService auth;
+  final BiometricService biometrics;
 
   @override
   State<_StartupGate> createState() => _StartupGateState();
@@ -69,6 +74,10 @@ class _StartupGateState extends State<_StartupGate> {
   bool _checked = false;
   AuthUser? _user;
   bool _sessionRead = false;
+
+  /// The fingerprint prompt opens by itself at launch only: after signing out
+  /// the tester may want another account.
+  bool _promptBiometric = true;
 
   @override
   void initState() {
@@ -97,6 +106,7 @@ class _StartupGateState extends State<_StartupGate> {
       setState(() {
         _user = null;
         _checked = false;
+        _promptBiometric = false;
       });
     }
   }
@@ -126,7 +136,12 @@ class _StartupGateState extends State<_StartupGate> {
   @override
   Widget build(BuildContext context) {
     if (_sessionRead && _user == null) {
-      return SignInScreen(auth: widget.auth, onSignedIn: _signedIn);
+      return SignInScreen(
+        auth: widget.auth,
+        onSignedIn: _signedIn,
+        biometrics: widget.biometrics,
+        promptBiometric: _promptBiometric,
+      );
     }
     if (!_checked) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));

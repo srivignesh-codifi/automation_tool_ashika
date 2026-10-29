@@ -198,6 +198,21 @@ class AutomationRunResult(
     /** The market-data feed over the run (live market hours), or the BOD note; see [FeedMonitor]. */
     var feed: Map<String, Any?>? = null
 
+    /** The tool user who started the run (user id, role, how they signed in), as the tool sent it. */
+    var testedBy: Map<String, Any?>? = null
+
+    /** The phone's network and IP addresses when the run started; see [NetworkSnapshot]. */
+    var network: Map<String, Any?>? = null
+
+    /** Every instrument the run added to a watchlist, or tried to, in the order it happened. */
+    val watchlistAdds: MutableList<WatchlistAdd> = mutableListOf()
+
+    /** The kinds of order the app offers (see [OrderTypes]); null for an app whose flow places no order. */
+    var orderCatalog: Map<String, Any?>? = null
+
+    /** Every order the Order placement module tried to place, and what came of it; see [OrderTypes.attempt]. */
+    val orderAttempts: MutableList<Map<String, Any?>> = mutableListOf()
+
     val durationMs: Long?
         get() = finishedAtMs?.let { it - startedAtMs }
 
@@ -232,5 +247,54 @@ class AutomationRunResult(
         "recordingNote" to recordingNote,
         "sessionBreaks" to sessionBreaks.toList(),
         "feed" to feed,
+        "testedBy" to testedBy,
+        "network" to network,
+        "watchlistAdds" to watchlistAdds.map { it.toMap() },
+        "orderTypes" to orderCatalog?.plus("attempts" to orderAttempts.toList()),
+    )
+}
+
+/**
+ * One instrument the run added to a watchlist (or tried to), for the report's list of what was added, from where,
+ * and whether it got there. Filled in as the case goes: [added] when the search row turned to a tick, [listed] when
+ * the watchlist showed it, [removed] when the run took it out again.
+ */
+class WatchlistAdd(
+    /** The case that added it ("WL-24", "OW-02"), or null for a step without one. */
+    val code: String?,
+    val scrip: String,
+    val exchange: String?,
+    /** EQ, FUT, CE, PE when the search row says. */
+    val type: String?,
+    /** Where it was added from, e.g. `Search › F&O "TCS"`. */
+    val from: String,
+    /** The watchlist it went into, when its name was read. */
+    val watchlist: String?,
+) {
+    /** It was in the watchlist before the run (the user's own); it is never left removed. */
+    var alreadyThere: Boolean = false
+    var added: Boolean = false
+
+    /** Null when it was not checked. */
+    var listed: Boolean? = null
+
+    /** Null when it is kept on purpose or removing it was not tried. */
+    var removed: Boolean? = null
+
+    /** Why it was not added or not listed, or anything else worth knowing. */
+    var detail: String? = null
+
+    fun toMap(): Map<String, Any?> = mapOf(
+        "code" to code,
+        "scrip" to scrip,
+        "exchange" to exchange,
+        "type" to type,
+        "from" to from,
+        "watchlist" to Redactor.apply(watchlist),
+        "alreadyThere" to alreadyThere,
+        "added" to added,
+        "listed" to listed,
+        "removed" to removed,
+        "detail" to Redactor.apply(detail),
     )
 }

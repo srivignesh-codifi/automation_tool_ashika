@@ -830,9 +830,18 @@ class DashboardSuite(
         if (all.isEmpty()) unverifiable("the Dashboard", "Publish the ticker and the section headings as labels.")
         val problems = mutableListOf<String>()
         // The ticker leads with the app's own index name: Tradion's "NIFTY 50", iTrade's "NIFTY" (run f00f716f).
-        if (!all.any { it.contains(app.tickerIndex, ignoreCase = true) }) problems += "the ${app.tickerIndex} ticker"
-        if (all.none { MONEY.containsMatchIn(it) }) problems += "an LTP"
-        if (all.none { it.contains("%") }) problems += "a % change"
+        val tickerShown = all.any { it.contains(app.tickerIndex, ignoreCase = true) }
+        // iTrade draws the ticker only with Profile › Settings › Fixed header on; otherwise its header is
+        // "Welcome, <name>" and the arrow, whose panel DB-02 checks (run c6d9df84).
+        val welcomeHeader = !tickerShown && all.any { it.startsWith("Welcome", ignoreCase = true) } &&
+            engine.isPresent(T.DASHBOARD_INDEX_DROPDOWN)
+        if (welcomeHeader) {
+            note("the header shows the welcome line and the indices arrow, not a ticker (Fixed header is off); the indices are checked in DB-02")
+        } else {
+            if (!tickerShown) problems += "the ${app.tickerIndex} ticker"
+            if (all.none { MONEY.containsMatchIn(it) }) problems += "an LTP"
+            if (all.none { it.contains("%") }) problems += "a % change"
+        }
         if (!has("Trading")) problems += "the Trading tab"
         if (!has("Investments")) problems += "the Investments tab"
         for (id in listOf(T.BOTTOMNAV_WATCHLIST_TAB, T.BOTTOMNAV_ORDER_TAB, T.BOTTOMNAV_DASHBOARD_TAB, T.BOTTOMNAV_PORTFOLIO_TAB)) {
@@ -840,7 +849,7 @@ class DashboardSuite(
         }
         if (problems.isNotEmpty()) fail("The Dashboard is readable but does not show ${problems.joinToString(", ")}", Cause.UNCONFIRMED)
         shot("DS-01_trading_dashboard")
-        note("ticker, tabs and bottom navigation shown")
+        note(if (welcomeHeader) "tabs and bottom navigation shown" else "ticker, tabs and bottom navigation shown")
     }
 
     private fun indexPanel() {

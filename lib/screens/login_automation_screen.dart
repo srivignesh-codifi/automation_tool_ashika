@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../branding/app_brand.dart';
 import '../models/automation_step.dart';
 import '../models/test_run.dart';
+import '../services/auth_service.dart';
 import '../services/automation_service.dart';
 import '../services/report_service.dart';
 import '../services/secure_storage_service.dart';
@@ -26,12 +27,16 @@ class LoginAutomationScreen extends StatefulWidget {
     required this.reports,
     required this.storage,
     this.initialAppId,
+    this.user,
     super.key,
   });
 
   final AutomationService automation;
   final ReportService reports;
   final SecureStorageService storage;
+
+  /// The tool user signed in: the report names them as who tested.
+  final AuthUser? user;
 
   /// The app chosen on the home screen. When given, the run is for that app
   /// only: no app picker and no package field.
@@ -347,6 +352,7 @@ class _LoginAutomationScreenState extends State<LoginAutomationScreen>
             marketSession: _app.isRegression
                 ? _marketSession
                 : MarketSession.bod,
+            testedBy: widget.user?.toReport(),
             modules: _app.modules.isEmpty
                 ? null
                 : _app.modules

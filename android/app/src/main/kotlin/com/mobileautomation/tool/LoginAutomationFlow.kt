@@ -734,6 +734,8 @@ class LoginAutomationFlow(
         // Each query is allowed to settle before the next one starts, so a slow
         // earlier response can never overwrite the results being acted on.
         var added = 0
+        // For the report's list of instruments added: the first result of each filter (its name is not read).
+        val adds = mutableListOf<WatchlistAdd>()
         for (search in listOf(
             SearchAdd("search_tcs_added", Ids.SEARCH_FILTER_CHIP_STOCK, "Stock", "tcs", "TCS"),
             SearchAdd("search_nifty_futures_added", Ids.SEARCH_FILTER_CHIP_FUTURES, "Futures", "nifty", "NIFTY futures"),
@@ -742,10 +744,22 @@ class LoginAutomationFlow(
         )) {
             val searchStep = step(search.stepId)
             begin(searchStep)
+            val log = WatchlistAdd(
+                code = null,
+                scrip = search.what,
+                exchange = null,
+                type = null,
+                from = "Search › ${search.chipName}" + search.query?.let { " \"$it\"" }.orEmpty(),
+                watchlist = null,
+            )
+            result.watchlistAdds += log
             searchAndAdd(search)?.let { failure ->
+                log.detail = failure
                 if (engine.cancelled) return stopped(searchStep)
                 return abort(searchStep, failure)
             }
+            log.added = true
+            adds += log
             added++
             pass(searchStep, "added the first ${search.what} result under the ${search.chipName} filter")
         }
@@ -803,6 +817,7 @@ class LoginAutomationFlow(
             )
         }
         pass(countUpdated, "the watchlist went from $countAfterTrim to $countNow scrips")
+        adds.forEach { it.listed = true }
 
         // 38 — Heat map view toggled and restored -------------------------------------------
         val viewToggled = step("watchlist_view_toggled")

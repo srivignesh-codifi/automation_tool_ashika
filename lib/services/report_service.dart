@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/automation_result.dart';
 import '../models/automation_step.dart';
+import '../models/run_details.dart';
 import '../models/test_run.dart';
 
 /// Writes and reads the run reports.
@@ -340,6 +341,9 @@ class ReportService {
       )
       ..writeln();
 
+    // ── Tested by (who, and the phone's IP addresses as the run started) ──
+    _writeTestedBy(out, result);
+
     // ── Run ───────────────────────────────────────────────────────────────
     _heading(out, 'RUN');
     _kv(out, 'Target package', result.targetPackage);
@@ -424,6 +428,8 @@ class ReportService {
 
     _areaSection(out, result);
     _caseSections(out, result);
+    _writeWatchlistAdds(out, result);
+    _writeOrderTypes(out, result);
 
     // ── API / data checks ─────────────────────────────────────────────────
     final api = result.apiSummary;
@@ -573,6 +579,176 @@ class ReportService {
   }
 
   // ── Text report helpers ─────────────────────────────────────────────────
+
+  /// The tool user who ran the test, and the phone's IP addresses as the run
+  /// started. Left out for a run that recorded neither.
+  static void _writeTestedBy(StringBuffer out, AutomationResult result) {
+    final by = result.testedBy;
+    final net = result.network;
+    if (by == null && net == null) return;
+    _heading(out, 'TESTED BY');
+    if (by == null) {
+      _kv(
+        out,
+        'User',
+        'not recorded (no signed-in user was sent with the run)',
+      );
+    } else {
+      _kv(out, 'User ID', by.userId);
+      if (by.role != null) _kv(out, 'Role', by.role!);
+      _kv(
+        out,
+        'Signed in with',
+        '${by.methodLabel}'
+            '${by.signedInAt == null ? '' : ' at ${_stamp.format(by.signedInAt!)}'}',
+      );
+    }
+    if (net != null) {
+      _kv(out, 'Device IP', '${net.deviceIp}  (${net.connection})');
+      if (net.ipv4.isNotEmpty && net.ipv6.isNotEmpty) {
+        _kv(out, 'Device IPv6', net.ipv6.join(', '));
+      }
+      _kv(
+        out,
+        'Public IP',
+        net.publicIp == null
+            ? net.publicIpLabel
+            : '${net.publicIp}  (as ${net.publicIpSource ?? 'the internet'} saw it)',
+      );
+      if (net.capturedAt != null) {
+        _kv(
+          out,
+          'IP captured',
+          '${_stamp.format(net.capturedAt!)}, as the run started',
+        );
+      }
+    }
+    out.writeln();
+  }
+
+  /// Every instrument the run added to a watchlist: from where, into which
+  /// list, whether it was added and shown, and whether it was taken out again.
+  static void _writeWatchlistAdds(StringBuffer out, AutomationResult result) {
+    final adds = result.watchlistAdds;
+    if (adds.isEmpty) return;
+    _heading(out, 'WATCHLIST — INSTRUMENTS ADDED');
+    out
+      ..writeln('  ${_addsSummary(adds)}')
+      ..writeln();
+    _table(
+      out,
+      const <String>[
+        '#',
+        'Case',
+        'Instrument',
+        'Exch',
+        'Type',
+        'Added from',
+        'Watchlist',
+        'Added',
+        'In watchlist',
+        'Removed after',
+      ],
+      <List<String>>[
+        for (var i = 0; i < adds.length; i++)
+          <String>[
+            '${i + 1}',
+            adds[i].code ?? '-',
+            _clip(adds[i].scrip, 28),
+            adds[i].exchange ?? '-',
+            adds[i].type ?? '-',
+            _clip(adds[i].from, 30),
+            _clip(adds[i].watchlist ?? '-', 18),
+            adds[i].addedLabel,
+            adds[i].listedLabel,
+            adds[i].removedLabel,
+          ],
+      ],
+      rightAlign: const <int>{0},
+    );
+    for (var i = 0; i < adds.length; i++) {
+      final detail = adds[i].detail;
+      if (detail == null || detail.isEmpty) continue;
+      final lines = _wrap('${i + 1}. ${adds[i].scrip}: $detail', 94);
+      for (final line in lines) {
+        out.writeln('  $line');
+      }
+    }
+    out.writeln();
+  }
+
+  /// "6 tried: 5 added, 1 not added; 5 shown in the watchlist; 4 removed again."
+  static String _addsSummary(List<WatchlistAddition> adds) {
+    int count(bool Function(WatchlistAddition) test) => adds.where(test).length;
+    final added = count((a) => a.added && !a.alreadyThere);
+    final there = count((a) => a.alreadyThere);
+    final notAdded = count((a) => !a.added && !a.alreadyThere);
+    final listed = count((a) => a.listed == true);
+    final removed = count((a) => a.removed == true);
+    final left = count((a) => a.removed == false);
+    return '${adds.length} tried: $added added, $notAdded not added'
+        '${there > 0 ? ', $there already in the watchlist' : ''}; '
+        '$listed shown in the watchlist; $removed removed again'
+        '${left > 0 ? ', $left STILL IN THE WATCHLIST (remove by hand)' : ''}.';
+  }
+
+  /// The kinds of order the app offers and what the run did with each.
+  static void _writeOrderTypes(StringBuffer out, AutomationResult result) {
+    final o = result.orderTypes;
+    if (o == null) return;
+    _heading(out, 'ORDER TYPES — ${o.app.toUpperCase()}');
+    for (final line in _wrap(
+      'Offered by ${o.app}: ${o.offered.map((t) => t.shortLabel).join(', ')}.',
+      94,
+    )) {
+      out.writeln('  $line');
+    }
+    if (o.notOffered.isNotEmpty) {
+      out.writeln(
+        '  Not in ${o.app}: ${o.notOffered.map((t) => t.shortLabel).join(', ')}.',
+      );
+    }
+    if (!o.moduleRun) {
+      out.writeln(
+        '  Order placement was not selected for this run, so none was tested.',
+      );
+    }
+    out.writeln();
+    final outcomes = <OrderTypeOutcome>[
+      for (final t in o.types) o.outcomeOf(t, result.steps),
+    ];
+    _table(
+      out,
+      const <String>['Group', 'Order type', 'In app', 'Exchanges', 'This run'],
+      <List<String>>[
+        for (var i = 0; i < o.types.length; i++)
+          <String>[
+            o.types[i].group,
+            o.types[i].label,
+            o.types[i].offered ? 'YES' : 'NO',
+            o.types[i].exchanges.join(' '),
+            outcomes[i].label,
+          ],
+      ],
+    );
+    for (var i = 0; i < o.types.length; i++) {
+      if (outcomes[i].detail.isEmpty) continue;
+      for (final line in _wrap(
+        '${o.types[i].shortLabel}: ${outcomes[i].detail}',
+        94,
+      )) {
+        out.writeln('  $line');
+      }
+    }
+    out
+      ..writeln(
+        '  SENT · REFUSED is the expected result: an order is only sent while the pad shows',
+      )
+      ..writeln(
+        '  Avail. Margin 0.00 and a shortfall, so the exchange refuses it. ACCEPTED is a defect.',
+      )
+      ..writeln();
+  }
 
   /// The 401s first: every session expiry (where, which API, what the run did)
   /// and every step during which the app reported a refused call.
@@ -1599,7 +1775,7 @@ $moduleChips
       var q = document.getElementById('q');
       var st = document.getElementById('st');
       var mods = document.getElementById('mods');
-      var rows = document.querySelectorAll('table.steps:not(.modsum) tbody tr');
+      var rows = document.querySelectorAll('table.steps:not(.modsum):not(.extra) tbody tr');
       var shown = document.getElementById('shown');
       var module = '';
       function apply() {
@@ -1834,10 +2010,11 @@ $moduleChips
       <span class="hchip">${_esc('${result.deviceManufacturer} ${result.deviceModel}')} · Android ${_esc(result.androidVersion)}</span>
       <span class="hchip">${result.startedAt == null ? '—' : _esc(_stamp.format(result.startedAt!))}</span>
       <span class="hchip">${result.duration == null ? '—' : _esc(_formatDuration(result.duration!))}</span>
+      ${result.testedBy == null ? '' : '<span class="hchip">Tested by ${_esc(result.testedBy!.userId)}</span>'}
     </div>
     <p>Completed ${result.completedSteps} of ${result.totalSteps} steps.</p>
   </header>
-${_caseSectionsHtml(result)}
+${_testedByHtml(result)}${_caseSectionsHtml(result)}${_watchlistAddsHtml(result)}${_orderTypesHtml(result)}
   <h2>Run</h2>
   <table class="meta">
     <tr><td>Test name</td><td>${_esc(result.testName)}</td></tr>
@@ -1877,6 +2054,125 @@ $failureBlock$shots$seekScriptTag
   }
 
   static String _fileName(String path) => path.split('/').last;
+
+  /// Who ran the test, and the phone's IP addresses as the run started.
+  static String _testedByHtml(AutomationResult result) {
+    final by = result.testedBy;
+    final net = result.network;
+    if (by == null && net == null) return '';
+    String row(String key, String value) =>
+        '    <tr><td>${_esc(key)}</td><td>${_esc(value)}</td></tr>\n';
+    final rows = StringBuffer();
+    if (by == null) {
+      rows.write(row('User', 'not recorded'));
+    } else {
+      rows
+        ..write(row('User ID', by.userId))
+        ..write(by.role == null ? '' : row('Role', by.role!))
+        ..write(
+          row(
+            'Signed in with',
+            '${by.methodLabel}${by.signedInAt == null ? '' : ' at ${_stamp.format(by.signedInAt!)}'}',
+          ),
+        );
+    }
+    if (net != null) {
+      rows.write(row('Device IP', '${net.deviceIp} (${net.connection})'));
+      if (net.ipv4.isNotEmpty && net.ipv6.isNotEmpty) {
+        rows.write(row('Device IPv6', net.ipv6.join(', ')));
+      }
+      rows.write(
+        row(
+          'Public IP',
+          net.publicIp == null
+              ? net.publicIpLabel
+              : '${net.publicIp} (as ${net.publicIpSource ?? 'the internet'} saw it)',
+        ),
+      );
+      if (net.capturedAt != null) {
+        rows.write(
+          row(
+            'IP captured',
+            '${_stamp.format(net.capturedAt!)}, as the run started',
+          ),
+        );
+      }
+    }
+    return '  <h2>Tested by</h2>\n  <table class="meta">\n$rows  </table>\n';
+  }
+
+  static String _yesNoPill(String label) {
+    final css = switch (label) {
+      'YES' ||
+      'YES (was there)' ||
+      'ALREADY THERE' ||
+      "KEPT (user's)" => 'passed',
+      'NO' || 'NO, STILL THERE' => 'failed',
+      _ => 'skipped',
+    };
+    return '<span class="pill $css">${_esc(label)}</span>';
+  }
+
+  /// Every instrument the run added to a watchlist, and whether it got there.
+  static String _watchlistAddsHtml(AutomationResult result) {
+    final adds = result.watchlistAdds;
+    if (adds.isEmpty) return '';
+    final rows = StringBuffer();
+    for (var i = 0; i < adds.length; i++) {
+      final a = adds[i];
+      rows.write(
+        '      <tr class="${a.ok ? 'passed' : 'failed'}">'
+        '<td>${i + 1}</td><td>${_esc(a.code ?? '—')}</td>'
+        '<td class="name">${_esc(a.scrip)}</td><td>${_esc(a.exchange ?? '—')}</td><td>${_esc(a.type ?? '—')}</td>'
+        '<td>${_esc(a.from)}</td><td>${_esc(a.watchlist ?? '—')}</td>'
+        '<td>${_yesNoPill(a.addedLabel)}</td><td>${_yesNoPill(a.listedLabel)}</td><td>${_yesNoPill(a.removedLabel)}</td>'
+        '<td class="detail">${_esc(a.detail ?? '')}</td></tr>\n',
+      );
+    }
+    return '''
+  <h2>Watchlist — instruments added</h2>
+  <p>${_esc(_addsSummary(adds))}</p>
+  <div class="scroll">
+  <table class="steps extra">
+    <thead><tr><th>#</th><th>Case</th><th>Instrument</th><th>Exch</th><th>Type</th><th>Added from</th><th>Watchlist</th><th>Added</th><th>In watchlist</th><th>Removed after</th><th>Detail</th></tr></thead>
+    <tbody>
+$rows    </tbody>
+  </table>
+  </div>
+''';
+  }
+
+  /// The kinds of order the app offers and what the run did with each.
+  static String _orderTypesHtml(AutomationResult result) {
+    final o = result.orderTypes;
+    if (o == null) return '';
+    final rows = StringBuffer();
+    for (final t in o.types) {
+      final outcome = o.outcomeOf(t, result.steps);
+      rows.write(
+        '      <tr class="${outcome.css}">'
+        '<td>${_esc(t.group)}</td><td class="name">${_esc(t.label)}<br><span class="muted">${_esc(t.meaning)}</span></td>'
+        '<td><span class="pill ${t.offered ? 'passed' : 'skipped'}">${t.offered ? 'YES' : 'NO'}</span></td>'
+        '<td>${_esc(t.exchanges.join(' '))}</td>'
+        '<td class="status"><span class="pill ${outcome.css}">${_esc(outcome.label)}</span></td>'
+        '<td class="detail">${_esc(outcome.detail)}</td></tr>\n',
+      );
+    }
+    return '''
+  <h2>Order types — ${_esc(o.app)}</h2>
+  <p><strong>Offered by ${_esc(o.app)}:</strong> ${_esc(o.offered.map((t) => t.shortLabel).join(', '))}${o.notOffered.isEmpty ? '' : '<br><strong>Not in ${_esc(o.app)}:</strong> ${_esc(o.notOffered.map((t) => t.shortLabel).join(', '))}'}</p>
+  ${o.moduleRun ? '' : '<p class="muted">Order placement was not selected for this run, so none was tested.</p>'}
+  <div class="scroll">
+  <table class="steps extra">
+    <thead><tr><th>Group</th><th>Order type</th><th>In app</th><th>Exchanges</th><th>This run</th><th>Detail</th></tr></thead>
+    <tbody>
+$rows    </tbody>
+  </table>
+  </div>
+  <p class="muted">SENT · REFUSED is the expected result: an order is only sent while the pad shows Avail. Margin 0.00
+  and a shortfall, so the exchange refuses it. ACCEPTED is a defect.</p>
+''';
+  }
 
   static String _apiHtml(AutomationStep step) {
     if (!step.hasApiCheck) return '<span class="muted">—</span>';

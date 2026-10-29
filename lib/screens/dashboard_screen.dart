@@ -107,6 +107,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           reports: widget.reports,
           storage: widget.storage,
           initialAppId: app.id,
+          user: widget.user,
         ),
       ),
     );

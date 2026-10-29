@@ -196,6 +196,7 @@ class TradionAutomationFlow(
         val info = startRun(app.testName)
         result.modulesRun = modules.onLabels
         result.modulesSkipped = modules.offLabels
+        result.orderCatalog = OrderTypes.catalog(app, modules.isOn("order_placement"))
 
         // 1 — Target application installed ------------------------------------
         val installed = step("target_app_installed")

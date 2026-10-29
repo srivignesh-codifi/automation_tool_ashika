@@ -66,7 +66,15 @@ class AutomationEngine private constructor(
         val profileConfig: Map<*, *>? = null,
         /** "bod" (before the market opens, the default) or "live" (trading hours: the feed is measured). */
         val marketSession: String = "bod",
-    )
+        /** The tool user who started the run: `userId`, `role`, `signInMethod`, `signedInAtMs`. Not a credential. */
+        val testedBy: Map<*, *>? = null,
+    ) {
+        /** [testedBy] with only the fields the report shows, each a string or a number. */
+        fun testedByForReport(): Map<String, Any?>? = testedBy
+            ?.let { m -> listOf("userId", "role", "signInMethod", "signedInAtMs").associateWith { m[it] } }
+            ?.filterValues { it is String && it.isNotBlank() || it is Number }
+            ?.takeIf { it.isNotEmpty() }
+    }
 
     // ── Run lifecycle (single run at a time) ─────────────────────────────────
 
@@ -134,6 +142,9 @@ class AutomationEngine private constructor(
                 sink = sink,
             )
             engine.clearAppData = request.clearData
+            // The phone's IP addresses as the run starts, for the report (the public one is looked up meanwhile).
+            val network = NetworkSnapshot.capture(context.applicationContext)
+            val testedBy = request.testedByForReport()
             active = engine
             // A floating Stop over the target app, so a run can be stopped without going back to this tool.
             val stopOverlay = StopOverlay(service)
@@ -173,6 +184,8 @@ class AutomationEngine private constructor(
                         result.recordingStartedAtMs = recording.startedAtMs
                         result.recordingNote = recording.note
                     }
+                    result.testedBy = testedBy
+                    result.network = network.toMap()
                     lastResult = result.toMap()
                     engine.emit(
                         if (result.stopped) "automation_stopped" else "automation_completed",
@@ -197,6 +210,8 @@ class AutomationEngine private constructor(
                                 "videoPath" to recording?.file?.absolutePath,
                                 "recordingStartedAtMs" to recording?.startedAtMs,
                                 "recordingNote" to recording?.note,
+                                "testedBy" to testedBy,
+                                "network" to network.toMap(),
                             ),
                         ),
                     )
@@ -1127,6 +1142,32 @@ class AutomationEngine private constructor(
             )
         } catch (_: Throwable) {
             false
+        }
+    }
+
+    /**
+     * Scrolls the list that holds the rows tagged [rowId] one page. On a page built as a NestedScrollView (iTrade's
+     * Watchlist and Orders) the largest scrollable is the outer one, which only collapses the header and then refuses
+     * to move, so [scrollPage] never reaches the foot of the list (run c6d9df84: the 34th basket). Falls back to
+     * [scrollPage] when no such row or list is on screen.
+     */
+    fun scrollListOf(rowId: String, forward: Boolean): Boolean {
+        val row = findNow(rowId) ?: return scrollPage(forward)
+        val list = AccessibilityNodeFinder.scrollableAncestor(row) ?: return scrollPage(forward)
+        return try {
+            list.performAction(
+                if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+            )
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** [toTop] for the list holding [rowId] (see [scrollListOf]). */
+    fun listToTop(rowId: String, maxPages: Int = 10) {
+        repeat(maxPages) {
+            if (cancelled || !scrollListOf(rowId, forward = false)) return
+            sleep(220L)
         }
     }
 

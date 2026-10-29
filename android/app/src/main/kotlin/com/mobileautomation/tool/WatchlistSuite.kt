@@ -229,6 +229,11 @@ class WatchlistSuite(
         private val PRICE = Regex("""^\d[\d,]*\.\d{2}$""")
         private val COUNT = Regex("""(\d+)\s*/\s*(\d+)""")
         private val TAB_POSITION = Regex("""Tab \d+ of \d+""", RegexOption.IGNORE_CASE)
+
+        /** How far down a watchlist is paged to find a row (50 instruments at 8 or so a screen). */
+        private const val MAX_LIST_PAGES = 8
+
+        private const val MTF_NOT_OFFERED = "the pad offers no MTF product: the app shows MTF only to an account activated for margin trading"
     }
 
     // ── Time limits ────────────────────────────────────────────────────────────────────────────
@@ -366,6 +371,9 @@ class WatchlistSuite(
 
     /** The instrument this run added itself for the Edit cases. */
     private var testScrip: Rep? = null
+
+    /** Its line in the report's list of instruments added. */
+    private var testScripLog: WatchlistAdd? = null
 
     private var current: AutomationStepResult? = null
 
@@ -721,6 +729,66 @@ class WatchlistSuite(
 
     private fun findRow(r: Rep): Int = rowLabels().indexOfFirst { sameScrip(it, r.name, r.exchange) }
 
+    /**
+     * Whether the working watchlist has a row matching [match] anywhere in it. The list only builds the rows near the
+     * screen, and an instrument just added goes to its end (run 300bd9f3: 8 rows built of 17), so it is looked for page
+     * by page and the list is put back at its top.
+     */
+    private fun listHasNow(match: (String) -> Boolean): Boolean {
+        if (rowLabels().any(match)) return true
+        var pages = 0
+        var found = false
+        while (!found && pages < MAX_LIST_PAGES && engine.scrollListOf(T.WATCHLIST_SCRIP_ROW, forward = true)) {
+            pages++
+            pause(Timeouts.SETTLE)
+            found = rowLabels().any(match)
+        }
+        if (pages > 0) engine.listToTop(T.WATCHLIST_SCRIP_ROW, pages + 1)
+        return found
+    }
+
+    /** Every row of the working watchlist, read page by page; the list is put back at its top. */
+    private fun allRowLabels(): List<String> {
+        val seen = LinkedHashSet(rowLabels())
+        var pages = 0
+        while (pages < MAX_LIST_PAGES && engine.scrollListOf(T.WATCHLIST_SCRIP_ROW, forward = true)) {
+            pages++
+            pause(Timeouts.SETTLE)
+            seen += rowLabels()
+        }
+        if (pages > 0) engine.listToTop(T.WATCHLIST_SCRIP_ROW, pages + 1)
+        return seen.toList()
+    }
+
+    /**
+     * The watchlist shows a matching row within [LOAD], or its count reads [expectedCount]: the count is always on
+     * screen, so it still confirms the add when the row's label cannot be matched (a contract named differently in the
+     * list) or the list cannot be paged.
+     */
+    private fun listShows(expectedCount: Int? = null, match: (String) -> Boolean): Boolean =
+        waitUntil(LOAD) { listHasNow(match) || (expectedCount != null && readCount()?.first == expectedCount) }
+
+    /**
+     * Brings [r]'s row on screen and returns its index among the built rows, or -1: the list is paged down from its
+     * top, since a row only exists in the tree while it is near the screen (run 6d7db1a4: IDEA-EQ below the fold).
+     */
+    private fun revealRow(r: Rep): Int {
+        findRow(r).let { if (it >= 0) return it }
+        engine.listToTop(T.WATCHLIST_SCRIP_ROW, MAX_LIST_PAGES)
+        var i = findRow(r)
+        var pages = 0
+        while (i < 0 && pages < MAX_LIST_PAGES && engine.scrollListOf(T.WATCHLIST_SCRIP_ROW, forward = true)) {
+            pages++
+            pause(Timeouts.SETTLE)
+            i = findRow(r)
+        }
+        if (i < 0 && pages > 0) engine.listToTop(T.WATCHLIST_SCRIP_ROW, pages + 1)
+        return i
+    }
+
+    /** No row of the watchlist matches within [LOAD]. */
+    private fun listDropped(match: (String) -> Boolean): Boolean = waitUntil(LOAD) { !listHasNow(match) }
+
     private fun needRep(): Rep {
         // Once chosen it stays the representative; the rows can only be read while the Watchlist is showing
         // (More Details cases run with their own screen open).
@@ -742,7 +810,7 @@ class WatchlistSuite(
     /** Opens the action sheet of [r] with a single tap; returns which sheet it is. */
     private fun openSheet(r: Rep): String {
         val sheets = listOf(T.SCRIP_DETAILS_SHEET, T.INDEX_DETAILS_SHEET)
-        val i = findRow(r)
+        val i = revealRow(r)
         if (i < 0) fail("'${r.name}' is no longer in the list")
         val tap = engine.tapAt(T.WATCHLIST_SCRIP_ROW, i)
         if (!tap.ok) fail("Tapping '${r.name}' failed: ${tap.detail}", Cause.AUTOMATION)
@@ -968,13 +1036,18 @@ class WatchlistSuite(
     private fun indexPanel() {
         ensureLanding()
         val ticker = engine.labelsOf(T.WATCHLIST_TICKER).filter { it.isNotBlank() }
-        if (ticker.isEmpty()) {
+        if (ticker.isNotEmpty()) {
+            note("ticker: ${ticker.take(2).joinToString(" | ") { it.replace('\n', ' ').take(30) }}")
+        } else if (engine.isPresent(T.WATCHLIST_INDEX_DROPDOWN)) {
+            // iTrade draws the pinned indices in the header only with Profile › Settings › Fixed header on
+            // (FixedTabHeader); otherwise the header is the title and the arrow, and the panel is still checked.
+            note("the header shows no index ticker (with Fixed header off it shows the title only); the panel is checked from the arrow")
+        } else {
             blocked(
-                "The header ticker ('${T.WATCHLIST_TICKER}') is not on screen; the installed ${engine.appName} build may predate this identifier.",
+                "Neither the header ticker ('${T.WATCHLIST_TICKER}') nor its arrow ('${T.WATCHLIST_INDEX_DROPDOWN}') is on screen; the installed ${engine.appName} build may predate these identifiers.",
                 Cause.AUTOMATION, "Rebuild ${engine.appName} with the '${T.WATCHLIST_TICKER}' and '${T.WATCHLIST_INDEX_DROPDOWN}' tags (docs/AUTOMATION_SEMANTICS.md).",
             )
         }
-        note("ticker: ${ticker.take(2).joinToString(" | ") { it.replace('\n', ' ').take(30) }}")
         tapOpen(T.WATCHLIST_INDEX_DROPDOWN, listOf(T.DASHBOARD_INDEX_CLOSE), "The header arrow did not open the index panel")
         val all = readContent(
             null, "the index panel",
@@ -1471,16 +1544,18 @@ class WatchlistSuite(
             val name = nameOf(label) ?: fail("The result row has no readable name: '$label'")
             val exchange = exchangeOf(label) ?: ""
             shot("search_existing_tick")
+            val before = startCount
             // Remove it (tick becomes +), then add it back (+ becomes tick).
             deleteResult(existing, name)
             shot("search_add_icon")
-            addResult(existing, name)
+            val entry = addLogged(existing, name, label, fromSearch("Stocks", "INFY"), initialName)
+            entry.alreadyThere = true
+            entry.removed = null // the user's own: added back, never removed
             note("$name ($exchange) was already in the watchlist: tick removed it, + added it back")
             cleanup = "restored: $name is in the watchlist again"
             leaveSearch()
-            if (!waitUntil(LOAD) { rowLabels().any { sameScrip(it, name, exchange) } }) {
-                fail("$name is not in the watchlist after being added back")
-            }
+            entry.listed = listShows(before) { sameScrip(it, name, exchange) }
+            if (entry.listed != true) fail("$name is not in the watchlist after being added back")
             return
         }
         // Not in the watchlist yet: add it, check it, then take it out again.
@@ -1493,19 +1568,22 @@ class WatchlistSuite(
         val label = labels[addRow]
         val name = nameOf(label) ?: fail("The result row has no readable name: '$label'")
         val exchange = exchangeOf(label) ?: ""
-        addResult(addRow, name)
+        val entry = addLogged(addRow, name, label, fromSearch("Stocks", "INFY"), initialName)
         shot("search_tick_added")
         leaveSearch()
-        if (!waitUntil(LOAD) { rowLabels().any { sameScrip(it, name, null) } }) fail("$name was added but is not in the watchlist")
+        entry.listed = listShows(count?.plus(1)) { sameScrip(it, name, null) }
+        if (entry.listed != true) fail("$name was added but is not in the watchlist")
         note("$name was not in the watchlist: + added it and the watchlist shows it")
-        // Clean up: remove it again through the same tick.
+        // Clean up: remove it again through the same tick. Until that is seen, it counts as not removed.
+        entry.removed = false
         openSearch()
         searchQuery(T.SEARCH_TAB_STOCKS, "Stocks", "INFY")
         val again = resultRows().indexOfFirst { sameScrip(it, name, exchange) }
         if (again < 0 || !engine.hasDescendantAt(T.SEARCH_RESULT_ROW, again, T.SEARCH_SCRIP_ADDED_ICON)) fail("Could not find $name again to remove it")
         deleteResult(again, name)
         leaveSearch()
-        if (!waitUntil(LOAD) { rowLabels().none { sameScrip(it, name, exchange) } }) {
+        entry.removed = listDropped { sameScrip(it, name, exchange) }
+        if (entry.removed != true) {
             cleanup = "FAILED: $name was added by this run and is still in the watchlist; remove it by hand"
             fail("$name was removed again but is still in the watchlist", Cause.APP)
         }
@@ -1533,7 +1611,10 @@ class WatchlistSuite(
 
     private class Wanted(val segment: String, val tab: String, val tabName: String, val queries: List<String>, val type: String, val exchanges: Set<String>)
 
-    private class Added(val wanted: Wanted, val query: String, val label: String, val name: String)
+    private class Added(val wanted: Wanted, val query: String, val label: String, val name: String) {
+        /** Its line in the report's list of instruments added (null until the add was tried). */
+        var log: WatchlistAdd? = null
+    }
 
     /**
      * A search row's identity without anything that changes between two looks (prices). Long enough to reach the CE / PE
@@ -1583,8 +1664,10 @@ class WatchlistSuite(
                         }
                         if (row != null) {
                             val name = nameOf(rows[row]) ?: "scrip"
-                            added += Added(w, query, rows[row], name)
-                            addResult(row, name)
+                            // Kept before the add, so the clean-up below knows about it whatever the add does.
+                            val a = Added(w, query, rows[row], name)
+                            added += a
+                            a.log = addLogged(row, name, rows[row], fromSearch(w.tabName, query), initialName)
                             note("${w.segment} ${w.type}: added '$name' (${exchangeOf(rows[row])})")
                             found = true
                             break
@@ -1602,9 +1685,13 @@ class WatchlistSuite(
             leaveSearch()
             val expected = start + added.size
             if (!waitUntil(LOAD) { readCount()?.first == expected }) {
-                fail("After adding ${added.size} instrument(s) the watchlist count should read $expected but reads ${readCount()?.first}", Cause.APP)
+                val reads = readCount()?.first
+                added.forEach { it.log?.detail = "the watchlist count read $reads after the adds, not $expected" }
+                fail("After adding ${added.size} instrument(s) the watchlist count should read $expected but reads $reads", Cause.APP)
             }
-            val exchangesNow = rowLabels().mapNotNull { exchangeOf(it) }.toSet()
+            val exchangesNow = allRowLabels().mapNotNull { exchangeOf(it) }.toSet()
+            // The count rose by every add; each is listed when a row of its exchange shows (contract names differ by layout).
+            added.forEach { a -> a.log?.let { it.listed = it.exchange != null && it.exchange in exchangesNow } }
             val lacking = added.map { it.wanted.exchanges.first() }.distinct().filter { it !in exchangesNow }
             if (lacking.isNotEmpty()) fail("The count rose to $expected but no ${lacking.joinToString("/")} row is listed", Cause.UNCONFIRMED)
             note("${added.size} added, the watchlist shows ${added.size + start} instrument(s)")
@@ -1614,6 +1701,7 @@ class WatchlistSuite(
         }
         // Every instrument this case added is taken out again, whatever happened above.
         val restored = removeAdded(added, start) || removeExtrasOnEdit(baseline, start)
+        added.forEach { a -> a.log?.takeIf { it.added }?.removed = restored }
         cleanup = if (restored) "restored: the ${added.size} instrument(s) added by this case are removed (count back to $start)"
         else "FAILED: instruments added by this case may still be in the watchlist (count should be $start, reads ${readCount()?.first}); remove them by hand"
         failure?.let { throw it }
@@ -1722,6 +1810,31 @@ class WatchlistSuite(
         val tap = engine.tapDescendantAt(T.SEARCH_RESULT_ROW, row, T.SEARCH_SCRIP_ADD_BUTTON)
         if (!tap.ok) fail("Could not tap + for $name: ${tap.detail}")
         confirm(row, name, becomes = T.SEARCH_SCRIP_ADDED_ICON, leaves = T.SEARCH_SCRIP_ADD_BUTTON, what = "add")
+    }
+
+    /** `Search › F&O "TCS"`: where an instrument was added from, for the report. */
+    private fun fromSearch(tabName: String, query: String) = "Search › $tabName \"$query\""
+
+    /** A line of the report's list of instruments added to a watchlist, for search row [label]. */
+    private fun addLog(name: String, label: String, from: String, watchlist: String?): WatchlistAdd =
+        WatchlistAdd(currentCase?.code, name, exchangeOf(label), scripType(label), from, watchlist).also { flow.run.watchlistAdds += it }
+
+    /**
+     * [addResult], recorded in the report's list of instruments added: what, from where, into which watchlist, and why
+     * not when the add fails. The caller records whether the watchlist then showed it and whether it was removed again.
+     */
+    private fun addLogged(row: Int, name: String, label: String, from: String, watchlist: String?): WatchlistAdd {
+        val entry = addLog(name, label, from, watchlist)
+        try {
+            addResult(row, name)
+        } catch (e: CaseEnd) {
+            entry.detail = e.message
+            throw e
+        }
+        entry.added = true
+        // Not removed until a removal is seen: a case that fails before its clean-up must not read as "kept".
+        entry.removed = false
+        return entry
     }
 
     private fun deleteResult(row: Int, name: String) {
@@ -2009,7 +2122,7 @@ class WatchlistSuite(
         return null
     }
 
-    private fun stillPresent(r: Rep): Boolean = findRow(r) >= 0
+    private fun stillPresent(r: Rep): Boolean = listHasNow { sameScrip(it, r.name, r.exchange) }
 
     /** Adds one instrument for the Edit cases to move and delete, unless the run already has one. */
     private fun ensureTestScrip(): Rep {
@@ -2036,9 +2149,11 @@ class WatchlistSuite(
                 val r = Rep(name, "NSE")
                 // Recorded before the add, so the final clean-up knows about it whatever happens next.
                 testScrip = r
-                addResult(row, name)
+                val entry = addLogged(row, name, rows[row], fromSearch("Stocks", query), initialName)
+                testScripLog = entry
                 leaveSearch()
-                if (!waitUntil(LOAD) { rowLabels().any { sameScrip(it, name, "NSE") } }) fail("The test instrument $name was added but is not in the watchlist")
+                entry.listed = listShows(count?.first?.plus(1)) { sameScrip(it, name, "NSE") }
+                if (entry.listed != true) fail("The test instrument $name was added but is not in the watchlist")
                 note("added $name as the test instrument")
                 return r
             }
@@ -2093,8 +2208,9 @@ class WatchlistSuite(
             fail("${test.name} did not disappear from the Edit screen after its delete icon was tapped")
         }
         saveEdit("deleting ${test.name}")
-        if (!waitUntil(LOAD) { findRow(test) < 0 }) fail("${test.name} is still in the watchlist after Save")
+        if (!listDropped { sameScrip(it, test.name, test.exchange) }) fail("${test.name} is still in the watchlist after Save")
         testScrip = null
+        testScripLog?.removed = true
         cleanup = "restored: the test instrument ${test.name} added by this run is removed"
         val countAfter = readCount()?.first
         if (countBefore != null && countAfter != null && countAfter != countBefore - 1) {
@@ -2106,9 +2222,11 @@ class WatchlistSuite(
     /** Removes the test instrument if an earlier Edit case left it behind. */
     private fun cleanupTestScrip() {
         val test = testScrip ?: return
+        testScripLog?.removed = false
         if (!recover()) return
         if (!stillPresent(test)) {
             testScrip = null
+            testScripLog?.removed = true
             return
         }
         openSearch()
@@ -2120,7 +2238,10 @@ class WatchlistSuite(
             pause(UI)
         }
         leaveSearch()
-        if (!stillPresent(test)) testScrip = null
+        if (!stillPresent(test)) {
+            testScrip = null
+            testScripLog?.removed = true
+        }
     }
 
     // ═══ WL-90: put-back check ═════════════════════════════════════════════════════════════════
@@ -2304,9 +2425,15 @@ class WatchlistSuite(
         var problem: String? = null
         var sortChecked = false
         try {
-            // Sort: alphabetical.
+            // Sort: alphabetical. The Sort section sits under the exchange chips; on a short sheet (a tablet in landscape,
+            // run c6d9df84) it is below the fold and has no node until the sheet is scrolled, by way of a chip in it.
             openSettings()
-            val tap = engine.tap("watchlist_sort_alphabetical")
+            val sortId = "watchlist_sort_alphabetical"
+            if (!engine.isPresent(sortId)) {
+                val chips = listOf("nse", "bse", "nfo", "bfo", "mcx", "cds", "index").map { "${T.WATCHLIST_FILTER_CHIP_PREFIX}$it" }
+                engine.revealInList(sortId, chips)
+            }
+            val tap = engine.tap(sortId)
             if (!tap.ok) fail("The alphabetical sort could not be tapped: ${tap.detail}")
             applySettings()
             val names = rowLabels().mapNotNull { nameOf(it) }
@@ -2480,6 +2607,9 @@ class WatchlistSuite(
         var start = 0
         var problem: String? = null
         var removed: Boolean? = null
+
+        /** The instrument's line in the report's list of instruments added. */
+        var log: WatchlistAdd? = null
     }
 
     private val orderSessions = mutableMapOf<String, OrderSession>()
@@ -2586,11 +2716,18 @@ class WatchlistSuite(
                 val i = rows.indices.firstOrNull { seg.accept(rows[it], query) && hasIcon(it) }
                 if (i != null) {
                     val name = nameOf(rows[i]) ?: query
+                    val from = fromSearch(seg.tabName, query)
                     if (engine.hasDescendantAt(T.SEARCH_RESULT_ROW, i, T.SEARCH_SCRIP_ADD_BUTTON)) {
-                        s.added = Added(wanted, query, rows[i], name)
-                        addResult(i, name)
+                        val a = Added(wanted, query, rows[i], name)
+                        s.added = a
+                        a.log = addLogged(i, name, rows[i], from, orderListName)
+                        s.log = a.log
                         note("${seg.exchange}: added '$name' to the watchlist")
                     } else {
+                        s.log = addLog(name, rows[i], from, orderListName).also {
+                            it.alreadyThere = true
+                            it.detail = "already in the watchlist: used as it was and left there"
+                        }
                         note("${seg.exchange}: '$name' was already in the watchlist")
                     }
                     s.rep = Rep(name, seg.exchange)
@@ -2612,7 +2749,9 @@ class WatchlistSuite(
         }
         leaveSearch()
         val rep = s.rep!!
-        if (!waitUntil(LOAD) { findRow(rep) >= 0 }) fail("'${rep.name}' (${rep.exchange}) was added but is not in the watchlist")
+        val listed = listShows(s.start + if (s.added == null) 0 else 1) { sameScrip(it, rep.name, rep.exchange) }
+        s.log?.listed = listed
+        if (!listed) fail("'${rep.name}' (${rep.exchange}) ${if (s.added == null) "was already added" else "was added"} but is not in the watchlist")
     }
 
     /** The segment's instrument, set up on first use; a segment that could not be set up blocks its later cases. */
@@ -2645,6 +2784,7 @@ class WatchlistSuite(
             return stopped(flow.step(lastId))
         }
         s.removed = restored
+        added.log?.removed = restored
         s.added = null
         s.rep = null
         val text = if (restored) "restored: '${added.name}' is removed from the watchlist again" else
@@ -2918,6 +3058,12 @@ class WatchlistSuite(
         need(waitUntil(UI) { pad.has(T.ORDER_FIELD_PRICE) }, "Regular shows no Price box")
         need(pad.has(T.ORDER_SWITCH_STOPLOSS), "Regular shows no Stoploss switch")
         for (p in if (seg.equity) OrderPad.EQUITY_PRODUCTS else OrderPad.DERIVATIVE_PRODUCTS) {
+            // MTF is offered only to an account activated for it (iTrade: checkMtfEnable / isMTFUser), so its absence
+            // says something about the account, not the app.
+            if (p == "mtf" && !pad.hasProduct(p)) {
+                note(MTF_NOT_OFFERED)
+                continue
+            }
             need(pad.hasProduct(p), "the product ${p.uppercase()} is not offered")
         }
         if (!seg.equity) for (p in listOf("cnc", "mtf")) need(!pad.hasProduct(p), "the product ${p.uppercase()} is offered on $ex, where only MIS and NRML exist")
@@ -3144,11 +3290,18 @@ class WatchlistSuite(
     /** The quantity and Disclosed Quantity of that order: 1 of 10 (10 %), on MCX 1 of 4 lots (25 %). */
     private fun disclosedValues(seg: OrderSeg): Pair<String, String> = if (seg.exchange == "MCX") "4" to "1" else "10" to "1"
 
-    private class Placed(val kind: Int, val text: String) {
+    /** How one order went; [reportAs] is the report's word for it when [kind] alone does not say (see [OrderTypes.attempt]). */
+    private class Placed(val kind: Int, val text: String, val reportAs: String? = null) {
         companion object {
             const val SENT = 0
             const val SKIPPED = 1
             const val FAILED = 2
+        }
+
+        fun outcome(): String = reportAs ?: when (kind) {
+            SENT -> "refused"
+            SKIPPED -> "skipped"
+            else -> "failed"
         }
     }
 
@@ -3301,6 +3454,9 @@ class WatchlistSuite(
         marketClosed(seg.exchange)?.let { return Placed(Placed.SKIPPED, "$label: not sent, $it") }
         try {
             openPad(seg, buy)
+            if (kind.product == "mtf" && !pad.present("${T.ORDER_PRODUCT_PREFIX}mtf")) {
+                return Placed(Placed.SKIPPED, "$label: not sent, $MTF_NOT_OFFERED", "not_offered")
+            }
             val hidden = engine.suppressKeyboard(true)
             // A pad that sent nothing is reused for the next order (an order that is sent closes it).
             var keepOpen = false
@@ -3337,7 +3493,7 @@ class WatchlistSuite(
                             Placed(Placed.SENT, "$label: sent and REJECTED (${gate.why})")
                         } else {
                             halt(label, status)
-                            Placed(Placed.FAILED, "$label: NOT REFUSED: the order notification read ${status ?: "nothing"} (${gate.why})")
+                            Placed(Placed.FAILED, "$label: NOT REFUSED: the order notification read ${status ?: "nothing"} (${gate.why})", "accepted")
                         }
                     }
                     message?.contains(Regex("margin|reject|fund|insufficient", RegexOption.IGNORE_CASE)) == true -> {
@@ -3373,11 +3529,11 @@ class WatchlistSuite(
         val results = mutableListOf<Placed>()
         for (kind in kinds) {
             if (!modules.orders.places(kind.id)) {
-                results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: switched off in the Order settings")
+                results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: switched off in the Order settings", "off")
                 continue
             }
             if ((kind.type == "co" || kind.type == "bo") && engine.lacks(TargetApp.Feature.BO_CO_TAB)) {
-                results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: not applicable, ${engine.appName} has no BO / CO tab")
+                results += Placed(Placed.SKIPPED, "${seg.exchange} $side ${kind.label}: not applicable, ${engine.appName} has no BO / CO tab", "not_applicable")
                 continue
             }
             // Two failures in a row mean the pad itself is not being driven: the rest would only repeat them.
@@ -3386,6 +3542,10 @@ class WatchlistSuite(
                 continue
             }
             results += placeKind(seg, buy, kind)
+        }
+        // One result per kind, in order: the report's Order types section is built from these.
+        for ((kind, placed) in kinds.zip(results)) {
+            flow.run.orderAttempts += OrderTypes.attempt(seg.exchange, side, kind.id, kind.product, placed.outcome(), placed.text)
         }
         val sent = results.filter { it.kind == Placed.SENT }
         val skipped = results.filter { it.kind == Placed.SKIPPED }
@@ -3917,10 +4077,10 @@ class WatchlistSuite(
      */
     private fun findBasketRow(name: String): Int {
         basketRowIndex(name).takeIf { it >= 0 }?.let { return it }
-        engine.toTop()
+        engine.listToTop(T.BASKET_ROW)
         repeat(15) {
             basketRowIndex(name).takeIf { it >= 0 }?.let { return it }
-            if (!engine.scrollPage(forward = true)) return basketRowIndex(name)
+            if (!engine.scrollListOf(T.BASKET_ROW, forward = true)) return basketRowIndex(name)
             pause(300)
         }
         return basketRowIndex(name)

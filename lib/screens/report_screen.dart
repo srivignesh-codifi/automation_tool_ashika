@@ -521,7 +521,21 @@ class _MetaTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final by = result.testedBy;
+    final net = result.network;
     final rows = <(String, String)>[
+      if (by != null) ...[
+        (
+          'Tested by',
+          by.role == null ? by.userId : '${by.userId} (${by.role})',
+        ),
+        ('Signed in with', by.methodLabel),
+      ],
+      if (net != null) ...[
+        ('Device IP', '${net.deviceIp} (${net.connection})'),
+        ('Public IP', net.publicIpLabel),
+        ('IP captured', _stamp(net.capturedAt)),
+      ],
       ('Target package', result.targetPackage),
       ('Main activity', result.targetMainActivity ?? '—'),
       ('Target version', result.targetVersionName ?? '—'),

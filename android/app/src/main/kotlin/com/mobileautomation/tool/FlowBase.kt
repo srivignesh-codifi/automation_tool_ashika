@@ -16,6 +16,9 @@ abstract class FlowBase(
 
     protected lateinit var result: AutomationRunResult
 
+    /** The run's result, for a suite to record what goes in the report beside the steps (instruments added, orders tried). */
+    internal val run: AutomationRunResult get() = result
+
     internal fun step(id: String): AutomationStepResult = steps.first { it.id == id }
 
     /**

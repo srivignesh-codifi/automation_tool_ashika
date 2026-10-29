@@ -1,4 +1,5 @@
 import 'automation_step.dart';
+import 'run_details.dart';
 
 /// The full outcome of one automation run, as produced by the native driver.
 ///
@@ -32,6 +33,10 @@ class AutomationResult {
     this.modulesSkipped = const <String>[],
     this.sessionBreaks = const <SessionBreak>[],
     this.feed,
+    this.testedBy,
+    this.network,
+    this.watchlistAdds = const <WatchlistAddition>[],
+    this.orderTypes,
   });
 
   final String runId;
@@ -80,6 +85,19 @@ class AutomationResult {
   /// (not measured). Null for a run that did not report it.
   final Map<String, Object?>? feed;
 
+  /// The tool user who started the run; null for a run that did not record it.
+  final TestedBy? testedBy;
+
+  /// The phone's network and IP addresses as the run started.
+  final RunNetwork? network;
+
+  /// Every instrument the run added to a watchlist, or tried to.
+  final List<WatchlistAddition> watchlistAdds;
+
+  /// The kinds of order the app offers and what the run did with each; null
+  /// for an app whose flow places no order.
+  final OrderTypesReport? orderTypes;
+
   bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
 
   /// Seconds into the video at which [step] began, or null when it is not
@@ -120,6 +138,10 @@ class AutomationResult {
     modulesSkipped: modulesSkipped,
     sessionBreaks: sessionBreaks,
     feed: feed,
+    testedBy: testedBy,
+    network: network,
+    watchlistAdds: watchlistAdds,
+    orderTypes: orderTypes,
   );
 
   DateTime? get startedAt => startedAtMs == null
@@ -223,6 +245,15 @@ class AutomationResult {
               (map['feed'] as Map).map((k, v) => MapEntry(k.toString(), v)),
             )
           : null,
+      testedBy: TestedBy.fromMap(map['testedBy']),
+      network: RunNetwork.fromMap(map['network']),
+      watchlistAdds: map['watchlistAdds'] is List
+          ? (map['watchlistAdds'] as List)
+                .whereType<Map<Object?, Object?>>()
+                .map(WatchlistAddition.fromMap)
+                .toList(growable: false)
+          : const <WatchlistAddition>[],
+      orderTypes: OrderTypesReport.fromMap(map['orderTypes']),
     );
   }
 
@@ -257,6 +288,10 @@ class AutomationResult {
     'modulesSkipped': modulesSkipped,
     'sessionBreaks': sessionBreaks.map((b) => b.toJson()).toList(),
     'feed': feed,
+    'testedBy': testedBy?.toJson(),
+    'network': network?.toJson(),
+    'watchlistAdds': watchlistAdds.map((a) => a.toJson()).toList(),
+    'orderTypes': orderTypes?.toJson(),
   };
 
   static List<String> _strings(Object? raw) => raw is List

@@ -6,22 +6,53 @@ import 'package:flutter/foundation.dart';
 
 import 'secure_storage_service.dart';
 
+/// How the user proved who they are when signing in to the tool.
+enum SignInMethod {
+  password,
+
+  /// A fingerprint unlocked the password kept for biometric sign-in.
+  biometric,
+}
+
 /// The person signed in to the tool.
 class AuthUser {
-  const AuthUser({required this.userId, this.token = ''});
+  const AuthUser({
+    required this.userId,
+    this.token = '',
+    this.role,
+    this.method = SignInMethod.password,
+    this.signedInAt,
+  });
 
   final String userId;
 
   /// What the sign-in API returned to authorise later calls (empty when it
   /// returned none).
   final String token;
+
+  /// The role the sign-in API gave (HEAD, ...), when it gave one.
+  final String? role;
+
+  final SignInMethod method;
+  final DateTime? signedInAt;
+
+  /// Who started a run, for its report. Never the token.
+  Map<String, Object?> toReport() => <String, Object?>{
+    'userId': userId,
+    if (role != null) 'role': role,
+    'signInMethod': method.name,
+    if (signedInAt != null) 'signedInAtMs': signedInAt!.millisecondsSinceEpoch,
+  };
 }
 
 /// Why a sign-in was refused, in words the sign-in screen can show.
 class AuthException implements Exception {
-  const AuthException(this.message);
+  const AuthException(this.message, {this.rejected = false});
 
   final String message;
+
+  /// The server refused the user ID or password (rather than not answering).
+  final bool rejected;
 
   @override
   String toString() => message;
@@ -92,27 +123,41 @@ class AuthService {
   Future<void> signOut() => _storage.clearSession();
 
   /// Signs [userId] in. Throws [AuthException] with a message for the user.
+  /// [method] says how the password was given: typed, or unlocked by a
+  /// fingerprint; it is checked the same way.
   Future<AuthUser> signIn({
     required String userId,
     required String password,
+    SignInMethod method = SignInMethod.password,
   }) async {
     final id = userId.trim();
     if (skipCheck) {
-      final user = AuthUser(userId: id.isEmpty ? _skippedUser : id);
+      final user = AuthUser(
+        userId: id.isEmpty ? _skippedUser : id,
+        method: method,
+        signedInAt: DateTime.now(),
+      );
       await _storage.saveSession(userId: user.userId, token: '');
       return user;
     }
     if (id.isEmpty) throw const AuthException('Enter your user ID.');
     if (password.isEmpty) throw const AuthException('Enter your password.');
-    final token = await _verify(id, password);
+    final (token, role) = await _verify(id, password);
     // Kept for Send to admin (who tested, and the token for its request). The
     // tool still asks to sign in at every launch: start-up does not read it.
     await _storage.saveSession(userId: id, token: token);
-    return AuthUser(userId: id, token: token);
+    return AuthUser(
+      userId: id,
+      token: token,
+      role: role,
+      method: method,
+      signedInAt: DateTime.now(),
+    );
   }
 
-  /// Applies the built-in login reply and returns its session token.
-  Future<String> _verify(String userId, String password) async {
+  /// Applies the built-in login reply and returns its session token and the
+  /// user's role.
+  Future<(String, String?)> _verify(String userId, String password) async {
     final usingBuiltIn = _transport == _builtIn;
     debugPrint(
       '[Auth API] POST /api/admin/login${usingBuiltIn ? ' (built-in response)' : ''}',
@@ -145,7 +190,10 @@ class AuthService {
     debugPrint('[Auth API] HTTP $status ${_logSafeResponse(json, body)}');
     final message = _message(json);
     if (status == 401 || status == 403) {
-      throw AuthException(message ?? 'Wrong user ID or password.');
+      throw AuthException(
+        message ?? 'Wrong user ID or password.',
+        rejected: true,
+      );
     }
     if (status < 200 || status >= 300) {
       throw AuthException(
@@ -157,9 +205,26 @@ class AuthService {
         (json['success'] == false ||
             _isFailure(json['status']) ||
             json['error'] != null)) {
-      throw AuthException(message ?? 'Wrong user ID or password.');
+      throw AuthException(
+        message ?? 'Wrong user ID or password.',
+        rejected: true,
+      );
     }
-    return _token(json) ?? '';
+    return (_token(json) ?? '', _role(json));
+  }
+
+  /// The role under `access`, at the top level, or inside `data` / `result`.
+  static String? _role(Object? json) {
+    if (json is! Map) return null;
+    for (final holder in <Object?>[json['access'], json]) {
+      final role = holder is Map ? holder['role'] : null;
+      if (role is String && role.trim().isNotEmpty) return role.trim();
+    }
+    for (final key in const <String>['data', 'result']) {
+      final nested = _role(json[key]);
+      if (nested != null) return nested;
+    }
+    return null;
   }
 
   static Object? _decode(String body) {

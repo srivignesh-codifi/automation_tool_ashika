@@ -11,10 +11,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--
       The tool's own sign-in (lib/services/auth_service.dart) calls the CodiFi
-      sign-in API. Nothing else in the tool uses the network: a run is driven and
-      reported entirely on the device.
+      sign-in API, and Send to admin uploads a report. A run is driven and
+      reported on the device; its only request is one HTTPS call to
+      api.ipify.org as it starts, for the public IP address the report shows
+      (NetworkSnapshot.kt).
     -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- How the phone is connected and its own IP addresses, read as a run starts (NetworkSnapshot.kt). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Fingerprint sign-in to the tool itself (BiometricSignIn.kt); never used on an app under test. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!--
       Keeps the tool's accessibility service on: Android can drop it from the
       enabled list when the tool is updated. Granted once over adb

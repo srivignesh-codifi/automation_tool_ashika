@@ -695,8 +695,11 @@ scrolls sideways. Its sections:
 | Section | What it holds |
 |---|---|
 | Result | verdict, completed count, and how many steps passed, were skipped, failed or never ran |
+| TESTED BY | the tool user who started the run (user ID, role, signed in with password or biometric, and when), the phone's IP address and connection (Wi-Fi, mobile data, VPN) and its public IP, captured as the run started |
 | RUN | package, app version, main activity, device, start / end, total duration and the time spent inside steps, run ID, recording file |
 | FAILURE | the first failed step, when it happened, its position in the video, the full reason, its screenshot |
+| WATCHLIST — INSTRUMENTS ADDED | every instrument the run added to a watchlist (or tried to): the case, instrument, exchange, type, where it was added from (`Search › F&O "TCS"`), which watchlist, whether it was added, whether the watchlist showed it, and whether it was removed again |
+| ORDER TYPES — *app* | the kinds of order the app offers (order types, varieties, products, validity, disclosed quantity, GTT, basket), which it lacks (iTrade: CO, BO, GTT) and what this run did with each: SENT · REFUSED (expected), ACCEPTED (a defect), FAILED, NOT SENT, NOT TESTED or NOT IN APP. Not shown for Ashika, whose flow places no order |
 | API / DATA CHECKS | data loads, server changes and sign-ins counted by outcome, the verdict, the slowest loads |
 | SLOWEST STEPS | the five longest steps |
 | CHECKLIST | one table row per step: `#`, result, step, start, end, time, video position, type (read / write / auth) and the API / data check |
