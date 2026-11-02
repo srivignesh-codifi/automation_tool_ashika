@@ -1001,7 +1001,19 @@ class DashboardSuite(
         tapOpen(T.DASHBOARD_OPEN_RESEARCH_CALLS, listOf(T.RESEARCH_CALL_SCREEN), "Research Calls did not open", LOAD)
         val strip = stripOf(T.RESEARCH_TAB_PREFIX)
         val tabs = mutableListOf<String>()
-        for (i in 0 until 8) {
+        if (app.lacks(TargetApp.Feature.RESEARCH_CALL_TABS)) {
+            // A build where Trading Ideas is not switched on shows only "Coming Soon" (Muthoot live, run 74073939).
+            waitUntil(LOAD) { engine.hasExactText("Coming Soon") || engine.isPresent(T.RESEARCH_CARD) || emptyShown() }
+            if (engine.hasExactText("Coming Soon") && !engine.isPresent(T.RESEARCH_CARD)) {
+                shot("DS-03_trading_ideas_coming_soon")
+                leave()
+                notTested("Trading Ideas shows only \"Coming Soon\" on this build: there are no calls to check")
+            }
+            // One list under the sub tabs, no tab strip above it (Muthoot).
+            val cards = rowsOrEmpty(T.RESEARCH_CARD, "Trading Ideas")
+            tabs += "one list (no tab strip): ${if (cards == 0) "empty" else "$cards card(s)"}"
+        }
+        for (i in 0 until if (tabs.isEmpty()) 8 else 0) {
             if (!tapTab(T.RESEARCH_TAB_PREFIX, i, strip)) break
             val id = "${T.RESEARCH_TAB_PREFIX}$i"
             if (!waitUntil(UI) { engine.isSelected(id) }) {
@@ -1291,7 +1303,8 @@ class DashboardSuite(
         // A pushed page replaces the Dashboard in the tree; its search box is an editable field, which a plain text search skips.
         if (!waitUntil(UI) { onAllIndices() }) fail("All Indices did not open", Cause.UNCONFIRMED)
         val all = readScreen()
-        val rows = all.count { it.trim() == "NSE" || it.trim() == "BSE" }
+        // Repeats kept: Muthoot gives each row's exchange its own line, which the de-duplicated reading counts once.
+        val rows = engine.onScreenLines().count { it.trim() == "NSE" || it.trim() == "BSE" }
         if (rows < 2) fail("All Indices is readable but lists $rows index row(s) with an exchange", Cause.UNCONFIRMED)
         shot("DS-11_all_indices")
         val before = all.take(12)
@@ -1526,11 +1539,16 @@ class DashboardSuite(
         if (!opened) fail("None of the first IPOs opened a details page (an applied IPO does not)", Cause.UNCONFIRMED)
         pause(Timeouts.SETTLE * 2)
         val all = readScreen()
-        val gaps = missing(all, listOf("Minimum Investment", "Price Range", "Issue Open", "Issue Close", "Lot size", "Issue Size", "Application Details", "Timeline"))
+        val gaps = missing(all, listOf("Minimum Investment", "Price Range", "Issue Open", "Issue Close", "Lot size", "Issue Size", "Application Details"))
         if (gaps.isNotEmpty()) fail("IPO Details is readable but shows no ${gaps.joinToString(", ")}", Cause.UNCONFIRMED)
         val cta = Regex("""UPCOMING|PRE-APPLY|APPLY|APPLIED|CLOSED""").find(all.joinToString(" "))?.value
         shot("DS-15_ipo_details")
-        note("details show company, price range, investment, dates, lot and issue size, categories and the timeline; button: ${cta ?: "not readable"}")
+        // The Timeline sits below the fold, and every app leaves it out when the IPO's timeline data comes back empty
+        // (run 74073939, an SME issue closing that day): noted, not failed.
+        val timeline = has("Timeline") || reveal("Timeline")
+        note("details show company, price range, investment, dates, lot and issue size and categories; " +
+            (if (timeline) "the timeline" else "no Timeline (the app hides it when the IPO has no timeline data)") +
+            "; button: ${cta ?: "not readable"}")
         ipoCta = cta
     }
 
@@ -1801,7 +1819,15 @@ class DashboardSuite(
         tapOpen(T.DASHBOARD_SCANNERS_VIEW_ALL, listOf(T.SCANNERS_SCREEN), "Scanners › View All did not open")
         val segments = listOf("Equity", "Futures", "Options", "Commodity")
         val seen = mutableListOf<String>()
+        if (app.lacks(TargetApp.Feature.SCANNER_SEGMENTS)) {
+            // One set of tabs (Top Gainers, Top Losers, 52 Week High ...) with no segment bar above it (Muthoot).
+            val tabs = walkTabs(T.SCANNERS_TAB_PREFIX, T.SCANNER_ROW, "Scanners", max = 10)
+            if (tabs.isEmpty()) tabFailures += "Scanners shows no tab"
+            seen += "one list, no segments (${tabs.size} tab(s): ${tabs.joinToString(", ")})"
+            if (engine.isPresent("${T.SCANNERS_TAB_PREFIX}0")) engine.tap("${T.SCANNERS_TAB_PREFIX}0")
+        }
         for ((i, name) in segments.withIndex()) {
+            if (app.lacks(TargetApp.Feature.SCANNER_SEGMENTS)) break
             val id = "${T.SCANNERS_SEGMENT_PREFIX}$i"
             if (!engine.isPresent(id)) {
                 note("$name segment is not offered")

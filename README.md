@@ -1,6 +1,6 @@
 # Mobile Automation Tool
 
-On-device test automation for Android Flutter applications. Three apps are
+On-device test automation for Android Flutter applications. Four apps are
 supported, picked on the tool's **Run Automation** screen:
 
 | App | Package | Login | Regression pass |
@@ -8,6 +8,7 @@ supported, picked on the tool's **Run Automation** screen:
 | **Ashika** | `com.codifi.dhanush` | Client ID → OTP → MPIN → Skip Biometric | 60 steps: watchlist and search, load check of every tab of Home, Research, Portfolio and Orders, logout |
 | **Tradion** | `com.codifi.rmoney` | User ID → Password → OTP → (Risk Disclosure → "I understand") | 116 steps: login side paths (Guest User, Unblock Account, Join Now, Forgot Password, Switch Account, Login with OTP, Confirm OTP button, Enable 2FA), watchlist (27 independent test cases WL-01..WL-41: landing, switching, Predefined, indices / funds panel, instrument sheet with Chart / Alert / Op.Chain / BUY-SELL order pad, More Details, search by category, green-tick add / remove, Edit rename / reorder / delete of a test instrument, Manage Watchlist view / sort / filter / Clear), Dashboard (index dropdown, Trading tab selected, Option Chain per segment, Research calls, Trading Ideas tabs / search / menu / filters, Futures View All with sort and Buy / Sell, FII / DII, Customize, Scanners tabs / segments / search / sort / scrip sheet with Buy / Sell, then the Investment tab: Alerts (a test alert is created, searched and deleted), IPO, Reports, ETF (every tab), Pledge, Back Office, Other request, Top Sectors, every Scanners tab of Equity / Futures / Options / Commodity, Customize), load check of every tab of Orders, Portfolio (Holdings, Positions) and Profile, logout — see section 1a |
 | **iTrade** | `com.codifi.itrade` | Same as Tradion | The whole Tradion pass (`TradionAutomationFlow` with `TargetApp.ITRADE`; `AppModules.ITRADE` = every Tradion module): see section 1a. Needs an iTrade build carrying Tradion's identifiers (`tradion_mobile/docs/AUTOMATION_SEMANTICS.md`) |
+| **Muthoot** | `com.codifi.muthoottrade` | Same as Tradion (OTP or TOTP after the password) | The whole Tradion pass (`TradionAutomationFlow` with `TargetApp.MUTHOOT`, every Tradion module). What Muthoot lacks is reported NOT APPLICABLE: Guest User, Search's Commodity category, Rate Our App, Order preview, Developer Console, Customer Support's Company entry, the Scalper tools, the Reports / Pledge / Back Office / Other Request tiles and the Dashboard's Funds-card cases (covered by PF-04). Its Trading Ideas page has no tab strip and its Scanners View All no segment bar; both are checked as one list. Needs a Muthoot build carrying Tradion's identifiers (`muthoot_mobile`, see HANDOFF 4r) |
 
 Sections 2–18 describe the shared tool and, unless a section says otherwise,
 Ashika's flow; Tradion's is in section 1a. Everything runs on a single Android

@@ -30,7 +30,7 @@ object AutomationConfig {
      * The apps the tool offers to test, in the order the picker shows them. An app left out stays registered (and
      * allowlisted) but is not offered.
      */
-    val OFFERED_APPS: List<TargetApp> = listOf(TargetApp.ASHIKA, TargetApp.TRADION, TargetApp.ITRADE)
+    val OFFERED_APPS: List<TargetApp> = listOf(TargetApp.ASHIKA, TargetApp.TRADION, TargetApp.ITRADE, TargetApp.MUTHOOT)
 
     val DEFAULT_TARGET_PACKAGE: String = OFFERED_APPS.first().packageName
 

@@ -679,7 +679,13 @@ class WatchlistSuite(
         }
         alive()
         if (count == 0) fail("No watchlist tab was found; ${where()}")
-        editableTabs = tabIds.take((count - 1).coerceAtLeast(0))
+        // Recently Viewed is the last tab in Tradion and the first in Muthoot, which refuses scrips there; go by its name.
+        val shown = tabIds.take(count)
+        val recent = shown.filter { id ->
+            engine.revealInList(id, tabIds)
+            engine.labelsOf(id).any { tabName(it).contains("recently viewed", ignoreCase = true) }
+        }
+        editableTabs = if (recent.isNotEmpty()) shown - recent.toSet() else shown.dropLast(1)
         if (editableTabs.isEmpty()) blocked("The account has no user-created watchlist (only Recently Viewed).")
         val target = engine.firstPresent(editableTabs)
             ?: editableTabs.firstOrNull { engine.revealInList(it, tabIds) }
@@ -3726,8 +3732,13 @@ class WatchlistSuite(
     private fun gttChoose(id: String, index: Int): Boolean {
         if (!engine.tap(id).ok) return false
         if (!waitUntil(UI) { engine.isPresent("${id}_item_$index") }) return false
-        if (!engine.tap("${id}_item_$index").ok) return false
-        return waitUntil(UI) { !engine.isPresent("${id}_item_$index") }
+        val chosen = engine.tap("${id}_item_$index").ok && waitUntil(UI) { !engine.isPresent("${id}_item_$index") }
+        // A menu left open covers the whole screen and strands every later case (run 74073939): close it with Back.
+        if (!chosen && engine.isPresent("${id}_item_0") && engine.isPresent("${id}_item_1")) {
+            engine.pressBack()
+            pause(Timeouts.SETTLE)
+        }
+        return chosen
     }
 
     private fun gttCondition(): String = engine.labelsOf(T.GTT_CONDITION).joinToString(" ")

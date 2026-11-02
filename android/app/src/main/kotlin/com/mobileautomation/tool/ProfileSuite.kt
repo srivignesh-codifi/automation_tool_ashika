@@ -690,7 +690,8 @@ class ProfileSuite(
             Row("${T.PROFILE_FONT_SIZE_PREFIX}0", "Font sizes") to "Font sizes",
             (R.TOTP to "TOTP").takeIf { guarded }, R.SECURITY to "Security Settings", (R.FREEZE to "Freeze & UnFreeze").takeIf { guarded },
             Row(T.PROFILE_TRADE_PREFERENCES_ROW, "Trade Settings") to "Trade Settings",
-            R.ACCESSIBILITY to "Accessibility Settings", (R.DEVELOPER to "Developer Console").takeIf { guarded },
+            R.ACCESSIBILITY to "Accessibility Settings",
+            (R.DEVELOPER to "Developer Console").takeIf { guarded && !engine.lacks(TargetApp.Feature.PROFILE_DEVELOPER_CONSOLE) },
         )
         val absent = rows.filterNot { rowPresent(it.first) }.map { it.second }
         engine.toTop()
@@ -1176,8 +1177,13 @@ class ProfileSuite(
 
     /** PF-08: Call Us / Email Us shown (not opened); Company opens the company page with its links. */
     private fun customerSupport() {
-        val absent = listOf("Call Us", "Email Us", "Company").filterNot(::has)
+        val company = !engine.lacks(TargetApp.Feature.SUPPORT_COMPANY_PAGE)
+        val absent = listOfNotNull("Call Us", "Email Us", "Company".takeIf { company }).filterNot(::has)
         if (absent.isNotEmpty()) fail("The Customer Support sheet has no ${absent.joinToString(", ")}", Cause.APP)
+        if (!company) {
+            note("Call Us and Email Us shown (not opened: dialer / mail app); ${engine.appName}'s sheet has no Company entry")
+            return
+        }
         val tap = if (engine.isPresent(T.SUPPORT_COMPANY_ROW)) engine.tap(T.SUPPORT_COMPANY_ROW) else engine.tapText("Company")
         alive()
         if (!tap.ok) fail("Company could not be tapped: ${tap.detail}", Cause.AUTOMATION)
@@ -1238,7 +1244,9 @@ class ProfileSuite(
 
     /** PF-18: segment tabs, quantity stepper and the Save Settings state; nothing is saved. */
     private fun tradePreferences() {
-        if (!has("Default Quantity")) fail("The order preferences show no Default Quantity", Cause.UNCONFIRMED)
+        // Muthoot lists Default Quantity below the fold, where the list has not built it yet (run 74073939).
+        fun hasQuantity() = has("Default Quantity") || (engine.scrollTextIntoView("Default Quantity") && has("Default Quantity"))
+        if (!hasQuantity()) fail("The order preferences show no Default Quantity", Cause.UNCONFIRMED)
         note("Default Quantity shown")
         requireTags("Switching segments and reading the Save Settings state")
         val tabs = (0 until 8).map { "${T.TRADE_PREF_TAB_PREFIX}$it" }.filter(engine::isPresent)
@@ -1251,7 +1259,7 @@ class ProfileSuite(
             alive()
             if (!tap.ok) fail("Segment $name could not be tapped: ${tap.detail}", Cause.AUTOMATION)
             if (!waitUntil(UI) { engine.isSelected(id) }) fail("Segment $name does not show as selected after it was tapped", Cause.APP)
-            if (!waitUntil(UI) { has("Default Quantity") }) fail("Segment $name shows no Default Quantity", Cause.UNCONFIRMED)
+            if (!waitUntil(UI) { hasQuantity() }) fail("Segment $name shows no Default Quantity", Cause.UNCONFIRMED)
             if (engine.isPresent(T.TRADE_PREF_SAVE_BUTTON) && !engine.isDisabled(T.TRADE_PREF_SAVE_BUTTON)) {
                 fail("Save Settings is enabled on $name although nothing was changed", Cause.APP)
             }
@@ -1373,10 +1381,10 @@ class ProfileSuite(
     private fun guardedRows() {
         onTab(account = false)
         val found = mutableListOf<String>()
-        for ((row, states) in listOf(
+        for ((row, states) in listOfNotNull(
             R.TOTP to listOf("Enable TOTP", "Disable TOTP"),
             R.FREEZE to listOf("Freeze"),
-            R.DEVELOPER to listOf("Developer Console"),
+            (R.DEVELOPER to listOf("Developer Console")).takeUnless { engine.lacks(TargetApp.Feature.PROFILE_DEVELOPER_CONSOLE) },
         )) {
             if (!rowPresent(row)) fail("The ${row.label} row is not on the Settings tab", Cause.APP)
             val text = if (engine.isPresent(row.id)) joined(lines(row.id)) else joined(lines())

@@ -428,14 +428,29 @@ class TradionAutomationFlow(
         // 8 — Password screen displayed -----------------------------------------------
         val passwordScreen = step("password_screen_displayed")
         begin(passwordScreen)
-        when (val outcome = engine.waitForAny(passwordScreenIds, Timeouts.PASSWORD_SCREEN)) {
-            is WaitOutcome.Found -> pass(passwordScreen, "'${outcome.identifier}' located")
+        // The app's refusal is a snackbar that is gone long before the wait ends (Muthoot run d1299aac): watch for it too.
+        when (val outcome = engine.waitForAny(passwordScreenIds + T.ERROR_SNACKBAR_MESSAGE, Timeouts.PASSWORD_SCREEN)) {
+            is WaitOutcome.Found -> if (outcome.identifier == T.ERROR_SNACKBAR_MESSAGE) {
+                val message = engine.labelsOf(T.ERROR_SNACKBAR_MESSAGE).joinToString(" ").trim()
+                return abort(
+                    passwordScreen,
+                    "The app refused the User ID after Login: '${Redactor.apply(message).orEmpty().ifEmpty { "(message not readable)" }}'. " +
+                        "Check the User ID in the settings, and that the account is active on this server.",
+                )
+            } else {
+                pass(passwordScreen, "'${outcome.identifier}' located")
+            }
             is WaitOutcome.Cancelled -> return stopped(passwordScreen)
             else -> return abort(
                 passwordScreen,
                 reasonFor(outcome, "The password screen", Timeouts.PASSWORD_SCREEN) +
                     " The User ID may have been rejected, the account may be blocked, or it may " +
-                    "still need its password set (the app sends such a user to a set-password flow).",
+                    "still need its password set (the app sends such a user to a set-password flow)." +
+                    // Muthoot empties the box once its check-user call answers; a box still empty means it answered
+                    // with nothing usable (no network, or a server error) and showed no message.
+                    if (engine.labelsOf(T.USER_ID_INPUT).none { it.contains(userId, ignoreCase = true) })
+                        " The User ID box was emptied, so the app's user check answered but led nowhere."
+                    else "",
             )
         }
 

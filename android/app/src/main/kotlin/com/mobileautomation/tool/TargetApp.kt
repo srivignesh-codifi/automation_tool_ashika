@@ -122,6 +122,41 @@ enum class TargetApp(
         investmentsSections = listOf("Indian Indices", "Invest", "Funds", "Holdings", "Scanners", "Top Sectors"),
         sectorFiguresInPercent = false,
         sectorRowsWithSeries = false,
+    ),
+    /** Muthoot MobiTrade: a sibling build of Tradion with the same identifiers, driven by [TradionAutomationFlow]. */
+    MUTHOOT(
+        id = "muthoot",
+        displayName = "Muthoot",
+        packageName = "com.codifi.muthoottrade",
+        testName = "Muthoot - Regression Automation",
+        secret = Secret.PASSWORD,
+        // From muthoot_mobile's code (live_issue_correction, 2026-11-02); not yet confirmed by a run.
+        absent = setOf(
+            Feature.GUEST_USER,
+            Feature.SEARCH_COMMODITY_TAB,
+            Feature.PROFILE_RATE_APP,
+            Feature.PROFILE_ORDER_PREVIEW_TOGGLE,
+            Feature.PROFILE_DEVELOPER_CONSOLE,
+            Feature.SUPPORT_COMPANY_PAGE,
+            Feature.RESEARCH_CALL_TABS,
+            Feature.SCANNER_SEGMENTS,
+        ),
+        exchangeMessageTabs = listOf("NSE", "BSE", "MCX"),
+        notApplicableCases = mapOf(
+            "wl_search_commodity" to "Muthoot's search has no Commodity category (All, F&O, Currency, Stocks); MCX is searched under All",
+            "db_tools_view_all" to "Muthoot's Dashboard has no Scalper / Options Trading Tools",
+            "db_reports" to "Muthoot's Quick Tools has no Reports tile (Alerts, IPO, Mutual Funds, MTF List, ETF)",
+            "db_pledge" to "Muthoot's Quick Tools has no Pledge tile (Alerts, IPO, Mutual Funds, MTF List, ETF)",
+            "db_other_request" to "Muthoot's Quick Tools has no Other Request tile (Alerts, IPO, Mutual Funds, MTF List, ETF)",
+            "db_back_office" to "Muthoot's Quick Tools has no Back Office tile (Back Office is a Profile row)",
+            "db_funds_summary" to "Muthoot's Funds card is reached without the Other Request tile the check anchors on (Funds is covered by PF-04)",
+            "db_add_funds" to "Muthoot's Funds card has no Custom amount chip (Add Funds is covered by PF-04)",
+            "db_withdraw_funds" to "Muthoot's Funds card has no Withdraw entry of its own (Withdraw is covered by PF-04)",
+        ),
+        // Quick Tools is headed "Invest" and Customize reads "Customise" (dashboard_invesments_view.dart).
+        investmentsSections = listOf("Indian Indices", "Invest", "Funds", "Holdings", "Scanners", "Top Sectors", "Customi"),
+        // Its footer has no Build Version line ("App Version 1.0.0.x | Exchange Version 1.0.0").
+        profileFooterLines = listOf("SEBI Registration No", "NSE Member Code", "App Version"),
     );
 
     fun lacks(feature: String): Boolean = feature in absent
@@ -156,6 +191,14 @@ enum class TargetApp(
         const val PROFILE_ORDER_PREVIEW_TOGGLE = "profile_order_preview_toggle"
         /** Profile › Trade Settings' TOTP, Freeze & UnFreeze and Developer Console rows. */
         const val PROFILE_GUARDED_ROWS = "profile_guarded_rows"
+        /** The Developer Console row alone (an app can have the TOTP and Freeze rows without it). */
+        const val PROFILE_DEVELOPER_CONSOLE = "profile_developer_console"
+        /** Trading Ideas' top tab strip (without it, the page is one list under its sub tabs). */
+        const val RESEARCH_CALL_TABS = "research_call_tabs"
+        /** Scanners › View All's Equity / Futures / Options / Commodity bar (without it, one set of scanner tabs). */
+        const val SCANNER_SEGMENTS = "scanner_segments"
+        /** Customer Support's Company entry and the company page behind it. */
+        const val SUPPORT_COMPANY_PAGE = "support_company_page"
         /** Add Funds opening a screen inside the app (without it, the button opens the browser and is not tapped). */
         const val ADD_FUNDS_IN_APP = "add_funds_in_app"
     }

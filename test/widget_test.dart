@@ -73,14 +73,14 @@ void main() {
   test('the app picker offers every app with its own credentials', () {
     expect(
       const AutomationConfigInfo.fallback().targets.map((t) => t.id),
-      <String>['ashika', 'tradion', 'itrade'],
+      <String>['ashika', 'tradion', 'itrade', 'muthoot'],
     );
     expect(
       const AutomationConfigInfo.fallback().defaultTargetPackage,
       'com.codifi.dhanush',
     );
     const targets = AutomationConfigInfo.knownTargets;
-    expect(targets.map((t) => t.id), <String>['ashika', 'tradion', 'itrade']);
+    expect(targets.map((t) => t.id), <String>['ashika', 'tradion', 'itrade', 'muthoot']);
 
     final ashika = targets.first;
     expect(ashika.packageName, 'com.codifi.dhanush');
@@ -100,6 +100,16 @@ void main() {
     expect(itrade.runSummary, contains('never places or changes an order'));
     expect(
       itrade.modules.map((m) => m.id),
+      tradion.modules.map((m) => m.id),
+    );
+
+    final muthoot = targets.firstWhere((t) => t.id == 'muthoot');
+    expect(muthoot.packageName, 'com.codifi.muthoottrade');
+    expect(muthoot.secret, TargetSecret.password);
+    expect(muthoot.userIdLabel, 'User ID');
+    expect(muthoot.runSummary, contains('never places or changes an order'));
+    expect(
+      muthoot.modules.map((m) => m.id),
       tradion.modules.map((m) => m.id),
     );
   });
@@ -875,6 +885,7 @@ void main() {
       'com.codifi.dhanush',
       'com.codifi.rmoney',
       'com.codifi.itrade',
+      'com.codifi.muthoottrade',
     ]) {
       expect(find.text(package), findsOneWidget);
     }

@@ -65,6 +65,15 @@ class ChecklistWiringTest {
     }
 
     @Test
+    fun muthootRunsEveryTradionModuleWithTheSameChecklist() {
+        assertEquals(AppModules.TRADION.map { it.id }, AppModules.of(TargetApp.MUTHOOT).map { it.id })
+        assertEquals(
+            TradionAutomationFlow.buildSteps().map { it.id },
+            TradionAutomationFlow.buildSteps(TargetApp.MUTHOOT).map { it.id },
+        )
+    }
+
+    @Test
     fun aModuleTheAppLacksIsNeverOn() {
         val selection = ModuleSelection(AppModules.ASHIKA, null)
         assertTrue(selection.isOn("orders"))

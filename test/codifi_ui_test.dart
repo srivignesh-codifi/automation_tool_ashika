@@ -215,7 +215,7 @@ void main() {
         16 + tester.view.padding.bottom / tester.view.devicePixelRatio,
       );
 
-      for (final id in <String>['ashika', 'tradion', 'itrade']) {
+      for (final id in <String>['ashika', 'tradion', 'itrade', 'muthoot']) {
         expect(find.byKey(ValueKey<String>('app_tile_$id')), findsOneWidget);
       }
       expect(find.text('iTrade'), findsOneWidget);

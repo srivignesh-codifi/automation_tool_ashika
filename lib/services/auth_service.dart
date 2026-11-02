@@ -94,7 +94,7 @@ class AuthService {
     "role": "HEAD",
     "permissions": ["dashboard", "reports_view", "reports_delete", "brokers", "testcases_view", "testcases_edit", "run", "setup", "git"],
     "allBrokers": true,
-    "brokerIds": ["com.codifi.dhanush", "com.codifi.rmoney", "com.codifi.itrade"]
+    "brokerIds": ["com.codifi.dhanush", "com.codifi.rmoney", "com.codifi.itrade", "com.codifi.muthoottrade"]
   }
 }''';
 

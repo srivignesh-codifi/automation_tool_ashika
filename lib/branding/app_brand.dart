@@ -14,6 +14,7 @@ class AppBrand {
     'ashika': AppBrand(logo: 'assets/apps/ashika.png'),
     'tradion': AppBrand(logo: 'assets/apps/tradion.png'),
     'itrade': AppBrand(logo: 'assets/apps/itrade.png'),
+    'muthoot': AppBrand(logo: 'assets/apps/muthoot.png'),
   };
 
   static AppBrand? of(String appId) => _brands[appId];

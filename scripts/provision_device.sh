@@ -29,7 +29,7 @@ set -euo pipefail
 
 TOOL=com.mobileautomation.tool
 SERVICE="$TOOL/$TOOL.AutomationAccessibilityService"
-TARGETS=(com.codifi.rmoney com.codifi.dhanush com.codifi.itrade)
+TARGETS=(com.codifi.rmoney com.codifi.dhanush com.codifi.itrade com.codifi.muthoottrade)
 
 ADB_ARGS=()
 RELAX_PLAY_PROTECT=0

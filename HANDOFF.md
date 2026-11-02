@@ -429,3 +429,57 @@ While smoke-testing, scripted `adb` taps and reinstalls ran on the owner's emula
 - **Pre-existing, not touched:** `test/report_upload_test.dart` "the button sends the run and then shows it was sent" fails at line 200 (expected 1, got 0) on the commit this started from.
 - **Run 300bd9f3 (2026-10-29 10:52, iTrade, emulator): "added but is not in the watchlist" was the tool, not the app.** The watchlist builds only the rows near the screen (8 of 12–17) and a new instrument goes to its end, so WL-24, WL-31, OW-01 and OW-09 failed their "is it listed" check, WL-26 found no NFO / MCX row, WL-24 then skipped its clean-up and left INFY behind (WL-90: 13 instead of 12), and every NSE / MCX order case was blocked. `listHasNow` / `listShows` / `listDropped` / `allRowLabels` now page through the list (at most 8 pages) and put it back at its top; `stillPresent` and the WL-32 deletion check use them too. An instrument the run added now counts as not removed (`removed = false`) until a removal is seen, so a case that fails before its clean-up shows "NO, STILL THERE" instead of "KEPT". Not yet re-run. BK-01 ("new basket not in the list" with Basket (32)) may be the same kind of off-screen miss; not changed.
 - **Run 6d7db1a4 (11:24, Pixel Tablet, Android 15):** paging worked (WL-26 passed; IDEA-EQ was found below the fold), but `openSheet` still tapped only built rows, so every NSE order case failed "'IDEA-EQ' is no longer in the list". `openSheet` now uses `revealRow` (pages down from the top to the row). `listShows(expectedCount)` also accepts the watchlist count reaching what the add should make it (WL-24 both paths, the test instrument, each exchange's instrument), since WL-24's re-added INFY was in the list (WL-90 passed at 17) but not matched. **Open:** OW-09 / OW-90 read 13 after removing CRUDEOIL from a list that started at 14; an extra instrument may have gone. Check "Watchlist 2" by hand. WL-07 (`alert_name_input`) and WL-41 (`watchlist_sort_alphabetical`) failed only on this device; not looked into.
+
+### 4r. Muthoot (`com.codifi.muthoottrade`) onboarded as a fourth app (2026-11-02, compiled, tests pass, NOT run on a device)
+- Tool: `TargetApp.MUTHOOT` (Tradion flow, every module), offered in `OFFERED_APPS`. It is also named in the manifest `<queries>`, the accessibility `packageNames`, the Dart fallback (`_muthoot`), `_appNames` ("muthoot"), `provision_device.sh` and the built-in broker list. The logo `assets/apps/muthoot.png` is the app's 1024 px iOS icon scaled to 384 px.
+- New per-app features, so an app can lack them without a false failure:
+  - `PROFILE_DEVELOPER_CONSOLE`: Muthoot has the TOTP and Freeze rows but no Developer Console.
+  - `SUPPORT_COMPANY_PAGE`: Customer Support offers only Call Us and Email Us.
+  - `RESEARCH_CALL_TABS`: Trading Ideas has no top tab strip; the page is checked as one list.
+  - `SCANNER_SEGMENTS`: Scanners › View All is the older single set of tabs with no Equity / Futures / Options / Commodity bar.
+- Muthoot's `absent` set also contains GUEST_USER, SEARCH_COMMODITY_TAB, PROFILE_RATE_APP and PROFILE_ORDER_PREVIEW_TOGGLE. Its `notApplicableCases` are wl_search_commodity, db_tools_view_all, db_reports, db_pledge, db_other_request, db_back_office, db_funds_summary, db_add_funds and db_withdraw_funds. The three Funds cases anchor on `invest_tile_7`, which Muthoot does not have; Funds is covered by PF-04.
+- Muthoot settings:
+  - Exchange Messages tabs: NSE / BSE / MCX.
+  - Footer lines: "SEBI Registration No", "NSE Member Code", "App Version". There is no Build Version line.
+  - `tickerIndex`: NIFTY 50.
+  - Investments sections: Quick Tools is headed "Invest", and the Customize button reads "Customise".
+  - `sectorFiguresInPercent` / `sectorRowsWithSeries` are left at Tradion's values (same `/common/eqsector/` API). Confirm both on the first run.
+- App side, in `muthoot_mobile` (left UNCOMMITTED on `live_issue_correction`; the owner handles the branch):
+  - Changes: 138 files modified plus `automation_markers.dart`, `marked_shimmer.dart` and `test/automation_run_test.dart`. All 23 shimmer imports are swapped.
+  - The `com.codifi.automation/run` channel is in `MainActivity.kt` (package dir `com/codifi/muthoot`). `api_core` logs refused calls through `AutomationApiLog`. `main.dart` wraps the app in `AutomationApiMarker` / `AutomationFeedMarker` inside `PrivacyBlurOverlay`.
+  - `websocket_provider._logFeedEvent` maps Muthoot's free-text events to the tool's phase names (`connect.ok`, `onDone`, `onError`, `send.failed`, ...).
+  - `push_notification_provider` skips the permission request on a tool run.
+  - Every Tradion identifier is present except those for features Muthoot lacks: guest_*, dashboard_open_scalper, research_tab_*, scanners_segment_*, order_funds_banner, profile_rate_app_row, profile_developer_console_row, support_company_row.
+  - Checks: `flutter analyze` is identical to the clean baseline (679 issues, 0 errors), and `test/automation_run_test.dart` passes.
+- Risks for the first Muthoot run:
+  - KeyboardSecurityGuard raises a non-dismissable dialog on the password, OTP, TOTP and Change Password pages when the default keyboard is not on its allow-list. Use Gboard or the maker's keyboard.
+  - DeviceSecurity blocks rooted / Magisk / Frida devices at splash and re-checks every 60 s. Emulators are allowed.
+  - A forced-update dialog at splash stops the run.
+  - Research Calls shows "Coming Soon" on a live build (`ApiLinks.isUAT = false`).
+  - PrivacyBlurOverlay blurs screenshots taken while a system dialog covers the app.
+- App defects seen in the code, NOT fixed (the owner's call):
+  - Exchange Messages never builds its last message: the itemBuilder returns `Container()` for the last index. PF will flag it.
+  - `basket_provider.renameBasket` writes "Pending (n)" into `orderTabs[2]` (the Trade Book tab); iTrade fixed the same bug.
+  - The basket caps adding at 3 scrips but its list prints "n / 20".
+  - The `investedAmount` language key is missing.
+  - Not ported from Tradion: the search race fix, the awaited `deleteScrip`, and iTrade's exchange+token scrip matching.
+
+#### First device run (74073939, 2026-11-02, Pixel Tablet emulator): 31 failed; fixes made afterwards (NOT re-run yet)
+
+- **Watchlist search (WL-20 to WL-26) and the rename (WL-30, WL-90).** Muthoot puts Recently Viewed *first*, and Tradion puts it last. The tool used it as the working list. Muthoot refuses to add scrips there (snackbar "You can not add scrips to Pre-defined watch list."), and WL-30 renamed it to `Wl02112026155037`. The app then refused the original name ("Market watch name already exists"). Fix: `WatchlistSuite.establishLanding` now leaves out any tab whose label reads "Recently Viewed", wherever it sits. **The test account's Recently Viewed list still reads `Wl02112026155037`; put it back by hand.** Two app findings: the Edit screen lets the system Recently Viewed list be renamed, and a rename back to its own name is refused.
+- **GTT (GT-01, GT-02), which then stranded Basket and Orders (BK-01, OW-20, OW-21, OW-90, Orders › Pending).** Muthoot's `CustomDropdownButton` has no `customButton` (Tradion has one), so the button showed the chosen item's *tagged* child. `gtt_condition_item_<i>` was therefore on screen with the menu closed, `gttChoose` never saw it go, and the open menu stayed over everything. Fixes: the app gives tagged dropdowns an untagged `selectedItemBuilder` (`dropdown_button.dart`; this also fixes the New Alert condition case, DB-I06). The tool presses Back when `gttChoose` leaves both items on screen.
+- **Page scrolling (DB-I01, DB-I19 to DB-I24, PF-01, PF-10, PF-11, PF-20, Logged out).** Every row the tool reported missing was there, just below the fold: Freeze, Logout, the footer, and the Holdings, Scanners and Top Sectors sections. Muthoot's Profile tabs nest a larger scrollable that never moves around the list that does, and `scrollPage` always took the largest. Fix: `AccessibilityNodeFinder.largestVerticalScrollable(root, action)` and `scrollPage` now take the largest list that offers the scroll action wanted (Flutter offers it only while the list can move). The old pick is the fallback.
+- **PF-18.** Default Quantity is below the fold and not built until scrolled to; the case now scrolls to it.
+- **DB-I03.** `readScreen` drops repeated lines, so the ten "NSE" rows counted as one. The case now counts with `onScreenLines()`.
+- **DB-I08.** Every app hides the IPO Timeline when the timeline API returns nothing. It is now scrolled to and only noted when absent.
+- **DB-T02.** A build that shows only "Coming Soon" in Trading Ideas is now NOT TESTED instead of an API failure.
+- **Still open:**
+  - PF-06 (the last exchange message is never shown) is a real app defect.
+  - OW-08 / OW-44: Muthoot's F&O search returned no BFO contract for IDEA / SENSEX (test data).
+  - PF-21: the camera prompt was not answered.
+
+#### Third device run (9617e91a, 2026-11-02): 5 failed
+- **GT-01 / DB-I06.** The Muthoot APK on the emulator was built at 15:39, before the `dropdown_button.dart` fix (16:19). The selected value still carried `<id>_item_<i>`, so the tool misread the dropdowns. GT-01 also left the alert on 52W High, which disables the Trigger Price. A rebuild of Muthoot fixes both.
+- **BK-01.** The basket was created (13 → 14), but Muthoot lists baskets oldest first. `listToTop` then scrolled the row's nearest scrollable, which is the sideways Orders tab pager, and swiped from Basket to Pending. Fixed: `scrollListOf` now uses `verticalScrollableAncestor`, the nearest vertical list that offers the move. Baskets named `QA173437` (and any `QA…` from failed runs) are left on the account.
+- **DB-I19.** This is a real app defect: `investedAmount` is missing from `assets/language/en-US.json`, which only has `invested` and `investedValue`.
+- **PF-06.** This is the real app defect listed above.

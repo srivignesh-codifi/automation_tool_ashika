@@ -153,6 +153,7 @@ class AutomationConfigInfo {
         'com.codifi.dhanush',
         'com.codifi.rmoney',
         'com.codifi.itrade',
+        'com.codifi.muthoottrade',
       ],
       defaultTargetPackage = 'com.codifi.dhanush',
       testName = 'Phase 1 - Login Automation',
@@ -164,6 +165,7 @@ class AutomationConfigInfo {
     _ashika,
     _tradion,
     _itrade,
+    _muthoot,
   ];
 
   /// The apps the tool offers, mirroring `AutomationConfig.OFFERED_APPS`.
@@ -207,6 +209,23 @@ class AutomationConfigInfo {
     displayName: 'iTrade',
     packageName: 'com.codifi.itrade',
     testName: 'iTrade - Regression Automation',
+    secret: TargetSecret.password,
+    modules: <AutomationModule>[
+      AutomationModule(id: 'login', label: 'Login'),
+      AutomationModule(id: 'watchlist', label: 'Watchlist'),
+      AutomationModule(id: 'order_placement', label: 'Order placement'),
+      AutomationModule(id: 'orders', label: 'Orders'),
+      AutomationModule(id: 'dashboard', label: 'Dashboard'),
+      AutomationModule(id: 'portfolio', label: 'Portfolio'),
+      AutomationModule(id: 'profile', label: 'Profile'),
+    ],
+  );
+
+  static const TargetAppInfo _muthoot = TargetAppInfo(
+    id: 'muthoot',
+    displayName: 'Muthoot',
+    packageName: 'com.codifi.muthoottrade',
+    testName: 'Muthoot - Regression Automation',
     secret: TargetSecret.password,
     modules: <AutomationModule>[
       AutomationModule(id: 'login', label: 'Login'),

@@ -1135,11 +1135,13 @@ class AutomationEngine private constructor(
      * vertical ones the largest on screen is the page itself.
      */
     fun scrollPage(forward: Boolean): Boolean {
-        val list = AccessibilityNodeFinder.largestVerticalScrollable(targetRoot()) ?: return false
+        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        val root = targetRoot()
+        val list = AccessibilityNodeFinder.largestVerticalScrollable(root, action)
+            ?: AccessibilityNodeFinder.largestVerticalScrollable(root)
+            ?: return false
         return try {
-            list.performAction(
-                if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-            )
+            list.performAction(action)
         } catch (_: Throwable) {
             false
         }
@@ -1153,11 +1155,13 @@ class AutomationEngine private constructor(
      */
     fun scrollListOf(rowId: String, forward: Boolean): Boolean {
         val row = findNow(rowId) ?: return scrollPage(forward)
-        val list = AccessibilityNodeFinder.scrollableAncestor(row) ?: return scrollPage(forward)
+        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        // Only a vertical list that can still move that way: the nearest scrollable may be the tab pager around the list.
+        val hasVertical = BooleanArray(1)
+        val list = AccessibilityNodeFinder.verticalScrollableAncestor(row, action, hasVertical)
+            ?: return if (hasVertical[0]) false else scrollPage(forward)
         return try {
-            list.performAction(
-                if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
-            )
+            list.performAction(action)
         } catch (_: Throwable) {
             false
         }

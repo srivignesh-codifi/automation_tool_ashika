@@ -43,6 +43,7 @@
         <package android:name="com.codifi.dhanush" />
         <package android:name="com.codifi.rmoney" />
         <package android:name="com.codifi.itrade" />
+        <package android:name="com.codifi.muthoottrade" />
     </queries>
 
     <application

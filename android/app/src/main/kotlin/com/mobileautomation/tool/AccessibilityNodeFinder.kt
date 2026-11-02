@@ -404,13 +404,17 @@ object AccessibilityNodeFinder {
         return info.rowCount > 0 && info.columnCount <= 1
     }
 
-    /** The vertically scrolling node with the largest on-screen area, if any. */
-    fun largestVerticalScrollable(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    /**
+     * The vertically scrolling node with the largest on-screen area, if any. With [action], only a node that offers it:
+     * Flutter lists a scroll action only while the list can move that way, and Muthoot's Profile and Investments nest
+     * a larger list that never moves around the one that does (run 74073939).
+     */
+    fun largestVerticalScrollable(root: AccessibilityNodeInfo?, action: Int? = null): AccessibilityNodeInfo? {
         var best: AccessibilityNodeInfo? = null
         var bestArea = 0L
         val bounds = android.graphics.Rect()
         search(root) { node ->
-            if (isVerticalScroller(node)) {
+            if (isVerticalScroller(node) && (action == null || offers(node, action))) {
                 node.getBoundsInScreen(bounds)
                 val area = bounds.width().toLong() * bounds.height().toLong()
                 if (area > bestArea) {
@@ -423,6 +427,12 @@ object AccessibilityNodeFinder {
         return best
     }
 
+    private fun offers(node: AccessibilityNodeInfo, action: Int): Boolean = try {
+        node.actionList.any { it.id == action }
+    } catch (_: Throwable) {
+        false
+    }
+
     /** The nearest ancestor of [node] that can scroll, e.g. a horizontal chip list. */
     fun scrollableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = try {
@@ -433,6 +443,33 @@ object AccessibilityNodeFinder {
         var hops = 0
         while (current != null && hops < 8) {
             if (current.isScrollable) return current
+            current = try {
+                current.parent
+            } catch (_: Throwable) {
+                null
+            }
+            hops++
+        }
+        return null
+    }
+
+    /**
+     * The nearest vertically scrolling ancestor of [node] that offers [action]; null when none does. A row's nearest
+     * scrollable may be the pager between tabs (Muthoot's Orders tabs, run 9617e91a), which a list scroll must skip.
+     * [hasVertical] tells whether any vertical scroller was passed at all.
+     */
+    fun verticalScrollableAncestor(node: AccessibilityNodeInfo, action: Int, hasVertical: BooleanArray? = null): AccessibilityNodeInfo? {
+        var current: AccessibilityNodeInfo? = try {
+            node.parent
+        } catch (_: Throwable) {
+            null
+        }
+        var hops = 0
+        while (current != null && hops < 16) {
+            if (isVerticalScroller(current)) {
+                hasVertical?.set(0, true)
+                if (offers(current, action)) return current
+            }
             current = try {
                 current.parent
             } catch (_: Throwable) {

@@ -41,6 +41,7 @@ class ReportService {
     'com.codifi.dhanush': 'ashika',
     'com.codifi.rmoney': 'tradion',
     'com.codifi.itrade': 'itrade',
+    'com.codifi.muthoottrade': 'muthoot',
   };
 
   /// `<app>_<ddMMyyyy>_<HHmm>.zip` of the run's start, e.g. `ashika_23102026_0810.zip`.
